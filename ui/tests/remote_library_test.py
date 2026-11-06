@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Remote Control library API against a real song.db through the production main-thread code (remote.c's browse and
+play_item, musicdb.c), via host-render's REMOTE_REQS hook. Build host-render first (make -C ui CROSS= host-render).
+Like the site renderer it uses the host's /usr/data/fiio/db/song.db and /tmp/sdcard (both replaced). The player is
+not running on a host, so only plays that end in ui_play_list (album, song, favourites, all) are checked end to end;
+artist, playlist and file plays go through main.c's own local-playback admission and are covered on the Disc."""
+import json, os, shutil, sqlite3, subprocess, tempfile
+from pathlib import Path
+ui = Path(__file__).resolve().parents[1]
+sd = Path('/tmp/sdcard'); shutil.rmtree(sd, ignore_errors=True)
+(sd/'Music/Blue Album').mkdir(parents=True); (sd/'Music/Other').mkdir(parents=True)
+os.symlink('/etc', sd/'Music/escape')
+db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
+con = sqlite3.connect(db)
+cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
+        'ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE')
+for t in ['SONG', 'MY_LOVE']: con.execute(f'CREATE TABLE {t}({cols})')
+con.execute('CREATE TABLE CUSTOM_PLAYLIST_INDEX(LIST_ID INTEGER PRIMARY KEY,LIST_NAME,M3U_PATH)')
+con.execute(f'CREATE TABLE CUSTOM_PLAYLIST({cols},PLAYLIST_ID)')
+i = 0
+for album, artist, folder, titles in [('Blue Album', 'Ana & "Bo"', 'Blue Album', ['Uno', 'Dos', 'Tres']),
+                                      ('Café <Noir>', 'Céline', 'Other', ['Nuit', 'Jour']), ('Other', 'Zed', 'Other', ['Solo'])]:
+    for t, title in enumerate(titles):
+        i += 1; name = f'{t+1:02d} {title}.flac'; p = sd/'Music'/folder/name; p.write_bytes(b'x')
+        con.execute('INSERT INTO SONG VALUES(' + ','.join('?'*22) + ')', (i, str(p), name, title, album, artist, 'Pop', 1, t+1, 0, 0, 0, 0,
+                    200000+i, artist, 0, '', title, name, album, artist, 'Pop'))
+con.execute('INSERT INTO MY_LOVE SELECT * FROM SONG WHERE ID IN (2,5)')
+con.execute("INSERT INTO CUSTOM_PLAYLIST_INDEX VALUES(1,'Road trip','')")
+con.execute('INSERT INTO CUSTOM_PLAYLIST SELECT *,1 FROM SONG WHERE ID IN (6,1)')
+con.commit(); con.close()
+(sd/'Music/notes.txt').write_text('x'); (sd/'Music/unindexed.mp3').write_bytes(b'x')
+
+reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/library/album?name=Blue+Album',
+        'GET /api/library/artists', 'GET /api/library/artist?name=C%C3%A9line', 'GET /api/library/playlists',
+        'GET /api/library/playlist?id=1', 'GET /api/library/favorites', 'GET /api/library/songs?q=dos',
+        'GET /api/library/songs?limit=2&offset=1', 'GET /api/library/folder', 'GET /api/library/folder?path=Music',
+        'GET /api/library/folder?path=Music%2Fescape', 'GET /api/library/folder?path=Music%2Fnope',
+        'POST /api/play_item kind=album&name=Blue+Album&song_id=2', 'POST /api/play_item kind=album&name=Blue+Album&song_id=4',
+        'POST /api/play_item kind=favorites&pos=2', 'POST /api/play_item kind=song&song_id=6',
+        'POST /api/play_item kind=file&path=Music%2Funindexed.mp3', 'POST /api/play_item kind=file&path=Music%2Fescape%2Fpasswd',
+        'POST /api/play_item kind=all']
+with tempfile.TemporaryDirectory() as tmp:
+    rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
+    (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
+    r = subprocess.run([str(ui/'tests/host_build/host-render'), '10', '0', 'preview-home', '0', str(Path(tmp)/'o.ppm')],
+                       env={**os.environ, 'REMOTE_REQS': str(rf), 'ZUNE_LIBRARY_FIXTURE': '1'}, capture_output=True, text=True, timeout=60)
+assert r.returncode == 0, r.stderr[-2000:]
+res, plays = [], []
+for line in r.stdout.splitlines():
+    if line.startswith('PLAY_LIST '): plays.append(line[10:])
+    elif line.startswith('REQ '): res.append({'req': line[4:].strip(), 'plays': plays}); plays = []
+    elif line.startswith('RC '): res[-1]['rc'] = int(line.split()[1]); res[-1]['why'] = line.split(' WHY ')[1].split(' SENT ')[0]
+    elif line.startswith('BODY '): res[-1]['body'] = None if line == 'BODY -' else json.loads(line[5:])
+assert len(res) == len(reqs), r.stdout
+def items(k): assert res[k]['rc'] == 0, res[k]; return res[k]['body']['items']
+assert [a['name'] for a in items(0)] == ['Blue Album', 'Café <Noir>', 'Other'] and items(0)[0] == {'name': 'Blue Album', 'artist': 'Ana & "Bo"', 'count': 3}
+assert [a['name'] for a in items(1)] == ['Café <Noir>']
+assert [s['title'] for s in items(2)] == ['Uno', 'Dos', 'Tres']
+assert [a['name'] for a in items(3)] == ['Ana & "Bo"', 'Céline', 'Zed']
+assert sorted(s['title'] for s in items(4)) == ['Jour', 'Nuit']
+assert items(5) == [{'id': 1, 'name': 'Road trip'}]
+assert [(s['title'], s['pos']) for s in items(6)] == [('Uno', 1), ('Solo', 2)]
+assert [(s['title'], s['pos']) for s in items(7)] == [('Dos', 1), ('Jour', 2)]
+assert [s['title'] for s in items(8)] == ['Dos']
+assert res[9]['body']['total'] == 6 and len(items(9)) == 2 and res[9]['body']['offset'] == 1
+assert items(10) == [{'name': 'Music', 'dir': True}]
+assert items(11) == [{'name': 'Blue Album', 'dir': True}, {'name': 'escape', 'dir': True}, {'name': 'Other', 'dir': True},
+                     {'name': 'unindexed.mp3', 'dir': False}] or items(11) == [{'name': 'Blue Album', 'dir': True}, {'name': 'Other', 'dir': True},
+                     {'name': 'unindexed.mp3', 'dir': False}], items(11)
+assert res[12]['rc'] == -1 and res[12]['why'] == 'No such folder'          # a symlink off the card
+assert res[13]['rc'] == -1
+assert res[14]['rc'] == 0 and res[14]['plays'] == ["type=3 name='Blue Album' pos=2"]
+assert res[15]['rc'] == -1 and res[15]['why'] == 'That song is not in this album' and not res[15]['plays']
+assert res[16]['rc'] == 0 and res[16]['plays'] == ["type=1 name='' pos=2"]   # Jour, in the all-songs title order
+assert res[17]['rc'] == 0 and res[17]['plays'] == ["type=1 name='' pos=4"]   # Solo
+assert res[18]['rc'] == -1 and 'rescan' in res[18]['why']
+assert res[19]['rc'] == -1 and res[19]['why'] == 'No such file'
+assert res[20]['rc'] == 0 and res[20]['plays'] == ["type=1 name='' pos=1"]
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays')

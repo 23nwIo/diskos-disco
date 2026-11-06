@@ -18,44 +18,64 @@
 #define REMOTE_REQ_MAX    4096        /* whole request (headers + body) */
 
 typedef enum {
-    RC_CMD_NONE = 0,
-    RC_CMD_PLAY_PAUSE, RC_CMD_PLAY, RC_CMD_PAUSE, RC_CMD_NEXT, RC_CMD_PREV,
-    RC_CMD_VOLUME, RC_CMD_VOLUME_STEP, RC_CMD_SEEK, RC_CMD_PLAY_MODE
-} rc_cmd_kind_t;
+    RMT_CMD_NONE = 0,
+    RMT_CMD_PLAY_PAUSE, RMT_CMD_PLAY, RMT_CMD_PAUSE, RMT_CMD_NEXT, RMT_CMD_PREV,
+    RMT_CMD_VOLUME, RMT_CMD_VOLUME_STEP, RMT_CMD_SEEK, RMT_CMD_PLAY_MODE,
+    RMT_CMD_BROWSE,          /* list part of the library: sub = rmt_list_t; the answer is a JSON body */
+    RMT_CMD_PLAY_ITEM        /* start something from the library: sub = rmt_item_t */
+} rmt_cmd_kind_t;
 
-typedef struct { rc_cmd_kind_t kind; long arg; } rc_cmd_t;
+/* GET api/library/<list>: albums | album (name) | artists | artist (name) | playlists | playlist (id) | favorites |
+ * songs (q: search) | folder (path, relative to the SD card). Lists take q (filter), offset, limit. */
+typedef enum { RMT_L_ALBUMS = 1, RMT_L_ALBUM, RMT_L_ARTISTS, RMT_L_ARTIST, RMT_L_PLAYLISTS, RMT_L_PLAYLIST,
+               RMT_L_FAVORITES, RMT_L_SONGS, RMT_L_FOLDER } rmt_list_t;
+/* POST api/play_item with kind=album (name, song_id) | artist (name, song_id) | playlist (id, pos) | favorites (pos)
+ * | song (song_id) | file (path) | all. song_id / pos are optional: the list starts at its first song. */
+typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL } rmt_item_t;
+
+#define RMT_LIMIT_DEF 200
+#define RMT_LIMIT_MAX 500
+typedef struct {
+    rmt_cmd_kind_t kind;
+    long arg;                /* volume / step / seek ms / play mode */
+    int  sub;                /* rmt_list_t or rmt_item_t */
+    long id, song_id, pos;   /* playlist id, SONG.ID, 1-based position (0 = absent) */
+    long offset, limit;
+    char name[512];          /* album / artist name, or a folder/file path relative to the SD card */
+    char q[96];              /* filter text */
+} rmt_cmd_t;
 
 typedef enum {
-    RC_R_NOT_FOUND = 0,   /* 404: wrong/missing token or unknown path */
-    RC_R_REDIRECT,        /* 301 to /<token>/ (the page uses relative URLs) */
-    RC_R_PAGE,            /* 200 the control page */
-    RC_R_STATE,           /* 200 state JSON */
-    RC_R_CMD,             /* run route.cmd */
-    RC_R_BAD_METHOD,      /* 405 */
-    RC_R_BAD_PARAM        /* 400: missing or out-of-range parameter */
-} rc_route_kind_t;
+    RMT_R_NOT_FOUND = 0,   /* 404: wrong/missing token or unknown path */
+    RMT_R_REDIRECT,        /* 301 to /<token>/ (the page uses relative URLs) */
+    RMT_R_PAGE,            /* 200 the control page */
+    RMT_R_STATE,           /* 200 state JSON */
+    RMT_R_CMD,             /* run route.cmd */
+    RMT_R_BAD_METHOD,      /* 405 */
+    RMT_R_BAD_PARAM        /* 400: missing or out-of-range parameter */
+} rmt_route_kind_t;
 
-typedef struct { rc_route_kind_t kind; rc_cmd_t cmd; } rc_route_t;
+typedef struct { rmt_route_kind_t kind; rmt_cmd_t cmd; } rmt_route_t;
 
 /* A parsed request; the pointers point into the caller's (modified) buffer. */
 typedef struct {
     char *method, *path, *query, *body;   /* query/body: "" when absent */
     long content_length;                   /* -1 when absent */
-} rc_req_t;
+} rmt_req_t;
 
 /* Has buf (n bytes, NUL-terminated) received a whole request yet? 1 complete, 0 need more, -1 malformed/too large. */
-int  rc_req_complete(const char *buf, int n);
+int  rmt_req_complete(const char *buf, int n);
 /* Parse a complete request in place. 0 ok, -1 malformed. */
-int  rc_req_parse(char *buf, rc_req_t *r);
+int  rmt_req_parse(char *buf, rmt_req_t *r);
 /* Route a parsed request against the token. */
-rc_route_t rc_route(const rc_req_t *r, const char *token);
+rmt_route_t rmt_route(const rmt_req_t *r, const char *token);
 
 /* Constant-time comparison of a path segment of length n with the token (1 = equal). */
-int  rc_token_eq(const char *seg, size_t n, const char *token);
+int  rmt_token_eq(const char *seg, size_t n, const char *token);
 /* Encode REMOTE_TOKEN_LEN base32 characters from at least 13 random bytes. out needs REMOTE_TOKEN_LEN + 1. */
-void rc_token_encode(const unsigned char *rnd, size_t n, char *out);
+void rmt_token_encode(const unsigned char *rnd, size_t n, char *out);
 /* 1 if s looks like a token this code made (right length and alphabet). */
-int  rc_token_valid(const char *s);
+int  rmt_token_valid(const char *s);
 
 /* Playback snapshot the main thread publishes for the server. */
 typedef struct {
@@ -66,14 +86,27 @@ typedef struct {
     int  play_mode;          /* 0..4, -1 unknown */
     int  controllable;       /* 1 if transport commands can reach a player now */
     const char *source;      /* "local" | "music_assistant" | "other" (static string) */
-} rc_state_t;
+} rmt_state_t;
 
 /* JSON helpers. Both return the length written (truncation-safe, always NUL-terminated), or -1 if it didn't fit. */
-int  rc_json_escape(char *dst, size_t cap, const char *src);
-int  rc_state_json(char *dst, size_t cap, const rc_state_t *s);
+int  rmt_json_escape(char *dst, size_t cap, const char *src);
+int  rmt_state_json(char *dst, size_t cap, const rmt_state_t *s);
 
-const char *rc_cmd_name(rc_cmd_kind_t k);
+const char *rmt_cmd_name(rmt_cmd_kind_t k);
+
+/* A relative SD path from the API: no leading '/', no "." or ".." segments, no empty segments, no control bytes.
+ * "" is the card's root. 1 = acceptable. (The caller still checks the resolved path stays on the card.) */
+int  rmt_relpath_ok(const char *p);
+/* Case-insensitive (ASCII) substring test; an empty needle matches everything. */
+int  rmt_match(const char *hay, const char *needle);
+
+/* A growing JSON text buffer (main thread). Writes after an allocation failure are dropped and oom is set. */
+typedef struct { char *p; size_t n, cap; int oom; } rmt_buf_t;
+void rmt_buf_put(rmt_buf_t *b, const char *s);
+void rmt_buf_printf(rmt_buf_t *b, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+void rmt_buf_str(rmt_buf_t *b, const char *s);   /* a quoted, escaped JSON string */
+char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NULL after oom */
 
 /* The control page (static HTML). */
-extern const char RC_PAGE_HTML[];
+extern const char RMT_PAGE_HTML[];
 #endif

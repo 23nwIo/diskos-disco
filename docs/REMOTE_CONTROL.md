@@ -1,10 +1,12 @@
 # Remote Control over Wi-Fi
 
 Control playback on the Disc from a phone or computer browser on the same Wi-Fi network: play/pause, next/previous,
-seek, volume and play mode, with the current song shown. Off by default.
+seek, volume and play mode, with the current song shown, and browse the library (albums, artists, playlists,
+favourites, songs, card folders) to start something. Off by default.
 
 > **Not yet tested on a Disc.** The control page, the JSON API and the server are tested on a host build
-> (`ui/tests/remote_test.c`, a real HTTP round trip, and the page in Chromium), and the settings screens are rendered
+> (`ui/tests/remote_test.c`, a real HTTP round trip, and the page in Chromium), the library API runs against a test
+> `song.db` through the production code (`ui/tests/remote_library_test.py`), and the settings screens are rendered
 > in every theme. A device test (MIPS build, real Wi-Fi, the player's reaction to each command) is still open.
 
 ## Turn it on
@@ -30,8 +32,15 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Play mode | Sequential, Shuffle, Repeat one, Repeat all, Single. Saved like the Disc's own setting. Not available while Music Assistant plays. |
 
 Commands that need local playback are refused while the Disc is in another working mode (USB DAC, Bluetooth DAC,
-AirPlay, USB storage) and the page says why. Browsing the library and starting a song from the page are not part of
-this first version.
+AirPlay, USB storage) and the page says why.
+
+### Library
+
+The page's other tabs list **Albums, Artists, Playlists, Favourites, Songs** and **Folders** (the card's own folders,
+audio files only). Each list has a search field and loads 100 entries at a time. Tap an album, artist, playlist or
+folder to open it; tap a song to play it in that context (the album, the artist's songs, the playlist, favourites or
+the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
+card on the Disc after copying new music). Folders never leave the card: `..` and links pointing elsewhere are refused.
 
 ## Security
 
@@ -46,7 +55,7 @@ this first version.
   The page loads nothing from the internet and sends a strict Content-Security-Policy, `no-store`, `nosniff`,
   `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`.
 - **Bounded.** One client is served at a time; each request has a 4 KB limit and a 6 s deadline, so a slow or broken
-  client cannot exhaust the Disc. A command waits at most 3 s for the UI; one that was not picked up by then is
+  client cannot exhaust the Disc. A command waits at most 5 s for the UI; one that was not picked up by then is
   withdrawn rather than run late.
 
 ## API
@@ -63,6 +72,8 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/volume` with `value=0..120` or `step=-120..120` | Absolute or relative volume. |
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
+| `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`; `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
+| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=all`. `pos` counts from 1. |
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
 (`message` says why), 503 another command is still running, 504 the UI did not answer in time.
@@ -80,5 +91,6 @@ curl "http://192.168.1.50:8088/<link code>/api/state"
 |---|---|
 | `ui/remote_core.c` | Request parsing, routing, link code, JSON, the control page (pure, host-tested). |
 | `ui/remote_srv.c` | The server thread and the one-slot command mailbox to the UI (no LVGL). |
-| `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to` and `ui_set_workmode`. |
+| `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to`, `ui_set_workmode`, the `mdb_*` library queries and the `ui_play_*` entry points. |
 | `ui/tests/remote_test.c` | Unit tests and the HTTP round trip (`make -C ui/tests remote_test`); `./remote_test --serve PORT` serves the page with a stand-in player for browser checks. |
+| `ui/tests/remote_library_test.py` | The library API against a test `song.db` and card through `host-render` (build it first). |

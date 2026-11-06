@@ -14,4 +14,5 @@ void remote_show_link(void);     /* QR + address overlay */
 void remote_new_link(void);      /* confirm, then a new token (old links stop working) */
 int  remote_link_shown(void);    /* the overlay is up (keeps the screen lit) */
 void remote_test_link(const char *url);   /* host renders only */
+int  remote_test_request(const char *method, const char *path_query, const char *body, char **out, const char **why);   /* host tests only */
 #endif

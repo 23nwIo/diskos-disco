@@ -9,6 +9,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -23,12 +24,13 @@ static char g_token[REMOTE_TOKEN_LEN + 1];
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_cv;                 /* CLOCK_MONOTONIC, set up in rsrv_start */
 static int g_cv_ready;
-static rc_state_t g_state;                   /* guarded by g_mu */
+static rmt_state_t g_state;                   /* guarded by g_mu */
 static int g_have_state;
 /* one-slot mailbox, guarded by g_mu */
 static int g_box_full, g_box_taken, g_box_done, g_box_orphan, g_box_ok;
-static rc_cmd_t g_box_cmd;
+static rmt_cmd_t g_box_cmd;
 static char g_box_msg[96];
+static char *g_box_body;                     /* a JSON answer from the main thread (malloc'd; the server frees it) */
 static void (*g_notify)(void);
 void rsrv_set_notify(void (*cb)(void)){ g_notify = cb; }
 
@@ -38,28 +40,34 @@ static long long now_ms(void){
 }
 
 /* ---------------------------------------------------------------- main-thread side */
-void rsrv_publish(const rc_state_t *s){
+void rsrv_publish(const rmt_state_t *s){
     pthread_mutex_lock(&g_mu);
     g_state = *s; g_have_state = 1;
     pthread_mutex_unlock(&g_mu);
 }
-int rsrv_take(rc_cmd_t *out){
+int rsrv_take(rmt_cmd_t *out){
     int r = 0;
     pthread_mutex_lock(&g_mu);
     if(g_box_full && !g_box_taken){ *out = g_box_cmd; g_box_taken = 1; r = 1; }
     pthread_mutex_unlock(&g_mu);
     return r;
 }
-void rsrv_done(int ok, const char *message){
+void rsrv_done_body(int ok, const char *message, char *body){
     pthread_mutex_lock(&g_mu);
     if(g_box_full && g_box_taken){
         g_box_ok = ok; g_box_done = 1;
         snprintf(g_box_msg, sizeof g_box_msg, "%s", message ? message : "");
-        if(g_box_orphan) g_box_full = g_box_taken = g_box_done = g_box_orphan = 0;   /* its request gave up: free the slot */
+        free(g_box_body); g_box_body = body; body = NULL;
+        if(g_box_orphan){                                  /* its request gave up: free the slot */
+            g_box_full = g_box_taken = g_box_done = g_box_orphan = 0;
+            free(g_box_body); g_box_body = NULL;
+        }
         pthread_cond_broadcast(&g_cv);
     }
     pthread_mutex_unlock(&g_mu);
+    free(body);                                            /* nobody waiting for it */
 }
+void rsrv_done(int ok, const char *message){ rsrv_done_body(ok, message, NULL); }
 
 /* ---------------------------------------------------------------- HTTP */
 static void send_all(int c, const char *p, size_t n){
@@ -76,12 +84,12 @@ static void reply(int c, const char *status, const char *ctype, const char *body
 }
 static void reply_json_err(int c, const char *status, const char *code, const char *message){
     char b[256], m[160];
-    rc_json_escape(m, sizeof m, message);
+    rmt_json_escape(m, sizeof m, message);
     snprintf(b, sizeof b, "{\"ok\":false,\"error\":\"%s\",\"message\":\"%s\"}", code, m);
     reply(c, status, "application/json", b, NULL);
 }
 
-static void run_cmd(int c, rc_cmd_t cmd){
+static void run_cmd(int c, rmt_cmd_t cmd){
     pthread_mutex_lock(&g_mu);
     if(g_box_full){ pthread_mutex_unlock(&g_mu); reply_json_err(c, "503 Service Unavailable", "busy", "Another command is still running"); return; }
     g_box_cmd = cmd; g_box_full = 1; g_box_taken = g_box_done = g_box_orphan = 0; g_box_msg[0] = 0;
@@ -100,10 +108,12 @@ static void run_cmd(int c, rc_cmd_t cmd){
         return;
     }
     int ok = g_box_ok; char msg[96]; snprintf(msg, sizeof msg, "%s", g_box_msg);
+    char *body = g_box_body; g_box_body = NULL;
     g_box_full = g_box_taken = g_box_done = 0;
     pthread_mutex_unlock(&g_mu);
-    if(ok) reply(c, "200 OK", "application/json", "{\"ok\":true}", NULL);
+    if(ok) reply(c, "200 OK", "application/json", body ? body : "{\"ok\":true}", NULL);
     else reply_json_err(c, "409 Conflict", "refused", msg[0] ? msg : "Not possible right now");
+    free(body);
 }
 
 static void handle(int c){
@@ -117,32 +127,32 @@ static void handle(int c){
         int r = (int)recv(c, buf + n, sizeof buf - 1 - (size_t)n, 0);
         if(r <= 0) break;
         n += r; buf[n] = 0;
-        if((st = rc_req_complete(buf, n)) != 0) break;
+        if((st = rmt_req_complete(buf, n)) != 0) break;
     }
     if(st != 1){ if(st < 0) reply(c, "400 Bad Request", "text/plain", "bad request", NULL); return; }
-    rc_req_t rq;
-    if(rc_req_parse(buf, &rq)){ reply(c, "400 Bad Request", "text/plain", "bad request", NULL); return; }
-    rc_route_t rt = rc_route(&rq, g_token);
+    rmt_req_t rq;
+    if(rmt_req_parse(buf, &rq)){ reply(c, "400 Bad Request", "text/plain", "bad request", NULL); return; }
+    rmt_route_t rt = rmt_route(&rq, g_token);
     switch(rt.kind){
-    case RC_R_REDIRECT: {
+    case RMT_R_REDIRECT: {
         char loc[64]; snprintf(loc, sizeof loc, "Location: /%s/\r\n", g_token);
         reply(c, "301 Moved Permanently", "text/plain", "", loc); break; }
-    case RC_R_PAGE:
-        reply(c, "200 OK", "text/html; charset=utf-8", RC_PAGE_HTML,
+    case RMT_R_PAGE:
+        reply(c, "200 OK", "text/html; charset=utf-8", RMT_PAGE_HTML,
               "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'\r\n");
         break;
-    case RC_R_STATE: {
-        rc_state_t s; int have;
+    case RMT_R_STATE: {
+        rmt_state_t s; int have;
         if(g_notify) g_notify();                          /* a fresher snapshot for the next poll */
         pthread_mutex_lock(&g_mu); s = g_state; have = g_have_state; pthread_mutex_unlock(&g_mu);
         if(!have){ reply_json_err(c, "503 Service Unavailable", "starting", "Starting up"); break; }
         static char js[3400];
-        if(rc_state_json(js, sizeof js, &s) < 0){ reply_json_err(c, "500 Internal Server Error", "internal", "State too large"); break; }
+        if(rmt_state_json(js, sizeof js, &s) < 0){ reply_json_err(c, "500 Internal Server Error", "internal", "State too large"); break; }
         reply(c, "200 OK", "application/json", js, NULL);
         break; }
-    case RC_R_CMD: run_cmd(c, rt.cmd); break;
-    case RC_R_BAD_METHOD: reply_json_err(c, "405 Method Not Allowed", "method", "Wrong method"); break;
-    case RC_R_BAD_PARAM: reply_json_err(c, "400 Bad Request", "param", "Missing or invalid value"); break;
+    case RMT_R_CMD: run_cmd(c, rt.cmd); break;
+    case RMT_R_BAD_METHOD: reply_json_err(c, "405 Method Not Allowed", "method", "Wrong method"); break;
+    case RMT_R_BAD_PARAM: reply_json_err(c, "400 Bad Request", "param", "Missing or invalid value"); break;
     default: reply(c, "404 Not Found", "text/plain", "not found", NULL); break;
     }
 }
@@ -163,7 +173,7 @@ static void *worker(void *arg){
 
 int rsrv_start(const char *bind_ip, int port, const char *token){
     if(g_live) return -1;
-    if(!rc_token_valid(token) || !bind_ip) return -1;
+    if(!rmt_token_valid(token) || !bind_ip) return -1;
     struct sockaddr_in a; memset(&a, 0, sizeof a);
     a.sin_family = AF_INET; a.sin_port = htons((unsigned short)port);
     if(inet_pton(AF_INET, bind_ip, &a.sin_addr) != 1 || a.sin_addr.s_addr == htonl(INADDR_ANY)) return -1;   /* never every interface */
@@ -196,6 +206,7 @@ void rsrv_stop(void){
     close(g_fd); g_fd = -1; g_live = 0;
     pthread_mutex_lock(&g_mu);
     g_box_full = g_box_taken = g_box_done = g_box_orphan = 0;
+    free(g_box_body); g_box_body = NULL;
     pthread_mutex_unlock(&g_mu);
     memset(g_token, 0, sizeof g_token);
 }

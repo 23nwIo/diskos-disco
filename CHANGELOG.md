@@ -9,8 +9,8 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   Opus, FLAC; HTTP and HTTPS) and the usual Music screen shows it. Any song you start returns to normal playback. Not
   yet tested as a build on a Disc. [Guide](docs/RADIO.md)
 - Remote Control (Settings > Connectivity, off by default): control playback from a phone or computer browser on the
-  same Wi-Fi through a private link (QR code on the Disc): play/pause, skip, seek, volume and play mode, plus a small
-  JSON API for scripts. Plain HTTP on your network; New Link revokes old links. Not yet tested on a Disc.
+  same Wi-Fi through a private link (QR code on the Disc): play/pause, skip, seek, volume and play mode, browse
+  albums, artists, playlists, favourites, songs and card folders to start playback, plus a small JSON API for scripts. Plain HTTP on your network; New Link revokes old links. Not yet tested on a Disc.
   [Guide](docs/REMOTE_CONTROL.md)
 - Bluetooth: give a device its own name on the Disc (hold its row, or Rename on its details screen); it is kept per
   address and never sent to the device. Two devices with the same name show the end of their address, e.g.

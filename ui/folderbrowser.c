@@ -94,6 +94,8 @@ static int fb_is_audio(const char *name){
         || fb_has_ext(name, ".opus") || fb_has_ext(name, ".oga");
 }
 
+int folderbrowser_is_audio(const char *name){ return name && fb_is_audio(name); }   /* Remote Control lists the same files */
+
 /* folders first, then files; case-insensitive within each group. */
 static int fb_cmp(const void *a, const void *b){
     const fb_entry_t *x = a, *y = b;

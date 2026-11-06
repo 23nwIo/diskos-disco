@@ -10,7 +10,7 @@
 #define DISKOS_REMOTE_SRV_H
 #include "remote_core.h"
 
-#define RSRV_CMD_WAIT_MS 3000
+#define RSRV_CMD_WAIT_MS 5000   /* a library listing on a big card can take a moment */
 
 /* Listen on bind_ip:port (dotted quad, never "any") under the given token. 0 ok, -1 failed (nothing left running). */
 int  rsrv_start(const char *bind_ip, int port, const char *token);
@@ -18,8 +18,9 @@ void rsrv_stop(void);                     /* joins the thread; safe when not run
 int  rsrv_running(void);
 int  rsrv_port(void);                     /* the bound port (useful with port 0 in tests) */
 
-void rsrv_publish(const rc_state_t *s);   /* main thread: the latest snapshot (strings copied) */
+void rsrv_publish(const rmt_state_t *s);   /* main thread: the latest snapshot (strings copied) */
 void rsrv_set_notify(void (*cb)(void));  /* called on the server thread when a command waits or state is asked for */
-int  rsrv_take(rc_cmd_t *out);            /* main thread: 1 = a command is waiting (now taken), 0 = none */
+int  rsrv_take(rmt_cmd_t *out);            /* main thread: 1 = a command is waiting (now taken), 0 = none */
 void rsrv_done(int ok, const char *message);   /* main thread: result of the taken command (message: why not, or NULL) */
+void rsrv_done_body(int ok, const char *message, char *body);   /* same, with a JSON answer (malloc'd; ownership passes) */
 #endif

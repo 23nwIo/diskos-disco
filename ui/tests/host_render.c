@@ -53,6 +53,7 @@ int __real_mdb_song_count(void);
 int __real_ui_play_list(int,const char*,int);
 int __wrap_mdb_song_count(void){return shuffle_test_active?shuffle_test_count:__real_mdb_song_count();}
 int __wrap_ui_play_list(int kind,const char*name,int pos){
+ if(getenv("REMOTE_REQS")){printf("PLAY_LIST type=%d name='%s' pos=%d\n",kind,name?name:"",pos);return 1;}   /* Remote Control: what it asks the player for */
  if(!shuffle_test_active)return __real_ui_play_list(kind,name,pos);
  assert(kind==1 && name && !*name && pos>=1 && pos<=shuffle_test_count);
  shuffle_test_calls++;shuffle_test_pos=pos;
@@ -149,7 +150,7 @@ static void count_style_event(lv_event_t *e){(void)e;test_style_events++;}
 static void watch_styles(lv_obj_t *o){lv_obj_add_event_cb(o,count_style_event,LV_EVENT_STYLE_CHANGED,NULL);for(uint32_t i=0;i<lv_obj_get_child_count(o);i++)watch_styles(lv_obj_get_child(o,i));}
 static int fixture, send_result, send_count;static char last_sent[32];
 int __real_ui_local_playback_allowed(void);
-int __wrap_ui_local_playback_allowed(void){return (getenv("REVIEW_BRAUN2")||getenv("REVIEW_ZUNE")||getenv("REVIEW_ZUNE_BACK"))?1:__real_ui_local_playback_allowed();}
+int __wrap_ui_local_playback_allowed(void){return (getenv("REMOTE_REQS")||getenv("REVIEW_BRAUN2")||getenv("REVIEW_ZUNE")||getenv("REVIEW_ZUNE_BACK"))?1:__real_ui_local_playback_allowed();}
 static int null_transport_calls;static char null_last_command[24];
 int __real_ui_transport_command(const char*);
 int __wrap_ui_transport_command(const char*cmd){if(getenv("REVIEW_BRAUN2")||getenv("REVIEW_ZQS_BANNER")||getenv("REVIEW_ZUNE")||getenv("REVIEW_ZUNE_BACK")||getenv("REVIEW_SHELF_PLAYER")||getenv("REVIEW_NULL")||getenv("REVIEW_NULL_GESTURES")||getenv("REVIEW_SQUASH_HOLD")||getenv("REVIEW_SIMPLE_PERF")||getenv("REVIEW_SIMPLE")){null_transport_calls++;snprintf(null_last_command,sizeof null_last_command,"%s",cmd);return 0;}return __real_ui_transport_command(cmd);}
@@ -2411,6 +2412,19 @@ int main(int argc, char **argv){
         if(getenv("MA_STATE")){ void ma_test_state(int); scr=SCR_MA; screen_show(scr); ma_test_state(atoi(getenv("MA_STATE"))); for(int i=0;i<30;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MA_DELAY")){ void settings_open_ma_delay(void); cfg_set_int("ma_delay_ms",atoi(getenv("MA_DELAY"))); setlist_open("Network"); settings_open_ma_delay(); scr=SCR_SETTING_DETAIL; for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("VK_SET")){ void settings_open_volkeys(void); setlist_open("System"); scr=SCR_SETLIST; screen_show(scr); settings_open_volkeys(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
+        if(getenv("REMOTE_REQS")){   /* Remote Control: requests (one per line: METHOD PATH[?QUERY] [BODY]) through the real main-thread half */
+            int remote_test_request(const char *, const char *, const char *, char **, const char **);
+            FILE *rf = fopen(getenv("REMOTE_REQS"), "r"); assert(rf); char line[2048];
+            while(fgets(line, sizeof line, rf)){
+                line[strcspn(line, "\n")] = 0; if(!line[0]) continue;
+                char *m = strtok(line, " "), *pq = strtok(NULL, " "), *bd = strtok(NULL, "");
+                char *out = NULL; const char *why = NULL; send_count = 0; last_sent[0] = 0;
+                int rc = remote_test_request(m, pq, bd ? bd : "", &out, &why);
+                printf("REQ %s %s %s\nRC %d WHY %s SENT %d %s\nBODY %s\n", m, pq, bd ? bd : "", rc, why ? why : "-", send_count, last_sent, out ? out : "-");
+                free(out);
+            }
+            fclose(rf); fflush(stdout); return 0;
+        }
         if(getenv("REMOTE_SET")){ void settings_open_remote(void); setlist_open("Network"); scr=SCR_SETLIST; screen_show(scr); settings_open_remote(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("REMOTE_LINK")){ void remote_test_link(const char *); remote_test_link(getenv("REMOTE_LINK")); for(int i=0;i<80;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MA_SET")){ void settings_open_ma(void); setlist_open("Network"); scr=SCR_SETLIST; screen_show(scr); settings_open_ma(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
