@@ -129,6 +129,7 @@ void quicksettings_set_battery(int pct, int charging);                          
 /* song info (songinfo.c) */
 void songinfo_create(lv_obj_t *root);
 void songinfo_set(const track_state_t *st);
+void songinfo_probe(const char *path, int *bits, int *channels, int *kbps);   /* file header: worker threads only */
 void songinfo_output_tick(void);                /* Output row (Bluetooth codec): refresh while Song Info is visible */
 /* Now Playing side menus (npmenus.c) + custom EQ (eqcustom.c) */
 void npmenu_create(lv_obj_t *root);

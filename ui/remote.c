@@ -25,6 +25,8 @@
 #include "folderbrowser.h"
 #include "radio.h"
 #include <arpa/inet.h>
+#include <ctype.h>
+#include <pthread.h>
 #include <dirent.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -117,6 +119,57 @@ static const char *source_name(void){
     if(radio_active()) return "radio";
     return ui_get_source_mode() == 0 ? "local" : "other";
 }
+/* ---- the playing file's technical details: format and average rate on the main thread (a DB row, a stat), bit depth
+ * and channels from Song Info's bounded header read on a short-lived thread (it reads the card) */
+static pthread_mutex_t g_tech_mu = PTHREAD_MUTEX_INITIALIZER;
+static char g_tech_path[256], g_tech_fmt[16];
+static int g_tech_kbps, g_tech_bits, g_tech_ch, g_tech_probing, g_tech_sr;
+static unsigned g_tech_gen;
+static void *tech_worker(void *arg){
+    (void)arg;
+    char path[256]; unsigned gen;
+    pthread_mutex_lock(&g_tech_mu); snprintf(path, sizeof path, "%s", g_tech_path); gen = g_tech_gen; pthread_mutex_unlock(&g_tech_mu);
+    int bits = 0, ch = 0, kbps = 0;
+    if(sd_io_begin()){ songinfo_probe(path, &bits, &ch, &kbps); sd_io_end(); }
+    pthread_mutex_lock(&g_tech_mu);
+    if(gen == g_tech_gen){ g_tech_bits = bits; g_tech_ch = ch; if(kbps > 0) g_tech_kbps = kbps; }
+    g_tech_probing = 0;
+    pthread_mutex_unlock(&g_tech_mu);
+    return NULL;
+}
+static void tech_fill(rmt_state_t *s, const track_state_t *st){
+    if(!st->have_track || !st->path[0]) return;
+    pthread_mutex_lock(&g_tech_mu);
+    if(strcmp(g_tech_path, st->path)){
+        snprintf(g_tech_path, sizeof g_tech_path, "%s", st->path); g_tech_gen++;
+        g_tech_kbps = g_tech_bits = g_tech_ch = g_tech_sr = 0; g_tech_fmt[0] = 0;
+        const char *ext = strrchr(st->path, '.'), *sl = strrchr(st->path, '/');
+        if(ext && (!sl || ext > sl) && ext[1]){ size_t i; for(i = 0; i < sizeof g_tech_fmt - 1 && ext[1 + i]; i++) g_tech_fmt[i] = (char)toupper((unsigned char)ext[1 + i]); g_tech_fmt[i] = 0; }
+        pthread_mutex_unlock(&g_tech_mu);
+        int br = 0, sr = 0;
+        mdb_song_rates(st->path, &br, &sr);                /* the scanner's values, as Song Info shows them */
+        pthread_mutex_lock(&g_tech_mu);
+        if(br > 0) g_tech_kbps = (br + 500) / 1000;
+        g_tech_sr = sr;
+        if(!g_tech_probing){
+            pthread_t th;
+            if(pthread_create(&th, NULL, tech_worker, NULL) == 0){ pthread_detach(th); g_tech_probing = 1; }
+        }
+    }
+    if(!g_tech_kbps && st->duration_ms > 0){              /* else the file's average, once its length is known */
+        struct stat fs;
+        if(stat(st->path, &fs) == 0 && fs.st_size > 0) g_tech_kbps = (int)(((long long)fs.st_size * 8 + st->duration_ms / 2) / st->duration_ms);
+    }
+    snprintf(s->format, sizeof s->format, "%s", st->is_dsd ? "DSD" : g_tech_fmt);
+    s->kbps = st->is_dsd ? 0 : g_tech_kbps; s->bits = g_tech_bits; s->channels = g_tech_ch;
+    s->sample_rate = st->sample_rate > 0 ? st->sample_rate : g_tech_sr;
+    pthread_mutex_unlock(&g_tech_mu);
+}
+static const char *cover_file(void){                     /* the decoded cover of the playing song, or NULL */
+    const char *c = ui_current_cover_src();
+    if(!c) return NULL;
+    return !strncmp(c, "A:", 2) ? c + 2 : c;
+}
 static void snapshot(rmt_state_t *s){
     track_state_t st; ipc_get_state(&st);
     memset(s, 0, sizeof *s);
@@ -134,6 +187,17 @@ static void snapshot(rmt_state_t *s){
     snprintf(s->station, sizeof s->station, "%s", radio_station_name());
     snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
     s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
+    s->favorite = -1;
+    rc_station_t rs;
+    if(radio_active() && radio_station(&rs)){             /* the station's own codec and rate (the directory's word) */
+        snprintf(s->format, sizeof s->format, "%s", rs.codec); s->kbps = rs.bitrate;
+    } else if(!music_assistant() && st.have_track){
+        tech_fill(s, &st);
+        s->favorite = st.is_favorite ? 1 : 0;
+        const char *cf = cover_file(); struct stat cs;
+        if(cf && stat(cf, &cs) == 0)                       /* the file is rewritten per track: its identity + time name it */
+            snprintf(s->art, sizeof s->art, "%lx-%lx-%lx", (unsigned long)cs.st_ino, (unsigned long)cs.st_mtime, (unsigned long)cs.st_mtim.tv_nsec);
+    }
 }
 static int radio_fav_cmd(const rmt_cmd_t *c, const char **why);
 static const char *const NOT_LOCAL = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)";
@@ -410,8 +474,20 @@ static int play_item(const rmt_cmd_t *c, const char **why){
     if(!ok && !*why) *why = REFUSED;
     return ok ? 0 : -1;
 }
+static int g_blob_len;                                  /* dispatch's binary answer length (0 = JSON or none) */
+static char *read_cover(const char **why){
+    const char *cf = cover_file();
+    FILE *f = cf ? fopen(cf, "rb") : NULL;
+    if(!f){ *why = "No cover"; return NULL; }
+    char *b = malloc(256 * 1024); size_t n = b ? fread(b, 1, 256 * 1024, f) : 0;
+    fclose(f);
+    if(!n || n >= 256 * 1024){ free(b); *why = "No cover"; return NULL; }   /* a 148 px BMP is ~66 KB */
+    g_blob_len = (int)n;
+    return b;
+}
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
-    *body = NULL;
+    *body = NULL; g_blob_len = 0;
+    if(c->kind == RMT_CMD_COVER){ *body = read_cover(why); return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_BROWSE){ *body = browse(c, why); if(!*body && !*why) *why = "Out of memory"; return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_PLAY_ITEM) return play_item(c, why);
     return run(c, why);
@@ -438,9 +514,10 @@ void remote_pump(void){
         const char *why = NULL; char *body = NULL;
         int rc = dispatch(&c, &why, &body);
         fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr);
-        rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);
+        if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
+        else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);
         if(rc == 0 && c.kind == RMT_CMD_PLAY_MODE) g_mode_at = 0;   /* show the new mode at once */
-        if(rc == 0 && c.kind != RMT_CMD_BROWSE){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
+        if(rc == 0 && c.kind != RMT_CMD_BROWSE && c.kind != RMT_CMD_COVER){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
     }
 }
 

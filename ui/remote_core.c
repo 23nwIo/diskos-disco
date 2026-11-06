@@ -249,6 +249,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_BROWSE) return "library";
     if(k == RMT_CMD_PLAY_ITEM) return "play_item";
     if(k == RMT_CMD_RADIO_SEARCH) return "radio_search";
+    if(k == RMT_CMD_COVER) return "cover";
     if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
@@ -268,6 +269,7 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
     if(strncmp(rest, "/api/", 5)) return rt;
     const char *ep = rest + 5;
     if(!strcmp(ep, "state")){ rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; return rt; }
+    if(!strcmp(ep, "cover")){ rt.kind = get ? RMT_R_CMD : RMT_R_BAD_METHOD; if(get) rt.cmd.kind = RMT_CMD_COVER; return rt; }
     if(!strncmp(ep, "library/", 8)){
         int k = route_list(r, ep + 8, &rt.cmd);
         if(k == 0){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
@@ -346,18 +348,21 @@ int rmt_json_escape(char *dst, size_t cap, const char *src){
 }
 int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
     char t[sizeof s->title * 6], a[sizeof s->artist * 6], al[sizeof s->album * 6];   /* worst case: every byte \u00XX */
-    char st[sizeof s->station * 6], re[sizeof s->radio_error * 6];
+    char st[sizeof s->station * 6], re[sizeof s->radio_error * 6], fm[sizeof s->format * 6], ar[sizeof s->art * 6];
     if(rmt_json_escape(t, sizeof t, s->title) < 0 || rmt_json_escape(a, sizeof a, s->artist) < 0 ||
        rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 ||
-       rmt_json_escape(re, sizeof re, s->radio_error) < 0){ if(cap) dst[0] = 0; return -1; }
+       rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
+       rmt_json_escape(ar, sizeof ar, s->art) < 0){ if(cap) dst[0] = 0; return -1; }
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,"
-        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"radio_error\":\"%s\"}",
+        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"radio_error\":\"%s\","
+        "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\"}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
         s->volume, s->volume_max, s->play_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
-        s->radio_state ? s->radio_state : "off", st, re);
+        s->radio_state ? s->radio_state : "off", st, re,
+        fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
     return n;
 }
@@ -421,7 +426,8 @@ const char RMT_PAGE_HTML[] =
 ".card{background:var(--card);border-radius:14px;padding:1em;margin-bottom:1em}\n"
 "#t{font-size:1.3em;font-weight:700}\n"
 "#t,#a,#al,.r b,.r small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}\n"
-"#a,#al,.r small{color:var(--mut)}\n"
+"#a,#al,.r small,#tx{color:var(--mut)}#tx{font-size:.8em;margin-top:.2em}\n"
+"#cv{display:block;width:100%;max-width:16em;aspect-ratio:1;margin:0 auto .8em;border-radius:10px;object-fit:cover;image-rendering:auto}\n"
 "input[type=range]{width:100%;accent-color:var(--acc)}\n"
 ".row{display:flex;justify-content:space-between;color:var(--mut);font-size:.85em}\n"
 ".tr{display:flex;gap:.6em;margin:0 0 1em}\n"
@@ -442,7 +448,7 @@ const char RMT_PAGE_HTML[] =
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
 "<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>\n"
 "<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button></div>\n"
-"<div id=np><div class=card><div id=t>-</div><div id=a></div><div id=al></div>\n"
+"<div id=np><div class=card><img id=cv class=hide alt=''><div id=t>-</div><div id=a></div><div id=al></div><div id=tx></div>\n"
 "<input id=pos type=range min=0 max=1 value=0 aria-label=Position><div class=row><span id=pc>0:00</span><span id=du>0:00</span></div></div>\n"
 "<button id=rs class='more hide'>Stop radio</button>\n"
 "<div class=tr><button id=pv aria-label=Previous>&#9198;</button><button id=pp class=pp aria-label='Play or pause'>&#9199;</button>\n"
@@ -455,7 +461,7 @@ const char RMT_PAGE_HTML[] =
 "<div id=list></div><button id=mo class='more hide'>Load more</button></div>\n"
 "<div id=msg></div></main>\n"
 "<script>\n"
-"var $=function(i){return document.getElementById(i)},drag={},busy=0,V='np',st=[],items=[],tot=0;\n"
+"var art='',$=function(i){return document.getElementById(i)},drag={},busy=0,V='np',st=[],items=[],tot=0;\n"
 "function fm(ms){var s=Math.floor(ms/1000);return Math.floor(s/60)+':'+('0'+s%60).slice(-2)}\n"
 "function enc(o){return Object.keys(o).map(function(k){return k+'='+encodeURIComponent(o[k])}).join('&')}\n"
 "var mt;function say(t,ok){var m=$('msg');m.textContent=t||'';m.className=ok?'':'err';clearTimeout(mt);if(ok)mt=setTimeout(function(){say('')},2500)}\n"
@@ -467,6 +473,8 @@ const char RMT_PAGE_HTML[] =
 "$('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;\n"
 "var ra=s.source==='radio';if(ra){$('t').textContent=s.station||'Web radio';$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):'Web radio';$('al').textContent=''}\n"
 "$('rs').classList.toggle('hide',!ra);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||s.play_mode<0);\n"
+"var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');$('tx').textContent=s.has_track||ra?tx:'';\n"
+"if(s.art!==art){art=s.art;if(art)$('cv').src='api/cover?v='+encodeURIComponent(art);else $('cv').classList.add('hide')}\n"
 "$('pp').innerHTML=s.playing?'&#9208;':'&#9654;';\n"
 "if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}\n"
 "$('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);\n"
@@ -477,6 +485,7 @@ const char RMT_PAGE_HTML[] =
 "$('pp').onclick=function(){cmd('play_pause')};$('nx').onclick=function(){cmd('next')};$('pv').onclick=function(){cmd('previous')};\n"
 "['pos','vol'].forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value};\n"
 "e.onchange=function(){drag[i]=0;cmd(i==='pos'?'seek':'volume',(i==='pos'?'position_ms=':'value=')+e.value)}});\n"
+"$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};\n"
 "$('rs').onclick=function(){cmd('radio_stop')};$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};\n"
 "/* library: st = stack of views {l:list, p:params, t:title, play:item for Play all, row:function(item)->[title,sub,action]} */\n"
 "var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,{kind:'album',name:x.name},function(s){return song(s,{kind:'album',name:x.name,song_id:s.id})})}]}],\n"

@@ -19,6 +19,7 @@ void radio_stop(void);                                  /* stop the stream and r
 int  radio_active(void);                                /* 1 while the radio holds the player (source mode 6) */
 const char *radio_state(void);                          /* "off" | "starting" | "playing" | "error" */
 const char *radio_station_name(void);                   /* the current station, "" none */
+int  radio_station(rc_station_t *out);                  /* the current station with codec and bitrate; 0 none */
 const char *radio_last_error(void);                     /* "" none */
 /* The Radio screen's directory search, for other front ends: the same worker, download and parser. One search runs at
  * a time (a newer one replaces a waiting one); the Disc's Results view shows whichever finished last. */

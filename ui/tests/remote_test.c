@@ -161,7 +161,7 @@ static void test_core(void){
     snprintf(s.title, sizeof s.title, "Song \"1\""); snprintf(s.artist, sizeof s.artist, "Art");
     s.has_track = 1; s.playing = 1; s.position_ms = 1000; s.duration_ms = 2000; s.volume = 40; s.volume_max = 120;
     s.play_mode = 1; s.controllable = 1; s.source = "local";
-    char js[5200]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
+    char js[6000]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strstr(js, "\"radio_state\":\"off\"") && strstr(js, "\"station\":\"\""));
     CHECK(strstr(js, "\"title\":\"Song \\\"1\\\"\"") != NULL);
     CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"source\":\"local\""));
@@ -224,6 +224,8 @@ static void *emu(void *a){
     (void)a;
     rmt_state_t s; memset(&s, 0, sizeof s);
     snprintf(s.title, sizeof s.title, "Track <one>"); s.has_track = 1; s.volume = 33; s.volume_max = 120; s.source = "local"; s.controllable = 1;
+    snprintf(s.format, sizeof s.format, "FLAC"); s.bits = 24; s.sample_rate = 96000; s.kbps = 2304; s.channels = 2; s.favorite = 0;
+    snprintf(s.art, sizeof s.art, "a1");
     while(g_emu_run){
         if(!g_emu_pause){
             rsrv_publish(&s);
@@ -232,6 +234,12 @@ static void *emu(void *a){
                 g_last = c; g_ncmd++;
                 if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));
+                else if(c.kind == RMT_CMD_COVER){                       /* a 16x16 24-bit BMP, a colour gradient */
+                    size_t n = 54 + 16 * 16 * 3; unsigned char *b = calloc(1, n);
+                    memcpy(b, "BM", 2); b[2] = (unsigned char)n; b[3] = (unsigned char)(n >> 8); b[10] = 54; b[14] = 40; b[18] = 16; b[22] = 16; b[26] = 1; b[28] = 24;
+                    for(int i = 0; i < 256; i++){ b[54 + i * 3] = (unsigned char)(i); b[55 + i * 3] = 80; b[56 + i * 3] = (unsigned char)(255 - i); }
+                    rsrv_done_blob((char *)b, n, "image/bmp");
+                }
                 else if(c.kind == RMT_CMD_PLAY_ITEM && c.sub == RMT_I_RADIO){        /* stand-in radio: it plays at once */
                     s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Station %ld", c.pos);
                     snprintf(s.title, sizeof s.title, "Station %ld", c.pos); rsrv_done(1, NULL);
@@ -288,6 +296,9 @@ static void test_server(void){
     CHECK(strstr(out, "application/json") && strstr(out, "\"title\":\"Track \\u003cone>\"") && strstr(out, "\"volume\":33"));
     CHECK(call("POST", p("/api/next"), "", out, sizeof out) == 200 && strstr(out, "{\"ok\":true}"));
     CHECK(g_last.kind == RMT_CMD_NEXT);
+    CHECK(call("GET", p("/api/cover?v=a1"), NULL, out, sizeof out) == 200 && strstr(out, "Content-Type: image/bmp") && strstr(out, "Content-Length: 822"));
+    CHECK(call("POST", p("/api/cover"), "", out, sizeof out) == 405);
+    CHECK(call("GET", p("/api/state"), NULL, out, sizeof out) == 200 && strstr(out, "\"format\":\"FLAC\",\"kbps\":2304,\"bits\":24,\"sample_rate\":96000") && strstr(out, "\"art\":\"a1\""));
     CHECK(call("POST", p("/api/volume"), "value=77", out, sizeof out) == 200);
     CHECK(g_last.kind == RMT_CMD_VOLUME && g_last.arg == 77);
     CHECK(call("POST", p("/api/pause"), "", out, sizeof out) == 409);

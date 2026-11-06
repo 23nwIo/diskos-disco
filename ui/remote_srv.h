@@ -23,4 +23,5 @@ void rsrv_set_notify(void (*cb)(void));  /* called on the server thread when a c
 int  rsrv_take(rmt_cmd_t *out);            /* main thread: 1 = a command is waiting (now taken), 0 = none */
 void rsrv_done(int ok, const char *message);   /* main thread: result of the taken command (message: why not, or NULL) */
 void rsrv_done_body(int ok, const char *message, char *body);   /* same, with a JSON answer (malloc'd; ownership passes) */
+void rsrv_done_blob(char *body, size_t len, const char *ctype);  /* a successful binary answer (malloc'd; ownership passes; ctype static) */
 #endif

@@ -31,6 +31,8 @@ static int g_box_full, g_box_taken, g_box_done, g_box_orphan, g_box_ok;
 static rmt_cmd_t g_box_cmd;
 static char g_box_msg[96];
 static char *g_box_body;                     /* a JSON answer from the main thread (malloc'd; the server frees it) */
+static size_t g_box_len;                     /* its length when binary (0 = a NUL-terminated JSON string) */
+static const char *g_box_ctype;              /* its type when binary */
 static void (*g_notify)(void);
 void rsrv_set_notify(void (*cb)(void)){ g_notify = cb; }
 
@@ -52,10 +54,10 @@ int rsrv_take(rmt_cmd_t *out){
     pthread_mutex_unlock(&g_mu);
     return r;
 }
-void rsrv_done_body(int ok, const char *message, char *body){
+static void done_any(int ok, const char *message, char *body, size_t len, const char *ctype){
     pthread_mutex_lock(&g_mu);
     if(g_box_full && g_box_taken){
-        g_box_ok = ok; g_box_done = 1;
+        g_box_ok = ok; g_box_done = 1; g_box_len = len; g_box_ctype = ctype;
         snprintf(g_box_msg, sizeof g_box_msg, "%s", message ? message : "");
         free(g_box_body); g_box_body = body; body = NULL;
         if(g_box_orphan){                                  /* its request gave up: free the slot */
@@ -67,20 +69,25 @@ void rsrv_done_body(int ok, const char *message, char *body){
     pthread_mutex_unlock(&g_mu);
     free(body);                                            /* nobody waiting for it */
 }
+void rsrv_done_body(int ok, const char *message, char *body){ done_any(ok, message, body, 0, NULL); }
+void rsrv_done_blob(char *body, size_t len, const char *ctype){ done_any(1, NULL, body, len, ctype); }
 void rsrv_done(int ok, const char *message){ rsrv_done_body(ok, message, NULL); }
 
 /* ---------------------------------------------------------------- HTTP */
 static void send_all(int c, const char *p, size_t n){
     while(n){ ssize_t w = send(c, p, n, MSG_NOSIGNAL); if(w <= 0) return; p += w; n -= (size_t)w; }
 }
-static void reply(int c, const char *status, const char *ctype, const char *body, const char *extra_hdr){
-    char hdr[512]; size_t bl = strlen(body);
+static void reply_n(int c, const char *status, const char *ctype, const char *body, size_t bl, const char *extra_hdr){
+    char hdr[512];
     int h = snprintf(hdr, sizeof hdr,
         "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nCache-Control: no-store\r\n"
         "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n"
         "%sConnection: close\r\n\r\n", status, ctype, bl, extra_hdr ? extra_hdr : "");
     if(h < 0 || h >= (int)sizeof hdr) return;
     send_all(c, hdr, (size_t)h); send_all(c, body, bl);
+}
+static void reply(int c, const char *status, const char *ctype, const char *body, const char *extra_hdr){
+    reply_n(c, status, ctype, body, strlen(body), extra_hdr);
 }
 static void reply_json_err(int c, const char *status, const char *code, const char *message){
     char b[256], m[160];
@@ -109,9 +116,11 @@ static void run_cmd(int c, rmt_cmd_t cmd){
     }
     int ok = g_box_ok; char msg[96]; snprintf(msg, sizeof msg, "%s", g_box_msg);
     char *body = g_box_body; g_box_body = NULL;
+    size_t blen = g_box_len; const char *bct = g_box_ctype;
     g_box_full = g_box_taken = g_box_done = 0;
     pthread_mutex_unlock(&g_mu);
-    if(ok) reply(c, "200 OK", "application/json", body ? body : "{\"ok\":true}", NULL);
+    if(ok && body && blen) reply_n(c, "200 OK", bct ? bct : "application/octet-stream", body, blen, NULL);
+    else if(ok) reply(c, "200 OK", "application/json", body ? body : "{\"ok\":true}", NULL);
     else reply_json_err(c, "409 Conflict", "refused", msg[0] ? msg : "Not possible right now");
     free(body);
 }
@@ -139,14 +148,14 @@ static void handle(int c){
         reply(c, "301 Moved Permanently", "text/plain", "", loc); break; }
     case RMT_R_PAGE:
         reply(c, "200 OK", "text/html; charset=utf-8", RMT_PAGE_HTML,
-              "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'\r\n");
+              "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'\r\n");
         break;
     case RMT_R_STATE: {
         rmt_state_t s; int have;
         if(g_notify) g_notify();                          /* a fresher snapshot for the next poll */
         pthread_mutex_lock(&g_mu); s = g_state; have = g_have_state; pthread_mutex_unlock(&g_mu);
         if(!have){ reply_json_err(c, "503 Service Unavailable", "starting", "Starting up"); break; }
-        static char js[5200];   /* rmt_state_json's worst case (every string fully escaped) */
+        static char js[6000];   /* rmt_state_json's worst case (every string fully escaped) */
         if(rmt_state_json(js, sizeof js, &s) < 0){ reply_json_err(c, "500 Internal Server Error", "internal", "State too large"); break; }
         reply(c, "200 OK", "application/json", js, NULL);
         break; }

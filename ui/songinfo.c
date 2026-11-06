@@ -210,6 +210,14 @@ static void si_probe(const char *path, int track, si_tech_t *t){
     t->ok = 1;
 }
 
+/* For other front ends (Remote Control): the same bounded header read. Worker threads only (it reads the card). */
+void songinfo_probe(const char *path, int *bits, int *channels, int *kbps){
+    si_tech_t t; si_probe(path, 0, &t);
+    if(bits) *bits = t.bits;
+    if(channels) *channels = t.channels;
+    if(kbps) *kbps = t.kbps;
+}
+
 /* ---- per-track worker: the result is applied by songinfo_set on a later tick ---------------------------------- */
 static pthread_mutex_t g_si_mu = PTHREAD_MUTEX_INITIALIZER;
 static char      g_si_path[256];        /* the track the page is showing (under g_si_mu) ... */

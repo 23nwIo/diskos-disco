@@ -328,6 +328,10 @@ const char *radio_state(void){
     pthread_mutex_lock(&g_mu); int st = g_rstate; pthread_mutex_unlock(&g_mu);
     return st == RS_STARTING ? "starting" : st == RS_PLAYING ? "playing" : st == RS_ERROR ? "error" : "off";
 }
+int radio_station(rc_station_t *out){
+    pthread_mutex_lock(&g_mu); int on = g_rstate != RS_OFF; if(on && out) *out = g_now; pthread_mutex_unlock(&g_mu);
+    return on;
+}
 const char *radio_station_name(void){
     pthread_mutex_lock(&g_mu); snprintf(g_name_main, sizeof g_name_main, "%s", g_rstate == RS_OFF ? "" : g_now.name); pthread_mutex_unlock(&g_mu);
     return g_name_main;

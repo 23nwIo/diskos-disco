@@ -25,6 +25,7 @@ typedef enum {
     RMT_CMD_PLAY_ITEM,       /* start something from the library: sub = rmt_item_t */
     RMT_CMD_RADIO_STOP,      /* stop the web radio, back to local playback */
     RMT_CMD_RADIO_SEARCH,    /* start a station search: q ("" = popular) */
+    RMT_CMD_COVER,           /* the current cover image (binary answer) */
     RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
 } rmt_cmd_kind_t;
 
@@ -93,6 +94,10 @@ typedef struct {
     const char *source;      /* "local" | "music_assistant" | "radio" | "other" (static string) */
     const char *radio_state; /* "off" | "starting" | "playing" | "error" (static string; NULL = "off") */
     char station[96], radio_error[96];
+    char format[16];         /* "FLAC", "MP3", "DSD128", a radio codec; "" unknown */
+    int  kbps, bits, sample_rate, channels;   /* 0 = unknown */
+    int  favorite;           /* -1 unknown, 0/1 */
+    char art[32];            /* changes whenever the cover does; "" = none (GET api/cover?v=<art>) */
 } rmt_state_t;
 
 /* JSON helpers. Both return the length written (truncation-safe, always NUL-terminated), or -1 if it didn't fit. */
