@@ -30,6 +30,7 @@
 #include <sys/statvfs.h>
 #include <stdarg.h>
 #include "version.h"
+#include "ota.h"
 #include "simple_theme.h"
 /* defined elsewhere without a shared header */
 int  bt_state(void);
@@ -720,6 +721,17 @@ static char *status_json(void){
     st_group(&s, "System");
     char id[40] = ""; settings_diskos_id(id, sizeof id);
     st_row(&s, "diskOS", "%s", id[0] ? id : DISCO_VERSION);
+    {   /* the label diskos-sign.sh put in the manifest of the SD/online update that runs now: S97 writes it to the run
+         * record, the launcher states what it really started; a flashed UI (or records that disagree) has none */
+        char t[1024], u[1024], b1[16], b2[16], h1[80], h2[80], v[40]; size_t n1 = 0, n2 = 0;
+        FILE *f = fopen(OTA_DEV.run_file, "r"); if(f){ n1 = fread(t, 1, sizeof t - 1, f); fclose(f); } t[n1] = 0;
+        f = fopen(OTA_DEV.launched_file, "r"); if(f){ n2 = fread(u, 1, sizeof u - 1, f); fclose(f); } u[n2] = 0;
+        int same = n1 && n2 && !sys_kv(t, "BUILD", b1, sizeof b1) && !sys_kv(u, "BUILD", b2, sizeof b2) && !strcmp(b1, b2)
+                && !sys_kv(t, "SHA256", h1, sizeof h1) && !sys_kv(u, "SHA256", h2, sizeof h2) && !strcmp(h1, h2);
+        if(same && !sys_kv(t, "VERSION", v, sizeof v) && strcmp(b1, "flashed"))
+            st_row(&s, "Update", "%s (%s)", v, !strcmp(b1, "trial") ? "on trial" : "installed");
+        else st_row(&s, "Update", "none (flashed build)");
+    }
     sys_about_row_t ar[12]; int na = sys_about_collect(NULL, id, ar, 12);
     for(int i = 0; i < na; i++) if(!strcmp(ar[i].label, "Firmware") || !strcmp(ar[i].label, "Model")) st_row(&s, ar[i].label, "%s", ar[i].value);
     double upt = 0; if(read_line("/proc/uptime", a, sizeof a) == 0) upt = atof(a);
