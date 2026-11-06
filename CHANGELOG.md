@@ -2,6 +2,12 @@
 
 User-facing changes in diskOS Disco!. Details of each release are in [docs/releases](docs/releases/); everything else is in the Git history. diskOS is beta software.
 
+## Unreleased
+
+- Bluetooth: give a device its own name on the Disc (hold its row, or Rename on its details screen); it is kept per
+  address and never sent to the device. Two devices with the same name show the end of their address, e.g.
+  "BT Receiver (A1:B2)". Forgetting a device drops its name.
+
 ## 3.4.1
 
 **MA Sendspin speaks Sendspin 1.0, with code pairing, album art and FLAC** (experimental; needs Music Assistant 2.10.7

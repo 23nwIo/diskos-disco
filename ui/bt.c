@@ -1570,6 +1570,12 @@ int bt_peer_name(char *out, int cap){
     return conn;
 }
 
+#define BT_ALIAS_MAX 47                  /* diskos.conf values are under 48 bytes (config.c VLEN) */
+#define BT_SHOWN_CAP 144                 /* a 127-byte device name + " (EE:FF)" */
+static void bt_alias_get(const char *mac, char *out, int cap);      /* below, with the device list */
+static int  bt_alias_set(const char *mac, const char *name);
+static int  bt_shown_name_of(const char *mac, char *out, int cap);
+static void bt_rename_open(const char *mac);
 /* ---- details screen (SCR_BT_INFO) --------------------------------------- */
 static void info_row(const char *key, const char *val){
     lv_obj_t *r = lv_obj_create(g_info_list);
@@ -1604,6 +1610,7 @@ static void info_forget_cb(lv_event_t *e){
             if(ok){ snprintf(chk, sizeof chk, "bluetoothctl info %s 2>/dev/null", g_sel_mac);   /* and it's really gone */
                     if(run_cap_to(chk, info, sizeof info, 3000) > 0 && strstr(info, g_sel_mac)) ok = 0; }
             if(ok && !strcmp(cfg_get_str("bt_last", ""), g_sel_mac)) cfg_set_str("bt_last", "");   /* don't call it back */
+            if(ok) bt_alias_set(g_sel_mac, "");                       /* its local name goes with it */
             ui_toast(ok ? "Device forgotten" : "Couldn't forget device"); }
     }
     screen_back();
@@ -1611,21 +1618,22 @@ static void info_forget_cb(lv_event_t *e){
     g_scan_timer = lv_timer_create(scan_timer_cb, 3000, NULL);
     lv_timer_set_repeat_count(g_scan_timer, 1);
 }
-static void info_action_row(const char *label, lv_event_cb_t cb){
+static void info_action_row(const char *label, lv_event_cb_t cb, int danger){
     lv_obj_t *r = lv_button_create(g_info_list);
     lv_obj_remove_style_all(r);
     lv_obj_set_size(r, 250, 44);
     lv_obj_set_style_radius(r, 8, 0);
-    lv_obj_set_style_bg_color(r, TC(DANGER_SURFACE), 0);
+    lv_obj_set_style_bg_color(r, danger ? TC(DANGER_SURFACE) : TC(SURFACE), 0);
     lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(r, TC(DANGER_SURFACE_PRESSED), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(r, danger ? TC(DANGER_SURFACE_PRESSED) : TC(SURFACE_RAISED), LV_STATE_PRESSED);
     lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
     ui_on(r, cb, LV_EVENT_CLICKED, NULL, "bt.cb", UI_CORE);
     lv_obj_t *t = lv_label_create(r);
     lv_label_set_text(t, label); lv_obj_center(t);
     lv_obj_set_style_text_font(t, TF(UI_14), 0);
-    lv_obj_set_style_text_color(t, TC(STATUS_DANGER), 0);
+    lv_obj_set_style_text_color(t, danger ? TC(STATUS_DANGER) : TC(TEXT_PRIMARY), 0);
 }
+static void info_rename_cb(lv_event_t *e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) bt_rename_open(g_sel_mac); }
 static void info_disc_cb(lv_event_t *e){
     if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
     bt_disconnect(g_sel_mac);
@@ -1667,32 +1675,39 @@ void bt_info_create(lv_obj_t *root){
     lv_obj_set_style_text_color(dl, TC(STATUS_DANGER_STRONG), 0);
 }
 
-void bt_info_open(void){
-    if(!g_info_list || !bt_mac_valid(g_sel_mac)) return;
+static int bt_info_fill(void){
+    if(!g_info_list || !bt_mac_valid(g_sel_mac)) return 0;
     lv_obj_clean(g_info_list);
-    char cmd[128], buf[2048], val[96];
+    char cmd[128], buf[2048], val[96] = "", shown[BT_SHOWN_CAP], alias[BT_ALIAS_MAX + 1];
     snprintf(cmd, sizeof cmd, "bluetoothctl info %s 2>/dev/null", g_sel_mac);
     run_cap(cmd, buf, sizeof buf);
-    char *p = strstr(buf, "Name: ");
-    if(p){ sscanf(p+6, "%95[^\n]", val); info_row("Name", val); }
+    bt_info_prop(buf, "Name:", val, sizeof val);           /* line-anchored, like the other properties */
+    bt_alias_get(g_sel_mac, alias, sizeof alias);
+    if(!bt_shown_name_of(g_sel_mac, shown, sizeof shown) && !shown[0]) snprintf(shown, sizeof shown, "%s", val);
+    if(shown[0]) info_row("Name", shown);
+    if(alias[0] && val[0]) info_row("Own name", val);      /* what the device calls itself, under a local name */
     info_row("Address", g_sel_mac);
     { char v[96];   /* line-anchored property reads: a device NAME can't spoof Connected/Icon */
       info_row("Connected", (bt_info_prop(buf,"Connected:",v,sizeof v) && !strcmp(v,"yes")) ? "Yes" : "No");
       info_row("Paired",    (bt_info_prop(buf,"Paired:",   v,sizeof v) && !strcmp(v,"yes")) ? "Yes" : "No");
       if(bt_info_prop(buf,"Icon:",v,sizeof v)) info_row("Type", v); }
     info_row("Audio", "On (beta)");   /* routing works; SBC over this CPU can be rough. short: value label is 142px */
-    info_action_row("Forget This Device", info_forget_cb);   /* C13: unpair + untrust */
-    screen_show(SCR_BT_INFO);
+    info_action_row("Rename", info_rename_cb, 0);                 /* a local name, kept on the Disc */
+    info_action_row("Forget This Device", info_forget_cb, 1);   /* C13: unpair + untrust */
+    return 1;
 }
+static void bt_info_open_again(void){ bt_info_fill(); }        /* refill in place (after a rename) */
+void bt_info_open(void){ if(bt_info_fill()) screen_show(SCR_BT_INFO); }
 
 /* ---- device list -------------------------------------------------------- */
 /* A row's data rides in its event callbacks, NOT in lv_obj user data (the curved-list helper owns that slot). */
 typedef struct { int connected; char mac[20]; } devrow_t;
 static void row_free_cb(lv_event_t *e){ free(lv_event_get_user_data(e)); }
 static void dev_cb(lv_event_t *e){
-    if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
     const devrow_t *dr = lv_event_get_user_data(e);
     if(!dr) return;
+    if(lv_event_get_code(e) == LV_EVENT_LONG_PRESSED){ bt_rename_open(dr->mac); return; }   /* hold: a local name */
+    if(lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;   /* not CLICKED: that also fires after a hold */
     const char *mac = dr->mac;
     int connected = dr->connected;
     if(!mac[0]) return;
@@ -1724,7 +1739,8 @@ static void add_dev_row(const char *mac, const char *name, int connected, const 
     lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
     devrow_t *dr = malloc(sizeof *dr);
     if(dr){ dr->connected = connected; snprintf(dr->mac, sizeof dr->mac, "%s", mac); }
-    lv_obj_add_event_cb(r, dev_cb, LV_EVENT_CLICKED, dr);
+    lv_obj_add_event_cb(r, dev_cb, LV_EVENT_SHORT_CLICKED, dr);
+    lv_obj_add_event_cb(r, dev_cb, LV_EVENT_LONG_PRESSED, dr);
     lv_obj_add_event_cb(r, row_free_cb, LV_EVENT_DELETE, dr);
 
     lv_obj_t *ic = lv_label_create(r);                       /* headphones: accent when connected */
@@ -1785,6 +1801,82 @@ static int             g_scan_done = 0;      /* [g_scan_mu] worker finished -> m
 static int             g_scan_running = 0;   /* [g_scan_mu] a worker is in flight */
 static unsigned        g_scan_gen = 0;       /* [g_scan_mu] bumped per scan; worker tags its result */
 static lv_timer_t     *g_scanpoll_timer;
+/* ---- the names people see ---------------------------------------------------------------------------------
+ * A device can be given a local name on the Disc (hold its row, or Rename on its details), kept per address in
+ * diskos.conf as btname_<12 hex> (up to BT_ALIAS_MAX bytes). Nothing is sent to the device or to BlueZ. Two listed
+ * devices that would still read the same get the end of their address, "Name (EE:FF)", so twins can be told apart
+ * without renaming. */
+static void bt_alias_get(const char *mac, char *out, int cap){
+    char k[32]; bt_mac_cfg_key("btname_", mac, k, sizeof k);
+    snprintf(out, cap, "%s", cfg_get_str(k, ""));
+}
+static char g_alias_drop[32];
+static int bt_alias_drop_match(const char *k){ return !strcmp(k, g_alias_drop); }
+/* name "" (or NULL) removes the local name. 0 saved, -1 not saved. */
+static int bt_alias_set(const char *mac, const char *name){
+    if(!bt_mac_valid(mac)) return -1;
+    char k[32]; bt_mac_cfg_key("btname_", mac, k, sizeof k);
+    if(name && name[0]) return strlen(name) > BT_ALIAS_MAX ? -1 : cfg_set_str(k, name);
+    snprintf(g_alias_drop, sizeof g_alias_drop, "%s", k);
+    return cfg_remove_if(bt_alias_drop_match) == -1 ? -1 : 0;
+}
+/* out[i] = what row i shows: its local name, else its own; then " (EE:FF)" on every name another row also shows. */
+static void bt_shown_names(const bt_scan_dev_t *d, int n, char (*out)[BT_SHOWN_CAP]){
+    for(int i = 0; i < n; i++){
+        char a[BT_ALIAS_MAX + 1]; bt_alias_get(d[i].mac, a, sizeof a);
+        snprintf(out[i], BT_SHOWN_CAP, "%s", a[0] ? a : d[i].name);
+    }
+    unsigned char twin[40] = {0};
+    for(int i = 0; i < n && i < 40; i++) for(int j = i + 1; j < n && j < 40; j++)
+        if(!strcmp(out[i], out[j])){ twin[i] = 1; twin[j] = 1; }
+    for(int i = 0; i < n && i < 40; i++) if(twin[i] && strlen(d[i].mac) == 17){
+        size_t l = strlen(out[i]);
+        if(l > BT_SHOWN_CAP - 9) l = BT_SHOWN_CAP - 9;   /* keep room for the suffix (names here are < 128 bytes) */
+        snprintf(out[i] + l, BT_SHOWN_CAP - l, " (%s)", d[i].mac + 12);
+    }
+}
+/* The shown name of one device in the current list (main thread). 1 found, 0 not listed (out = its local name or ""). */
+static int bt_shown_name_of(const char *mac, char *out, int cap){
+    static bt_scan_dev_t local[40]; static char shown[40][BT_SHOWN_CAP]; int n, at = -1;
+    pthread_mutex_lock(&g_scan_mu);
+    n = g_scan_n > 40 ? 40 : g_scan_n;
+    memcpy(local, g_scan_res, (size_t)n * sizeof(bt_scan_dev_t));
+    pthread_mutex_unlock(&g_scan_mu);
+    for(int i = 0; i < n; i++) if(!strcasecmp(local[i].mac, mac)){ at = i; break; }
+    if(at < 0){ bt_alias_get(mac, out, cap); return 0; }
+    bt_shown_names(local, n, shown);
+    snprintf(out, cap, "%s", shown[at]);
+    return 1;
+}
+static void scan_render(void);           /* below */
+static void bt_info_open_again(void);    /* below */
+static char g_rename_mac[20];
+static void bt_rename_done(const char *text){
+    if(!text || !bt_mac_valid(g_rename_mac)) return;   /* cancelled */
+    while(*text == ' ') text++;
+    char own[128] = "";                                    /* the device's own name: saving that = no local name */
+    pthread_mutex_lock(&g_scan_mu);
+    for(int i = 0; i < g_scan_n && i < 40; i++) if(!strcasecmp(g_scan_res[i].mac, g_rename_mac)){ snprintf(own, sizeof own, "%s", g_scan_res[i].name); break; }
+    int running = g_scan_running;
+    pthread_mutex_unlock(&g_scan_mu);
+    if(strlen(text) > BT_ALIAS_MAX){ ui_toast("Name too long"); return; }
+    if(bt_alias_set(g_rename_mac, (own[0] && !strcmp(text, own)) ? "" : text) != 0){ ui_toast("Couldn't save name"); return; }
+    if(!running) scan_render();                            /* a scan in flight renders the new name itself */
+    if(!strcmp(g_sel_mac, g_rename_mac) && screen_current() == SCR_BT_INFO) bt_info_open_again();
+}
+static void bt_rename_open(const char *mac){
+    if(!bt_mac_valid(mac)) return;
+    snprintf(g_rename_mac, sizeof g_rename_mac, "%s", mac);
+    char a[BT_ALIAS_MAX + 1]; bt_alias_get(mac, a, sizeof a);
+    if(!a[0]){
+        pthread_mutex_lock(&g_scan_mu);
+        for(int i = 0; i < g_scan_n && i < 40; i++) if(!strcasecmp(g_scan_res[i].mac, mac)){
+            if(strlen(g_scan_res[i].name) <= BT_ALIAS_MAX) snprintf(a, sizeof a, "%s", g_scan_res[i].name);
+            break; }
+        pthread_mutex_unlock(&g_scan_mu);
+    }
+    kbinput_open("Name on this Disc", a, bt_rename_done);
+}
 /* "Connected: <headphones> - <codec>", once per connection, when the codec is settled: after a tap and when
  * headphones reconnect by themselves. The codec is what BlueALSA reports running; the name comes from the device list,
  * or bluetoothctl if it isn't there. bt_announce_reset() when the link goes, so the next connection is announced. */
@@ -1793,13 +1885,11 @@ static void bt_announce_reset(void){ g_announced[0] = 0; }
 static void bt_announce(const char *mac, const char *codec){
     if(!bt_mac_valid(mac) || !strcmp(g_announced, mac)) return;
     snprintf(g_announced, sizeof g_announced, "%s", mac);
-    char name[64] = "";
-    pthread_mutex_lock(&g_scan_mu);
-    for(int i = 0; i < g_scan_n && i < 40; i++) if(!strcasecmp(g_scan_res[i].mac, mac)){ snprintf(name, sizeof name, "%s", g_scan_res[i].name); break; }
-    pthread_mutex_unlock(&g_scan_mu);
+    char name[BT_SHOWN_CAP] = "";
+    bt_shown_name_of(mac, name, sizeof name);              /* its local name, or the list's (with a twin's address end) */
     if(!name[0]){ char cmd[96], info[1024]; snprintf(cmd, sizeof cmd, "bluetoothctl info %s 2>/dev/null", mac);
                   if(run_cap_to(cmd, info, sizeof info, 1500) > 0) bt_info_prop(info, "Name:", name, sizeof name); }
-    char msg[128];
+    char msg[BT_SHOWN_CAP + 32];
     if(name[0]) snprintf(msg, sizeof msg, "Connected: %s\n%s", name, codec && codec[0] ? codec : "SBC");   /* name, then codec */
     else snprintf(msg, sizeof msg, "Connected\n%s", codec && codec[0] ? codec : "SBC");
     ui_toast(msg);
@@ -1859,12 +1949,14 @@ static void scan_render(void){
     n = g_scan_n; if(n > 40) n = 40;
     memcpy(local, g_scan_res, (size_t)n * sizeof(bt_scan_dev_t));
     pthread_mutex_unlock(&g_scan_mu);
-    for(int i = 0; i < n; i++) if(local[i].connected)  add_dev_row(local[i].mac, local[i].name, 1, local[i].codec);  /* connected first */
-    for(int i = 0; i < n; i++) if(!local[i].connected) add_dev_row(local[i].mac, local[i].name, 0, NULL);
+    static char shown[40][BT_SHOWN_CAP];
+    bt_shown_names(local, n, shown);                       /* local names; twins get their address's end */
+    for(int i = 0; i < n; i++) if(local[i].connected)  add_dev_row(local[i].mac, shown[i], 1, local[i].codec);  /* connected first */
+    for(int i = 0; i < n; i++) if(!local[i].connected) add_dev_row(local[i].mac, shown[i], 0, NULL);
     if(n == 0) list_msg("No audio devices found");
     else { lv_obj_update_layout(g_list); curvelist_update(&g_bcl); }
     {   const char *cn = NULL, *cc = NULL;
-        for(int i = 0; i < n; i++) if(local[i].connected){ cn = local[i].name; cc = local[i].codec; break; }
+        for(int i = 0; i < n; i++) if(local[i].connected){ cn = shown[i]; cc = local[i].codec; break; }
         char hs[200];   /* one line, scrolling when too long: "Connected to FiiO EH11 - LDAC" (2.6.2 polish) */
         if(cn) snprintf(hs, sizeof hs, "Connected to %s%s%s", cn, (cc && cc[0]) ? " - " : "", (cc && cc[0]) ? cc : "");
         hdr_set(BT_ON, cn ? hs : "Bluetooth is on", cn ? "" : "Connect a speaker to play audio (beta)"); }
@@ -2369,5 +2461,16 @@ void bt_open(void){
 /* Host preview fixture: not called by device code. */
 void bt_preview_null(void){
     if(getenv("BT_PREVIEW_OFF")){ hdr_set(BT_OFF,"Bluetooth is off",""); lv_obj_clear_state(g_sw,LV_STATE_CHECKED); list_msg("Switch it on to find devices"); return; }
+    if(getenv("BT_PREVIEW_TWINS")){   /* two receivers with one name (+ BT_PREVIEW_ALIAS on the first): through scan_render */
+        static const char *const M[3] = {"00:11:22:33:A1:B2", "00:11:22:33:C3:D4", "00:11:22:33:44:77"};
+        static const char *const N[3] = {"BT Receiver", "BT Receiver", "Studio headphones"};
+        if(getenv("BT_PREVIEW_ALIAS")) bt_alias_set(M[0], getenv("BT_PREVIEW_ALIAS"));
+        pthread_mutex_lock(&g_scan_mu);
+        for(int i = 0; i < 3; i++){ memset(&g_scan_res[i], 0, sizeof g_scan_res[i]); snprintf(g_scan_res[i].mac, 20, "%s", M[i]);
+                                    snprintf(g_scan_res[i].name, 128, "%s", N[i]); g_scan_res[i].connected = i == 0; }
+        snprintf(g_scan_res[0].codec, 16, "LDAC"); g_scan_n = 3;
+        pthread_mutex_unlock(&g_scan_mu);
+        lv_obj_add_state(g_sw, LV_STATE_CHECKED); scan_render(); return;
+    }
     if(getenv("BT_PREVIEW_SCAN")){ hdr_set(BT_ON,"Bluetooth is on",""); lv_obj_add_state(g_sw,LV_STATE_CHECKED); list_msg_scanning(); return; }
     lv_obj_clean(g_list);hdr_set(BT_ON,getenv("BT_PREVIEW_HDR")?getenv("BT_PREVIEW_HDR"):"Connected to FiiO EH11 - LDAC","");lv_obj_add_state(g_sw,LV_STATE_CHECKED);add_dev_row("00:11:22:33:44:55","FiiO EH11",1,"LDAC");add_dev_row("00:11:22:33:44:66","Living room",0,"");add_dev_row("00:11:22:33:44:77","Studio headphones",0,"");curvelist_update(&g_bcl);}
