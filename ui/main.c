@@ -3923,9 +3923,13 @@ int main(int argc, char **argv){
             last_blpoll = lv_tick_get();
             int cbr = read_int_file("/sys/class/backlight/backlight/brightness");
             int cbp = read_int_file("/sys/class/backlight/backlight/bl_power");
-            if(cbr == 0 && cbp == 0){
-                /* player blanked via brightness-only -> cut the rail. Won't re-fire (bl_power now 4). */
-                ui_backlight(0); bl_state = 2; player_blanked = 1;
+            if(cbr == 0 && !player_blanked){
+                /* player blanked via brightness-only -> cut the rail. Also when diskOS had already powered the panel
+                 * down (idle screen-off: bl_power 4, brightness untouched) and the power key then blanked it on the
+                 * player's side: remember it, or the player's un-blank below is never seen and the panel stays dark
+                 * with touch released (field report 2026-11-06: brightness 16, bl_power 4 after a power press). */
+                if(cbp == 0) ui_backlight(0);
+                bl_state = 2; player_blanked = 1;
             } else if(player_blanked && cbr > 0){
                 /* player un-blanked (2nd power press restored brightness) -> restore the panel. */
                 /* The player restores ITS OWN remembered level, not the one set in Quick Settings / Display, so the
