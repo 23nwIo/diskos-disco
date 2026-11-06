@@ -4,6 +4,7 @@
 #include "theme_kit.h"
 #include "discshelf.h"
 #include "discshelf/landing.h"
+#include "radio.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -77,6 +78,7 @@ void applanding_icon(const char *bmp_path){ snprintf(g_land_icon, sizeof g_land_
 static void land_cb(lv_event_t *e){
     (void)e;
     if(!strcmp(g_land_exec, APP_BUILTIN_SHELF)){discshelf_open();return;}
+    if(!strcmp(g_land_exec, APP_BUILTIN_RADIO)){ radio_open(); return; }
     if(!strcmp(g_land_exec, APP_BUILTIN_STATS)){ stats_open(); return; }
     if(!strcmp(g_land_exec, APP_BUILTIN_SPHERE)){ sphere_ui_open(); return; }   /* built into mq_ui: a screen, not a program */
     if(strncmp(g_land_exec, "builtin:", 8) && access(g_land_exec, X_OK)){ ui_toast("That app is not installed"); return; }

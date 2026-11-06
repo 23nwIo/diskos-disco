@@ -20,8 +20,10 @@ static int compare(const void *a,const void *b){
     return n?n:strcmp(x->id,y->id);
 }
 void menu_apps_scan(void){
-    menu_app_t *next=calloc(16,sizeof *next);if(!next)return;int n=1,capacity=16;
+    menu_app_t *next=calloc(16,sizeof *next);if(!next)return;int n=2,capacity=16;
     md5_hex("disc-shelf",10,next[0].id);strcpy(next[0].name,"Disc Shelf");strcpy(next[0].exec,"builtin:disc-shelf");strcpy(next[0].tagline,"Your music, to go.");strcpy(next[0].button,"Browse collection");
+    md5_hex("builtin:radio",13,next[1].id);strcpy(next[1].name,"Radio");strcpy(next[1].exec,"builtin:radio");strcpy(next[1].tagline,"Stations from the internet.");   /* Web radio (radio.c) */
+    strcpy(next[1].about,"Search thousands of stations or\nplay your favourites over Wi-Fi.");strcpy(next[1].button,"Open radio");
     DIR *d=opendir(MENU_APPS_DIR);if(!d){free(apps);apps=next;count=n;return;}
     struct dirent *de;
     while((de=readdir(d))){

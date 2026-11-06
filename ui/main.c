@@ -54,6 +54,7 @@
 #include "art.h"
 #include "command_spawn.h"
 #include "remote.h"
+#include "radio.h"
 #include "ui_instance.h"
 #include "power.h"
 #include "discshelf.h"
@@ -670,6 +671,10 @@ static int source_send(int mode){
         case 5:
             if(ipc_send_cmd("0642000C0000") < 0) return -1;
             return ipc_send_cmd("0657000C000A");
+        case 6:                                          /* Web radio: the player's own DLNA renderer (mode 0C, port 49494,
+                                                          * docs/COMMAND_MAP.md); radio.c hands it the stream over UPnP */
+            if(ipc_send_cmd("0642000C0000") < 0) return -1;
+            return ipc_send_cmd("0657000C000C");
     }
     return -1;
 }
@@ -680,12 +685,13 @@ static void storage_unknown(const char *why){
 }
 int ui_set_source_mode(int mode){
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
-    if(mode < 0 || mode > 5) return -1;                 /* 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay */
+    if(mode < 0 || mode > 6) return -1;                 /* 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay, 6 Web radio */
     if(modes_output_route()==OUT_USB){
         if(mode==0)return modes_output_mode_switch(OUT_INTERNAL);
         ui_toast("Return to playback before changing USB mode");return -1;
     }
     if(mode != 5) ma_mode_leaving();                    /* MA Sendspin rides on AirPlay: another mode turns it off */
+    if(mode != 6) radio_mode_leaving();                 /* the radio rides on the DLNA mode: another mode ends it */
     if(ui_source_switch_pending()){ ui_toast("Storage is switching"); return -1; }
     if(g_sd_phase == SD_UNKNOWN || g_sd_hold || !sd_io_healthy()){ ui_toast("SD access is held this boot"); return -1; }
     /* Every source change drives the player (and USB/card ownership with it), so none may happen before this
@@ -713,11 +719,11 @@ int ui_set_source_mode(int mode){
         if(source_send(mode) < 0){ storage_unknown("return request failed"); return -1; }
         return 0;
     }
-    int was_playing = g_playing;
+    int was_playing = g_playing, was_mode = g_source_mode;
     if(was_playing && ipc_send_cmd("0201000C0000") < 0){ ui_toast("Player is busy - try again"); return -1; }
     if(source_send(mode) < 0){ ui_toast("Couldn't switch mode"); return -1; }
     g_source_mode = mode;
-    if(mode == 0 && was_playing) ipc_send_cmd("0201000C0000");
+    if(mode == 0 && was_playing && was_mode != 6) ipc_send_cmd("0201000C0000");   /* leaving the radio resumes nothing */
     return 0;
 }
 static void storage_resume_local(void){
@@ -1209,7 +1215,11 @@ int ui_play_defer_transport(int is_toggle){
     if(play_waits_for_codec()){ g_dp.kind = 2; play_defer_note(); return 1; }
     return 0;
 }
+/* A local play while the Web radio holds the player (source 6, DLNA mode): back to Playback first, so the frames that
+ * follow land in LOCALPLAYER mode. Same order modes_local_init uses (route, work mode, then the play). */
+static void radio_yield_local(void){ if(g_source_mode == 6) ui_set_source_mode(0); }
 static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_idx){
+    radio_yield_local();
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return 0; }   /* an output switch (0666 re-init) is in flight or recovering */
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return 0; }
     if(play_waits_for_codec()){                                /* headphones just connected: switch first, then play */
@@ -1288,6 +1298,7 @@ int ui_play_context(int *type, char *name, int cap, long *pid){
     return g_ctx_type;
 }
 int ui_play_restore(int type, const char *name, long pid, int pos){
+    radio_yield_local();
     if(modes_output_busy() || !ui_local_playback_allowed()) return 0;
     int was=g_q_internal, sent=0; g_q_internal=1;
     char mode[16]; snprintf(mode,sizeof mode,"0102000C%04X",simple_cfg_get_int("work_mode",0)&0xFFFF);
@@ -1370,6 +1381,7 @@ int ui_play_favorite(int love_id, int pos1){
 }
 /* Play a custom playlist (list_type 5) by its id, from 1-based track pos. */
 int ui_play_playlist(long pid, int pos){
+    radio_yield_local();
     /* diskOS's type-5 play always resolves to seq 0, so passing the playlist id as the name never
      * targeted that playlist (and, once the book slot exists, it played the BOOK). Instead copy the
      * playlist into the reserved slot and play seq 0 - isolated, and it finally plays the right list.
@@ -1391,6 +1403,7 @@ int ui_play_playlist(long pid, int pos){
  * shuffle, device-verified). A type-0 jump: no rebuild, so the loaded scope stays valid. Refused while a rebuild is
  * pending (the list being jumped in may not be the one on screen). Same local-play preamble rule as ui_play_list. */
 int ui_queue_jump(int ord1){
+    radio_yield_local();
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return -1; }
     if(g_play_pending){ ui_toast("Queue is updating - try again"); return -1; }
@@ -1551,6 +1564,7 @@ void ui_book_user_seeked(long target_ms){
 
 /* Play an audiobook (v1: single-file .m4b) and resume at resume_ms (0 = start). */
 int ui_play_book(const char *path, long resume_ms){
+    radio_yield_local();
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return 0; }
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return 0; }
     if(!path || !*path) return 0;

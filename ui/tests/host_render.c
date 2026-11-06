@@ -15,6 +15,7 @@
 #include "lvgl/src/misc/lv_timer_private.h"
 #include "null_theme.h"
 #include "screens.h"
+#include "radio.h"
 #include "onboarding.h"
 #include "quicksettings.h"
 lv_obj_t *quicksettings_test_button(int slot);
@@ -1384,6 +1385,14 @@ int main(int argc, char **argv){
         else if(!strcmp(page,"queue"))scr=SCR_QUEUE;
         else if(!strcmp(page,"shortcuts")){apps_reload();scr=SCR_APPS;}
         else if(!strcmp(page,"search")){if(getenv("SEARCH_RECENT")){cfg_set_str("search_r1","boris");cfg_set_str("search_r2","alpha band");cfg_set_str("search_r3","northern");}scr=SCR_SEARCH;}
+        else if(!strncmp(page,"radio",5)){   /* Web radio: favourites, results, empty favourites */
+            static rc_station_t rs[4]={{"Groove Salad (SomaFM)","http://ice1.somafm.com/groovesalad-128-mp3","MP3","USA",128},
+                {"Deutschlandfunk Kultur - a long station name that scrolls","https://st02.sslstream.dlf.de/dlf/02/128/mp3/stream.mp3","MP3","Germany",128},
+                {"Classic Opus","https://icecast.walmradio.com:8443/classic_opus","OGG","",0},{"Radio Paradise FLAC","http://stream.radioparadise.com/flac","FLAC","USA",0}};
+            void radio_test_favorites(const rc_station_t*,int); void radio_test_results(const rc_station_t*,int,int);
+            radio_test_favorites(rs,!strcmp(page,"radio-empty")?0:3);scr=SCR_RADIO;radio_open();
+            if(!strcmp(page,"radio-results"))radio_test_results(rs,4,0);
+            if(!strcmp(page,"radio-fail"))radio_test_results(rs,-1,1);}
         else if(!strcmp(page,"battery")){void usage_demo(int);scr=SCR_USAGE;screen_show(scr);usage_demo(getenv("CHG")!=NULL);}
         else if(!strcmp(page,"discoopts")){void settings_open_disco(void);setlist_open("Display");scr=SCR_SETLIST;screen_show(scr);settings_open_disco();}
         else if(!strncmp(page,"scr",3)){scr=atoi(page+3);}

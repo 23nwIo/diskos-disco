@@ -24,18 +24,23 @@ apps_shortcut_test: apps_shortcut_test.c ../apps.c ../config.c ../md5.c
 remote_test: remote_test.c ../remote_core.c ../remote_srv.c ../remote_core.h ../remote_srv.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_srv.c -pthread -o $@
 
+radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. radio_test.c ../radio_core.c -o $@
+
 .PHONY: review
 review: fileops_test apps_shortcut_test
 	./fileops_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: config_test playstate_test remote_test
+run: config_test playstate_test remote_test radio_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
 	@echo "--- remote ---"
 	./remote_test
+	@echo "--- radio ---"
+	./radio_test
 
 clean:
-	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test
+	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test radio_test

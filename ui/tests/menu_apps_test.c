@@ -23,8 +23,9 @@ int main(void){
     mkapp("boomshine");mkapp("album-roulette");mkapp("disc-shelf");   /* built in: never listed twice */
     {char p[512];snprintf(p,sizeof p,MENU_APPS_DIR "/no-exec");assert(mkdir(p,0700)==0);}   /* nothing to run: hidden */
     char conf[512];snprintf(conf,sizeof conf,MENU_APPS_DIR "/app299/app.conf");FILE *f=fopen(conf,"w");assert(f);fputs("name=My Game\r\nexec=" MENU_APPS_DIR "/app299/app\r\n",f);fclose(f);
-    cfg_load();cfg_set_str("disco_mnu","mlsoce");menu_apps_scan();assert(menu_apps_count()==301);
+    cfg_load();cfg_set_str("disco_mnu","mlsoce");menu_apps_scan();assert(menu_apps_count()==302);
     int shelf=find_name("Disc Shelf");assert(shelf>=0&&!strcmp(menu_apps_get(shelf)->exec,"builtin:disc-shelf"));
+    int radio=find_name("Radio");assert(radio>=0&&!strcmp(menu_apps_get(radio)->exec,"builtin:radio"));
     int app=find_name("My Game"),other=find_name("app298");assert(app>=0&&other>=0);
     int items[]={0,2,NB+app,NB+other};assert(menu_apps_save(items,4,codes)==0);
     char saved[48];snprintf(saved,sizeof saved,"%s",cfg_get_str("disco_mnu",""));
@@ -33,7 +34,7 @@ int main(void){
     assert(!strcmp(menu_apps_get(app)->exec,MENU_APPS_DIR "/app299/app"));
     /* A newly installed app changes catalog ordering but must not retarget saved entries. */
     mkapp("000-new-app");
-    menu_apps_scan();assert(menu_apps_count()==302);
+    menu_apps_scan();assert(menu_apps_count()==303);
     int resolved=menu_apps_decode(saved[2],codes)-NB;
     assert(resolved>=0&&!strcmp(menu_apps_get(resolved)->id,id));
     int reorder[]={0,NB+find_name("app298"),2,NB+resolved};assert(menu_apps_save(reorder,4,codes)==0);

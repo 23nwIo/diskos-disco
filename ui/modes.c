@@ -15,6 +15,7 @@
 #include "theme_kit.h"
 #include "modes.h"
 #include "config.h"
+#include "radio.h"
 #include <unistd.h>
 #include <glob.h>
 #include <math.h>
@@ -39,7 +40,8 @@ static const modeinfo_t MODES[] = {
 };
 #define N_MODES ((int)(sizeof(MODES)/sizeof(MODES[0])))
 /* the one icon per working mode, used by every theme's Working mode screen and the Quick Settings Mode toggle */
-const char *modes_glyph(int mode){ for(int i = 0; i < N_MODES; i++) if(MODES[i].mode == mode) return MODES[i].glyph; return MODES[0].glyph; }
+#define RADIO_GLYPH LV_SYMBOL_AUDIO   /* Web radio (source 6): not a row of the picker, it starts from the Radio app */
+const char *modes_glyph(int mode){ if(mode == 6) return RADIO_GLYPH; for(int i = 0; i < N_MODES; i++) if(MODES[i].mode == mode) return MODES[i].glyph; return MODES[0].glyph; }
 #define ROW_USB_AUDIO 100 /* legacy test-only route ID; not 4 (= BT streaming's mode) */
 
 /* OUTPUT-ROUTE-BEGIN */
@@ -624,11 +626,12 @@ void modeinfo_refresh(void){
 void modes_test_pending(int m){ mark_pending(m); }           /* host renders */
 void modes_test_info(int m){ modeinfo_fill(m); }
 static void modeinfo_fill(int m){
-    if(m < 0 || m > 5) m = 1;
+    if(m < 0 || m > 6) m = 1;
     int slot = slot_of_mode(m); if(slot < 0) slot = 1;       /* the SAME table the orbit menu is built from: identical icon + name */
     if(m != g_mi_mode){
         char nm[40]; snprintf(nm, sizeof nm, "%s%s%s", MODES[slot].l1, MODES[slot].l2[0] ? " " : "", MODES[slot].l2);
-        g_mi_mode = m; g_mi_wait = -2; mi_text(g_mi_glyph, MODES[slot].glyph); mi_text(g_mi_title, nm);
+        if(m == 6) snprintf(nm, sizeof nm, "Web radio");
+        g_mi_mode = m; g_mi_wait = -2; mi_text(g_mi_glyph, m == 6 ? RADIO_GLYPH : MODES[slot].glyph); mi_text(g_mi_title, nm);
     }
     char st[64] = "", d1[200] = "", d2[200] = ""; int wait = 1;
     track_state_t ts; ipc_get_state(&ts);
@@ -663,6 +666,13 @@ static void modeinfo_fill(int m){
             snprintf(st, sizeof st, has ? "Playing" : "Ready");
             if(has){ snprintf(d1, sizeof d1, "%s", ts.title); snprintf(d2, sizeof d2, "%s", ts.artist); }
             else snprintf(d1, sizeof d1, "Pick the Disc on your device");
+        } break;
+        case 6: {                                            /* Web radio (radio.c) */
+            const char *rs = radio_state(); int on = !strcmp(rs, "playing"); wait = !on;
+            snprintf(st, sizeof st, on ? "Playing" : !strcmp(rs, "error") ? "Couldn't start" : "Starting...");
+            snprintf(d1, sizeof d1, "%s", radio_station_name());
+            if(!strcmp(rs, "error")) snprintf(d2, sizeof d2, "%s", radio_last_error());
+            else snprintf(d2, sizeof d2, "Open Radio to change station");
         } break;
     }
     mi_set_wait(wait);

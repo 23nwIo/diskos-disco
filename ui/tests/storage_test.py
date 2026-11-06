@@ -61,6 +61,7 @@ static void discshelf_stop(void){}
 static void ui_route_forget(const char*why){(void)why;}
 void bt_autoroute_reset(void){}
 static void ma_mode_leaving(void){}
+static void radio_mode_leaving(void){}
 static void modes_output_reset(void){}   /* output routing is not under test here */
 enum { OUT_INTERNAL=0, OUT_USB=2 };
 static int test_output_route, test_restores;
