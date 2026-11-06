@@ -44,7 +44,7 @@ ssh root@<ip>
 rsync -rtv --progress --rsync-path=/usr/data/sshd/bin/rsync Music/ root@<ip>:/tmp/sdcard/Music/
 ```
 
-The card is mounted at `/tmp/sdcard` (`ui/fileops.c:31`). Use `-rt` rather than `-a`: the exFAT card stores no owners or permissions. Dropbear's sessions use
+The card is mounted at `/tmp/sdcard` (`ui/fileops.c:31`). Use `-rt` rather than `-a`: an exFAT card stores no owners or permissions (an ext4 card does, but the Disc runs everything as root). Dropbear's sessions use
 `PATH=/usr/bin:/bin`, which is on the read-only rootfs, so `--rsync-path` is needed. A shell alias helps:
 `alias drsync='rsync -rt --rsync-path=/usr/data/sshd/bin/rsync'`.
 

@@ -116,6 +116,8 @@ Put the six files from one signing run in a `diskos-update` folder at the top of
 > previous run. The Linux and Windows apps copy this way.
 
 Eject the card safely. If you used the Disc's USB storage mode, eject on the computer, then switch back to Playback.
+An ext4 card is mounted at start-up by builds after 3.4.1 only. To install that first build from an ext4 card, mount it
+over SSH (`mount /dev/mmcblk0p1 /tmp/sdcard`, or `/dev/mmcblk0` without a partition table), or use an exFAT card once.
 
 ## 5. Install and keep the trial
 

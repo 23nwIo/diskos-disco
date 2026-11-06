@@ -579,6 +579,8 @@ static lv_timer_t *g_t_storage;
 static void storage_fast(void){ if(g_t_storage) lv_timer_set_period(g_t_storage, 100); }
 static int storage_media_local(void);
 static int storage_host_confirmed(void);
+static int sd_return_needs_restart(void);   /* the returned card is ext2/3/4, which the stock player cannot mount */
+void settings_restart_now(void);           /* settings.c: the Restart path (drain, sync, reboot) */
 int ui_local_playback_allowed(void){
     return atomic_load(&g_launch_verdict) == 1 && g_sd_phase == SD_LOCAL && !g_sd_hold && sd_io_healthy();
 }
@@ -695,6 +697,11 @@ static void storage_unknown(const char *why){
     fprintf(stderr, "storage: %s; SD access remains held\n", why); fflush(stderr);
     ui_toast("Storage state uncertain - reboot device");
 }
+static void storage_restart_for_card(void){
+    sd_io_hold(); atomic_store(&g_sd_writable, 0); g_sd_phase = SD_UNKNOWN;
+    fprintf(stderr, "storage: returned card is ext2/3/4, which the stock player cannot mount; restarting\n"); fflush(stderr);
+    settings_restart_now();
+}
 int ui_set_source_mode(int mode){
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(mode < 0 || mode > 6) return -1;                 /* 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay, 6 Web radio */
@@ -788,6 +795,12 @@ static void storage_tick(lv_timer_t *t){
         else if(g_sd_reissue && atomic_load(&g_launch_verdict) == 1 && source_send(3) == 0) g_sd_reissue = 0;
     } else if(g_sd_phase == SD_WAIT_LOCAL){
         if(storage_media_local()){ storage_resume_local(); return; }
+        /* The stock player remounts the returned card with iocharset=utf8, which ext4 rejects, so an ext2/3/4
+         * card never comes back on its own. Once the host has let go of it (5 s into the return), restart:
+         * the boot-time direct mount handles ext4. */
+        if((int32_t)(lv_tick_get() - (g_sd_deadline - 20000)) >= 5000 && sd_return_needs_restart()){
+            storage_restart_for_card(); return;
+        }
         if((int32_t)(lv_tick_get() - g_sd_deadline) >= 0) storage_unknown("return mount not confirmed");
         /* same gate as the recovered export above: a recovered R marker must not drive the player before
          * this launch is qualified */
@@ -2528,6 +2541,26 @@ static int sd_cold_mount_allowed(void){
      * if the gadget has not bound YET, so a mount can't race a queued-but-unexecuted export (M19). */
     return (up >= 0.0 && up <= 150.0 && !sd_exported_to_host() && atomic_load(&g_sd_writable));
 }
+/* Filesystems the direct mount tries, in order. */
+static const char *const SD_FS_TYPES[] = { "exfat", "vfat", "ext4" };
+/* The card's filesystem: its first partition, or the whole card when it has no partition table (the kernel then
+ * creates no mmcblk0p1). Decided from sysfs, which lists exactly the partitions the kernel found. */
+static const char *sd_fs_device(void){
+    struct stat sb;
+    return stat("/sys/class/block/mmcblk0p1", &sb) == 0 ? "/dev/mmcblk0p1" : "/dev/mmcblk0";
+}
+/* ext2/3/4 superblock magic (0xEF53 at byte 1080) on the card's filesystem device. Read-only; only called while the
+ * card is not exported to a host. */
+static int sd_card_is_ext(void){
+    int fd = open(sd_fs_device(), O_RDONLY | O_CLOEXEC);
+    if(fd < 0) return 0;
+    unsigned char m[2]; ssize_t n = pread(fd, m, sizeof m, 1024 + 56);
+    close(fd);
+    return n == 2 && m[0] == 0x53 && m[1] == 0xEF;
+}
+static int sd_return_needs_restart(void){
+    return !sd_exported_to_host() && !coldplug_mounted() && sd_card_is_ext();
+}
 static void *coldplug_thread(void *arg){
     (void)arg;
     const int direct_sd_mount = fw_needs_direct_sd_mount();
@@ -2586,7 +2619,18 @@ static void *coldplug_thread(void *arg){
                  * it, so a mount can still race an export begun in the window after sd_exported_to_host().
                  * Re-check the REAL gadget state AFTER a successful mount: if the card became host-exported,
                  * unmount immediately (fail-closed) rather than dual-access; the one-shot then gives up. */
-                if(sd_cold_mount_allowed() && mount("/dev/mmcblk0p1", "/tmp/sdcard", "exfat", 0, NULL) == 0){
+                /* exFAT, FAT and ext4 (the ext4 driver also mounts ext2/ext3). The stock player cannot mount ext4
+                 * at all (it always passes iocharset=utf8, which ext4 rejects), so for an ext4 card this direct
+                 * mount is the only automatic one. The card's own errno is kept: the guard calls between the
+                 * attempts stat configfs paths and would overwrite errno. */
+                const char *dev = sd_fs_device(), *fstype = NULL;
+                int merr = 0;
+                for(unsigned k = 0; k < sizeof SD_FS_TYPES / sizeof SD_FS_TYPES[0] && !fstype; k++){
+                    if(!sd_cold_mount_allowed()) break;
+                    if(mount(dev, "/tmp/sdcard", SD_FS_TYPES[k], 0, NULL) == 0) fstype = SD_FS_TYPES[k];
+                    else merr = errno;
+                }
+                if(fstype){
                     if(sd_exported_to_host()){
                         if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)
                             coldplug_log("WARNING: post-mount export + unmount BOTH failed (card busy) - possible transient dual-access");
@@ -2594,24 +2638,15 @@ static void *coldplug_thread(void *arg){
                             coldplug_log("post-mount export detected -> unmounted, host owns card (one-shot gives up)");
                         pthread_mutex_unlock(&g_sd_mode_mu); return NULL;    /* explicit: don't fight the host */
                     }
-                    coldplug_log("SD direct-mounted (V2.40 exfat)"); pthread_mutex_unlock(&g_sd_mode_mu); return NULL;
-                }
-                else if(sd_cold_mount_allowed() && mount("/dev/mmcblk0p1", "/tmp/sdcard", "vfat", 0, NULL) == 0){
-                    if(sd_exported_to_host()){
-                        if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)
-                            coldplug_log("WARNING: post-mount export + unmount BOTH failed (card busy) - possible transient dual-access");
-                        else
-                            coldplug_log("post-mount export detected -> unmounted, host owns card (one-shot gives up)");
-                        pthread_mutex_unlock(&g_sd_mode_mu); return NULL;
-                    }
-                    coldplug_log("SD direct-mounted (V2.40 vfat)"); pthread_mutex_unlock(&g_sd_mode_mu); return NULL;
+                    { char b[96]; snprintf(b, sizeof b, "SD direct-mounted (%s on %s)", fstype, dev); coldplug_log(b); }
+                    pthread_mutex_unlock(&g_sd_mode_mu); return NULL;
                 }
                 if(!sd_cold_mount_allowed()){      /* window elapsed / card exported -> give up (one-shot) */
                     pthread_mutex_unlock(&g_sd_mode_mu);
                     coldplug_log("V2.40 SD one-shot: window elapsed or card exported (SD not mounted)");
                     return NULL;
                 }
-                { char b[96]; snprintf(b, sizeof b, "SD direct-mount failed errno=%d(%s)", errno, strerror(errno)); coldplug_log(b); }
+                { char b[128]; snprintf(b, sizeof b, "SD direct-mount failed on %s errno=%d(%s)", dev, merr, strerror(merr)); coldplug_log(b); }
             }
         }
         pthread_mutex_unlock(&g_sd_mode_mu);

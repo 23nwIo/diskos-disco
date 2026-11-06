@@ -15,6 +15,10 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 - Bluetooth: give a device its own name on the Disc (hold its row, or Rename on its details screen); it is kept per
   address and never sent to the device. Two devices with the same name show the end of their address, e.g.
   "BT Receiver (A1:B2)". Forgetting a device drops its name.
+- microSD cards formatted ext4 (also ext2/ext3), with or without a partition table, mount at start-up (firmware V2.40 and V2.57). The stock
+  player cannot mount ext4 itself, so a card inserted while the Disc is on stays unmounted until the next start, and
+  leaving USB storage with an ext4 card restarts the Disc to mount it again. Windows and macOS cannot read ext4 in USB
+  storage. Cover files are found ignoring upper/lower case on ext4 cards (COVER.JPG). Not yet tested on a Disc.
 
 ## 3.4.1
 

@@ -593,6 +593,9 @@ static void boot_confirm_go(void){
     if(!g_rst_timer){ restart_fail("Couldn't restart - try again", "no timer"); return; }
     ui_toast("Restarting...");
 }
+/* Restart without the confirmation modal, for a caller that has already decided (main.c: an ext4 card returning
+ * from USB storage, which only the boot-time mount can bring back). Same drain, sync and refusal rules. */
+void settings_restart_now(void){ boot_confirm_go(); }
 static void boot_modal_pill(lv_obj_t *card, int x, const char *txt, theme_color_role_t col, lv_event_cb_t cb){
     lv_obj_t *b = lv_button_create(card);
     lv_obj_remove_style_all(b);
