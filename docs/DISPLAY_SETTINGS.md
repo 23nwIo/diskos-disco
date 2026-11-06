@@ -7,7 +7,7 @@ The seven root categories are shared by all themes. Visible rows depend on theme
 | Playback | Play Mode, Equalizer, Library seek, Resume Playback, Artists grouping, Auto-tag, Play Through Folders, Up Next and SongSphere. Play Mode and Equalizer lead; SongSphere is last. |
 | Audio | Working Mode, Gain, DAC Filter, ReplayGain, DRE, Gapless, Max Volume, Balance, supported SPDIF Output and read-only DSD Output. |
 | Display | Brightness, Theme, selected theme settings, supported Light / dark, Immersive, Library appearance, Navigation, QS style and Text & layout. |
-| Connectivity | Wi-Fi, Bluetooth (Devices and codec), aptX (experimental), Quiet Wi-Fi for Bluetooth, MA Sendspin and Online services. Bluetooth codecs are experimental: see [Bluetooth](BLUETOOTH.md). |
+| Connectivity | Wi-Fi, Bluetooth (Devices and codec), aptX (experimental), Quiet Wi-Fi for Bluetooth, MA Sendspin, Remote Control (off by default, see [Remote Control](REMOTE_CONTROL.md)) and Online services. Bluetooth codecs are experimental: see [Bluetooth](BLUETOOTH.md). |
 | System | Language, Controls, Date & Time, Library management and Maintenance. |
 | Battery & power | Details, Idle power-off, Restart, Screen-off delay, Screensaver delay, Shut down player, Sleep timer, supported battery-percentage display and Charging limit. |
 | Help | How to, About, supported Interaction hints and Show hints again. |

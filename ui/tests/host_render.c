@@ -2402,6 +2402,8 @@ int main(int argc, char **argv){
         if(getenv("MA_STATE")){ void ma_test_state(int); scr=SCR_MA; screen_show(scr); ma_test_state(atoi(getenv("MA_STATE"))); for(int i=0;i<30;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MA_DELAY")){ void settings_open_ma_delay(void); cfg_set_int("ma_delay_ms",atoi(getenv("MA_DELAY"))); setlist_open("Network"); settings_open_ma_delay(); scr=SCR_SETTING_DETAIL; for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("VK_SET")){ void settings_open_volkeys(void); setlist_open("System"); scr=SCR_SETLIST; screen_show(scr); settings_open_volkeys(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
+        if(getenv("REMOTE_SET")){ void settings_open_remote(void); setlist_open("Network"); scr=SCR_SETLIST; screen_show(scr); settings_open_remote(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
+        if(getenv("REMOTE_LINK")){ void remote_test_link(const char *); remote_test_link(getenv("REMOTE_LINK")); for(int i=0;i<80;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MA_SET")){ void settings_open_ma(void); setlist_open("Network"); scr=SCR_SETLIST; screen_show(scr); settings_open_ma(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MODES_INFO")){ void modes_test_info(int); scr=SCR_MODEINFO; screen_show(scr); modes_test_info(atoi(getenv("MODES_INFO"))); for(int i=0;i<30;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("SHORTCUT_HINT")){ui_shortcuts_hint(180,atoi(getenv("SHORTCUT_HINT")));nav_wait(100);}

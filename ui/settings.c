@@ -7,6 +7,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 #include "screens.h"
 #include "ma.h"
+#include "remote.h"
 #include "fork_build.h"
 #include "braun.h"
 #include "theme.h"
@@ -353,6 +354,10 @@ static void apply_ma_server(int v){ (void)v; ma_edit_server(); }
 static void apply_ma_name(int v){ (void)v; ma_edit_name(); }
 static void apply_ma_unpaired(int v){ (void)v; ma_unpaired_changed(); }
 static void apply_ma_token(int v){ (void)v; ma_show_token(); }
+static void apply_remote_group(int v);                    /* Settings > Connectivity > Remote Control */
+static void apply_remote_on(int v){ remote_set_on(v); }
+static void apply_remote_show(int v){ (void)v; remote_show_link(); }
+static void apply_remote_new(int v){ (void)v; remote_new_link(); }
 static void apply_ma_forget(int v){ (void)v; ma_forget_servers(); }
 
 static void apply_workmode(int v){ (void)v; modes_open(); }
@@ -1056,6 +1061,14 @@ static const setting_t TABLE[] = {
       "A QR code that pairs Music Assistant without a code. Anyone with it can pair, so keep it private.", NULL },
     { "MA Sendspin", "Forget Servers", ST_ACTION, NULL, 0,0,0, NULL,0, g_ma_pairs_lbl, apply_ma_forget, 0,
       "Remove every pairing. Each Music Assistant has to pair again.", NULL },
+    { "Connectivity",  "Remote Control", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_remote_group, 0,
+      "Control playback from a phone or computer browser on the same Wi-Fi. Off by default.", NULL },
+    { "Remote Control", "Control Page", ST_TOGGLE, "remote_on", 0,1,1, NULL,0, NULL, apply_remote_on, 0,
+      "On: a control page on your Wi-Fi plays, pauses, skips and sets the volume. Only devices with the link get in. Unencrypted: use trusted networks only.", NULL },
+    { "Remote Control", "Show Link", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_remote_show, 0,
+      "The control page's QR code and address. Anyone with the link can control the player, so keep it private.", NULL },
+    { "Remote Control", "New Link", ST_ACTION, NULL, 0,0,0, NULL,0, "New", apply_remote_new, 0,
+      "Make a new link. Old links and bookmarks stop working.", NULL },
     { "Connectivity",  "Bluetooth", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_bluetooth_settings, 0,
       "Pair Bluetooth devices. Audio routes to connected headphones or speakers (SBC, beta).", NULL },
     { "Connectivity",  "Bluetooth Codec", ST_CHOICE, "bt_codec", 0,0,0, BT_CODEC_LABEL, BT_CODEC_N, NULL, apply_bt_codec, 0,
@@ -1246,6 +1259,8 @@ static void apply_grp_about(int v){ (void)v; g_active_group = "About"; setlist_r
 static void apply_volkeys_group(int v){ (void)v; g_active_group = "Volume Keys"; setlist_refresh(); }
 static void apply_ma_group(int v){ (void)v; ma_settings_load(); g_active_group = "MA Sendspin"; setlist_refresh(); }
 void settings_open_ma(void){ apply_ma_group(0); }      /* host renders */
+static void apply_remote_group(int v){ (void)v; g_active_group = "Remote Control"; setlist_refresh(); }
+void settings_open_remote(void){ apply_remote_group(0); }   /* host renders */
 void settings_open_volkeys(void){ apply_volkeys_group(0); }   /* host renders */
 void settings_open_ma_delay(void){ for(int i = 0; i < (int)(sizeof TABLE / sizeof TABLE[0]); i++) if(TABLE[i].cfg_key && !strcmp(TABLE[i].cfg_key, "ma_delay_ms")){ settings_open_detail(i); return; } }
 /* screen_back() on SCR_SETLIST: a sub-group (Disco Options, Music Assistant) steps back to its parent on the same screen */
@@ -1283,6 +1298,7 @@ static const struct { const char *child, *parent; } SUBGROUP[] = {
     { "About", "Help" },
     { "How to", "Help" },
     { "MA Sendspin", "Connectivity" },
+    { "Remote Control", "Connectivity" },
     { "Volume Keys", "Controls" } };
 int settings_back_consumed(void){
     if(!g_active_group) return 0;
@@ -2205,7 +2221,7 @@ void settings_test_submenus(void){
         if(!parent||display_variant_hidden(s)||settings_hidden(s))continue;
         void (*f)(int)=s->apply;
         if(!(f==apply_theme_settings||f==apply_theme_navigation||f==apply_library_appearance||f==apply_sleep_settings||f==apply_bluetooth_settings||f==apply_shared_navigation||
-             f==apply_grp_musictext||f==apply_grp_musicinfo||f==apply_grp_clockinfo||f==apply_grp_musicprogress||f==apply_grp_immersive||f==apply_grp_zune||f==apply_grp_textlayout||f==apply_grp_screenstandby||f==apply_grp_onlineextras||f==apply_grp_musicscreen||f==apply_grp_discocolours||f==apply_grp_discoqs||f==apply_grp_discolayout||f==apply_grp_datetime||f==apply_grp_library||f==apply_grp_controls||f==apply_grp_maintenance||f==apply_grp_about||f==apply_volkeys_group||f==apply_ma_group||f==apply_howto))continue;
+             f==apply_grp_musictext||f==apply_grp_musicinfo||f==apply_grp_clockinfo||f==apply_grp_musicprogress||f==apply_grp_immersive||f==apply_grp_zune||f==apply_grp_textlayout||f==apply_grp_screenstandby||f==apply_grp_onlineextras||f==apply_grp_musicscreen||f==apply_grp_discocolours||f==apply_grp_discoqs||f==apply_grp_discolayout||f==apply_grp_datetime||f==apply_grp_library||f==apply_grp_controls||f==apply_grp_maintenance||f==apply_grp_about||f==apply_volkeys_group||f==apply_ma_group||f==apply_remote_group||f==apply_howto))continue;
         g_active_group=parent;f(0);
         int indices[N_SETTINGS];
         if(strcmp(g_active_group,"How to")&&!settings_collect(g_active_group,indices)){fprintf(stderr,"Empty submenu: %s\n",g_active_group);abort();}

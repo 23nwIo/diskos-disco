@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
       'Immersive':['Style'], 'Sleep timer':['Duration'],
       'Controls':['Volume Keys'], 'Date & Time':['Set Date & Time'],
       'Library':['Rescan Library'], 'Maintenance':['Update from SD Card'],
-      'MA Sendspin':['Server'], 'Bluetooth':['Devices'],
+      'MA Sendspin':['Server'], 'Remote Control':['Control Page'], 'Bluetooth':['Devices'],
       'Volume Keys':['Press','Double Press','Long Press']}.get(page,[])
     if page=='Playback':continue
     assert labels[:len(anchors)]==anchors,(theme,page,labels,anchors)

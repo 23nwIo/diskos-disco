@@ -53,6 +53,7 @@
 #include "sdio.h"
 #include "art.h"
 #include "command_spawn.h"
+#include "remote.h"
 #include "ui_instance.h"
 #include "power.h"
 #include "discshelf.h"
@@ -3312,6 +3313,7 @@ int main(int argc, char **argv){
     settings_apply_startup();   /* restore saved brightness */
     wifi_init_intent();         /* seed wifi_on intent from stock WIFI_STATUS (first run only) */
     fprintf(stderr,"step:screens_init\n");fflush(stderr); screens_init(); ma_boot();   /* MA Sendspin comes back if it was on */
+    remote_boot();                               /* Remote Control: the web page comes up with Wi-Fi if it was on */
     home_set_settings_click_cb(go_settings);
     library_set_song_click_cb(on_song_play);   /* tap a song -> play it */
     search_set_song_click_cb(on_search_play);   /* search result -> play in all-songs scope (no stale drill ctx) */
@@ -3979,7 +3981,8 @@ int main(int argc, char **argv){
                 onboarding_woke_by_touch();                  /* once: the power button is the pocket lock */
             } else if(touch_gate_wake && lifted) touch_gate_wake = 0;
         }
-        if(kbinput_active() || ma_pairing_shown()) last_activity = lv_tick_get();   /* typing / a pairing code on screen: stay lit */
+        remote_pump();                                     /* Remote Control: publish the state, run a waiting command */
+        if(kbinput_active() || ma_pairing_shown() || remote_link_shown()) last_activity = lv_tick_get();   /* typing / a pairing code on screen: stay lit */
         if(g_wake_req){                                   /* something needs to be seen now (MA Sendspin pairing code) */
             g_wake_req = 0; last_activity = lv_tick_get();
             if(bl_state){ ui_backlight(ui_effective_brightness()); bl_state = 0; player_blanked = 0; }

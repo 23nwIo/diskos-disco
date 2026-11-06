@@ -10,6 +10,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [How-to](HOWTO.md): common tasks.
 - [Immersive](IMMERSIVE_CONTROLS.md), [Disc Shelf](DISC_SHELF_INSTALL.md), [privacy](PRIVACY.md).
 - [Bluetooth audio, codecs and aptX](BLUETOOTH.md) (experimental).
+- [Remote Control over Wi-Fi](REMOTE_CONTROL.md) (not yet device-tested).
 - [Signed SD updates](UPDATING.md), [Windows](WINDOWS.md), [Linux](LINUX.md), [macOS](MACOS.md), [switching and recovery](SWITCHING.md).
 - Themes: [Disco](DISCO_TOUR.md), [Null](themes/null.md), [Squash](themes/squash.md), [Zune](themes/zune.md), [Braun 2.0](themes/BRAUN2.md). Ring, Braun and Stone remain available.
 

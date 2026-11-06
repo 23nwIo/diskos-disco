@@ -21,16 +21,21 @@ fileops_test: fileops_test.c ../fileops.c
 apps_shortcut_test: apps_shortcut_test.c ../apps.c ../config.c ../md5.c
 	$(CC) $(CFLAGS) $(subst diskos_cfgtest,diskos_shortcuttest,$(DEFS)) -D_GNU_SOURCE -DLV_CONF_INCLUDE_SIMPLE -ffunction-sections -fdata-sections -I.. $< ../config.c ../md5.c -Wl,--gc-sections -o $@
 
+remote_test: remote_test.c ../remote_core.c ../remote_srv.c ../remote_core.h ../remote_srv.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_srv.c -pthread -o $@
+
 .PHONY: review
 review: fileops_test apps_shortcut_test
 	./fileops_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: config_test playstate_test
+run: config_test playstate_test remote_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
+	@echo "--- remote ---"
+	./remote_test
 
 clean:
-	rm -f config_test playstate_test fileops_test apps_shortcut_test
+	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test

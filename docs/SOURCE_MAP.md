@@ -22,7 +22,7 @@ Paths below are relative to the repository root. Read the implementation togethe
 | Settings hierarchy and visibility | `ui/settings.c`, `ui/settings_display.h`, `ui/settings_order.h` |
 | Theme definitions and styling | `ui/theme.c`, `ui/theme_defs.c`, `ui/theme_kit.c`, `ui/theme_kits.c`, theme-specific modules and generated fonts |
 | Standby and overlays | `ui/saver.c`, theme saver modules, `ui/toast.c`, `ui/onboarding.c` |
-| Network services | `ui/bt.c`, `ui/wifi.c`, `ui/weather.c`, `ui/lyrics.c`, `ui/lastfm.c`, Sendspin modules |
+| Network services | `ui/bt.c`, `ui/wifi.c`, `ui/weather.c`, `ui/lyrics.c`, `ui/lastfm.c`, Sendspin modules, Remote Control (`ui/remote*.c`, [guide](REMOTE_CONTROL.md)) |
 | Built-in apps | `ui/apps.c`, `ui/appshelf.c`, `ui/discshelf/`, `ui/boomshine/`, SongSphere and Roulette modules |
 | Artwork and caches | `ui/art.c`, `ui/artcache.c`, `ui/artdec_inproc.c` and helper/tool sources |
 | Initial installation | `diskos_installer/`, `install.sh`, `src/launcher/`, `src/usbboot/`, `flash/`, `windows/` |

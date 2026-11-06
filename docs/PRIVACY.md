@@ -43,6 +43,16 @@ To connect Last.fm, diskOS runs a **temporary web server on the device** at
 > **Last.fm is BETA and unverified end-to-end** - see the README's Current limitations. The transport and
 > signing are tested, but a full connect-and-scrobble round-trip to a live account has not been.
 
+### Remote Control serves a page on your LOCAL network in plaintext
+
+With Settings > Connectivity > Remote Control > Control Page on (off by default), diskOS runs a **web server on the
+device** at `http://<device-wifi-ip>:8088/<random-link-code>/` for as long as the setting is on. It sends nothing to
+the internet. Important properties:
+- It is **plain HTTP on your Wi-Fi LAN**: the link code, the current song's title/artist/album and your commands
+  cross your local network unencrypted. Anyone who sees the link code can control playback. Use it on networks you trust.
+- It is bound to the Wi-Fi interface only and answers nothing without the link code. The link code is stored in
+  `/usr/data/diskos.conf`; Remote Control > New Link replaces it. See [Remote Control](REMOTE_CONTROL.md).
+
 ### The stock FiiO player still runs alongside diskOS
 
 diskOS replaces only the UI; FiiO's original player process still runs underneath it. That stock

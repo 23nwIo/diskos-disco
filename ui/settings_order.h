@@ -38,6 +38,7 @@ static int setting_order_band(const setting_t *s){
     if(s->apply==apply_wifi||s->apply==apply_battery||s->apply==apply_open_datetime||s->apply==apply_volkeys_group||s->apply==apply_rescan||s->apply==system_update_sd_open||s->apply==apply_howto||s->apply==apply_ma_server||s->apply==apply_bluetooth_connection)return -20;
     if(s->apply==apply_bluetooth_settings||!strcmp(k,"idle_off_idx"))return -19;
     if(!strcmp(k,"language")||!strcmp(k,"font_size")||!strcmp(k,"album_view")||!strcmp(k,"imm_style")||!strcmp(k,"sleep_idx"))return -20;
+    if(!strcmp(k,"remote_on"))return -20;                 /* Remote Control: the switch leads its page */
     if(!strcmp(s->group,"Volume Keys"))return !strcmp(k,"key_single")?-20:!strcmp(k,"key_double")?-19:-18;
     return setting_is_onoff(s)?3:2;
 }
