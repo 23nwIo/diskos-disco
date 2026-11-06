@@ -388,6 +388,13 @@ static void forget_play(void){                          /* any stream ends; a ru
     g_shown_state = RS_OFF;
 }
 void radio_mode_leaving(void){ forget_play(); }
+void radio_restart(void){
+    pthread_mutex_lock(&g_mu);
+    int on = g_rstate == RS_PLAYING || g_rstate == RS_STARTING;
+    if(on){ g_play_gen++; g_job_station = g_now; g_rstate = RS_STARTING; g_err[0] = 0; post_job(J_PLAY); }
+    pthread_mutex_unlock(&g_mu);
+    if(on){ g_shown_state = RS_STARTING; poll_start(); }
+}
 void radio_stop(void){
     if(radio_active()) ui_set_source_mode(0);           /* -> radio_mode_leaving */
     else forget_play();

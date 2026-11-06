@@ -36,8 +36,9 @@ accepted.
 ## Limits
 
 - Wi-Fi only, and 2.4 GHz only (the Disc's radio chip). A weak signal means dropouts.
-- Output is the internal headphone output. Bluetooth headphones are not routed while the radio plays (the route
-  belongs to the Playback source).
+- The output stays as it was in Playback: headphones, or Bluetooth headphones that were already playing (tested with
+  dlnatest over Bluetooth). Headphones that connect only while the radio plays are not switched to automatically;
+  connect them first.
 - The current song title from the stream (ICY metadata) is not shown yet; the station name is.
 - As in the other working modes, a microSD card inserted while the radio plays is not mounted automatically.
 - Playlists (`.pls`, `.m3u`) are resolved by the directory; a bare playlist URL in the favourites file may not play.

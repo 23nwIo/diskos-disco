@@ -27,5 +27,6 @@ int  radio_search_result(rc_station_t *out, int cap, int *state);   /* stations 
 int  radio_fav_add(const rc_station_t *s);              /* 0 saved (or already there), -1 refused (radio_last_error) */
 int  radio_fav_remove(const char *url);                 /* 0 removed (or not there), -1 couldn't save */
 
+void radio_restart(void);                   /* main.c: the output was re-initialised (Bluetooth -> headphones): start the station again */
 void radio_mode_leaving(void);              /* main.c ui_set_source_mode: another source takes over (no mode switch here) */
 #endif

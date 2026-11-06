@@ -512,6 +512,14 @@ int ui_route_analog(void){
     /* the route commands MUST land; if either fails, keep g_route_mac set + return failure so a
      * retry re-runs - clearing it would falsely say "on analog" and leave the player stuck on BT. */
     if(ipc_send_cmd("0666000C0006") < 0) return -1;     /* out_dev = analog/local DAC */
+    if(ui_get_source_mode() == 6){                              /* Web radio: back into the DLNA mode, and the stream starts again */
+        if(ipc_send_cmd("0657000C000C") < 0) return -1;
+        g_route_mac[0] = 0;
+        ui_bt_codec_upgrade_cancel(); ui_route_hold_cancel(); ui_resume_guard_cancel();
+        radio_restart();
+        fprintf(stderr,"route analog (radio)\n"); fflush(stderr);
+        return 0;
+    }
     if(ipc_send_cmd("0657000C0008") < 0) return -1;
     if(st.have_track && st.position_ms > 0) ui_seek_to(st.position_ms);
     if(was_playing) ipc_send_cmd("0201000C0000");       /* play */
@@ -644,6 +652,9 @@ static int storage_player_guarded(void){
     return found > 0 && ok;
 }
 static int source_send(int mode){
+    /* Web radio <-> Playback keeps the output route (Bluetooth headphones included): only the work mode changes, the
+     * exact frames dlnatest sent on the device (2026-11-06, played over Bluetooth). No 0666 re-init, no route reset. */
+    if(mode == 6 || (mode == 0 && g_source_mode == 6)) return ipc_send_cmd(mode == 6 ? "0657000C000C" : "0657000C0008");
     { void bt_autoroute_reset(void); ui_route_forget("source change"); bt_autoroute_reset(); }   /* B02: the source owns the output now */
     if(ipc_send_cmd("0666000C0006") < 0) return -1;
     modes_output_reset();                                /* every source change starts from the internal DAC route */
@@ -671,8 +682,9 @@ static int source_send(int mode){
         case 5:
             if(ipc_send_cmd("0642000C0000") < 0) return -1;
             return ipc_send_cmd("0657000C000A");
-        case 6:                                          /* Web radio: the player's own DLNA renderer (mode 0C, port 49494,
-                                                          * docs/COMMAND_MAP.md); radio.c hands it the stream over UPnP */
+        case 6:                                          /* Web radio from a source other than Playback: the player's own DLNA
+                                                          * renderer (mode 0C, port 49494, docs/COMMAND_MAP.md) on the internal
+                                                          * route; radio.c hands it the stream over UPnP */
             if(ipc_send_cmd("0642000C0000") < 0) return -1;
             return ipc_send_cmd("0657000C000C");
     }
