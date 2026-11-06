@@ -203,6 +203,7 @@ static void snapshot(rmt_state_t *s){
     snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
     s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
     s->favorite = -1;
+    if(ui_route_mac()[0]) ui_bt_live_codec(s->bt_codec, sizeof s->bt_codec);   /* cached; a thread refreshes it */
     s->eq = simple_cfg_get_int("eq_preset", 0); if(s->eq < 0 || s->eq > 20) s->eq = 0;
     eqpreset_name(s->eq, s->eq_name, sizeof s->eq_name);
     rc_station_t rs;
@@ -600,7 +601,9 @@ static char *status_json(void){
     st_group(&s, "Playback");
     st_row(&s, "Working mode", "%s", music_assistant() ? "Music Assistant" : sm >= 0 && sm < 7 ? MODE[sm] : "Other");
     int route = modes_output_route();
-    st_row(&s, "Output", "%s", ui_route_mac()[0] ? "Bluetooth" : route == OUT_USB ? "USB-C audio" : route == OUT_SPDIF ? "S/PDIF" : "Headphone jack");
+    char oc[16] = ""; if(ui_route_mac()[0]) ui_bt_live_codec(oc, sizeof oc);
+    st_row(&s, "Output", "%s%s%s%s", ui_route_mac()[0] ? "Bluetooth" : route == OUT_USB ? "USB-C audio" : route == OUT_SPDIF ? "S/PDIF" : "Headphone jack",
+           oc[0] ? " (" : "", oc, oc[0] ? ")" : "");
     st_row(&s, "Volume", "%d / %d", st.volume, VOL_MAX);
     char eqn[48]; int eq = simple_cfg_get_int("eq_preset", 0); eqpreset_name(eq, eqn, sizeof eqn);
     st_row(&s, "EQ", "%s", eqn);
@@ -803,7 +806,16 @@ static char *bt_json(void){
         rmt_buf_printf(&b, ",\"connected\":%s,\"codec\":", d[i].connected ? "true" : "false"); rmt_buf_str(&b, d[i].codec);
         rmt_buf_put(&b, "}");
     }
-    rmt_buf_put(&b, "]}");
+    /* the Bluetooth Codec setting as Settings > Connectivity offers it (only firmware V2.57 can apply it) */
+    int cur = cfg_get_int("bt_codec", 0); if(cur == 5 || cur == 6) cur = 3;
+    char live[16] = ""; if(ui_route_mac()[0]) ui_bt_live_codec(live, sizeof live);
+    rmt_buf_printf(&b, "],\"codec\":{\"settable\":%s,\"current\":%d,\"live\":", fw_os_ver() == 257 ? "true" : "false", cur);
+    rmt_buf_str(&b, live); rmt_buf_put(&b, ",\"choices\":[");
+    for(int i = 0; i < bt_codec_choices(); i++){
+        rmt_buf_printf(&b, "%s{\"id\":%d,\"name\":", i ? "," : "", i); rmt_buf_str(&b, BT_CODEC_LABEL[i]);
+        rmt_buf_put(&b, ",\"hint\":"); rmt_buf_str(&b, bt_codec_hint(i)); rmt_buf_put(&b, "}");
+    }
+    rmt_buf_put(&b, "]}}");
     return rmt_buf_take(&b);
 }
 static int bt_cmd(const rmt_cmd_t *c, const char **why){
@@ -811,6 +823,11 @@ static int bt_cmd(const rmt_cmd_t *c, const char **why){
     switch(c->sub){
     case RMT_BT_ON:  if(st == BT_OFF) bt_toggle(); return 0;            /* already on or coming up: nothing to do */
     case RMT_BT_OFF: if(st != BT_OFF) bt_toggle(); return 0;
+    case RMT_BT_CODEC:                                     /* as Settings > Connectivity > Bluetooth Codec */
+        if(fw_os_ver() != 257){ *why = "This firmware can't choose the Bluetooth codec"; return -1; }
+        if(c->arg < 0 || c->arg >= bt_codec_choices()){ *why = "Unknown codec"; return -1; }
+        cfg_set_int("bt_codec", (int)c->arg); bt_codec_setting_changed();
+        return 0;
     default: break;
     }
     if(st != BT_ON){ *why = st == BT_TURNING_ON ? "Bluetooth is still turning on" : "Bluetooth is off"; return -1; }

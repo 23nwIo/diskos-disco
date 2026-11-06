@@ -311,15 +311,16 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         int dev = ep[1] == 't';
         if(!dev && get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_BT_LIST; return rt; }
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
-        static const char *const A[] = { "on", "off", "refresh", "search", "connect", "disconnect", "forget", "rename" };
+        static const char *const A[] = { "on", "off", "refresh", "search", "connect", "disconnect", "forget", "rename", "codec" };
         char a[12]; int k = 0;
-        if(!param_str(r, "action", a, sizeof a)) for(int i = 0; i < 8; i++) if(!strcmp(a, A[i])) k = i + 1;
-        int ok = k && (dev ? k >= RMT_BT_CONNECT : k < RMT_BT_CONNECT);
+        if(!param_str(r, "action", a, sizeof a)) for(int i = 0; i < 9; i++) if(!strcmp(a, A[i])) k = i + 1;
+        int ok = k && (dev ? k >= RMT_BT_CONNECT && k <= RMT_BT_RENAME : k < RMT_BT_CONNECT || k == RMT_BT_CODEC);
         if(ok && dev){
             ok = !param_str(r, "mac", rt.cmd.q, sizeof rt.cmd.q) && strlen(rt.cmd.q) == 17;
             for(int i = 0; ok && i < 17; i++) ok = i % 3 == 2 ? rt.cmd.q[i] == ':' : isxdigit((unsigned char)rt.cmd.q[i]) != 0;
             if(ok && k == RMT_BT_RENAME){ int pr = param_str(r, "name", rt.cmd.name, 48); ok = pr == 0 || pr == -1; if(pr == -1) rt.cmd.name[0] = 0; }
         }
+        if(ok && k == RMT_BT_CODEC){ long v = -1; ok = !param(r, "codec", &v) && v >= 0 && v <= 9; rt.cmd.arg = v; }
         if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
         rt.cmd.kind = RMT_CMD_BT; rt.cmd.sub = k; rt.kind = RMT_R_CMD;
         return rt;
@@ -425,20 +426,20 @@ int rmt_json_escape(char *dst, size_t cap, const char *src){
 }
 int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
     char t[sizeof s->title * 6], a[sizeof s->artist * 6], al[sizeof s->album * 6];   /* worst case: every byte \u00XX */
-    char su[sizeof s->station_url * 6], sti[sizeof s->stream_title * 6], st[sizeof s->station * 6], re[sizeof s->radio_error * 6], fm[sizeof s->format * 6], ar[sizeof s->art * 6], eqn[sizeof s->eq_name * 6];
+    char bc[sizeof s->bt_codec * 6], su[sizeof s->station_url * 6], sti[sizeof s->stream_title * 6], st[sizeof s->station * 6], re[sizeof s->radio_error * 6], fm[sizeof s->format * 6], ar[sizeof s->art * 6], eqn[sizeof s->eq_name * 6];
     if(rmt_json_escape(t, sizeof t, s->title) < 0 || rmt_json_escape(a, sizeof a, s->artist) < 0 ||
-       rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 || rmt_json_escape(su, sizeof su, s->station_url) < 0 || rmt_json_escape(sti, sizeof sti, s->stream_title) < 0 ||
+       rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 || rmt_json_escape(su, sizeof su, s->station_url) < 0 || rmt_json_escape(bc, sizeof bc, s->bt_codec) < 0 || rmt_json_escape(sti, sizeof sti, s->stream_title) < 0 ||
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,"
-        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"radio_error\":\"%s\","
+        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"bt_codec\":\"%s\",\"radio_error\":\"%s\","
         "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\"}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
         s->volume, s->volume_max, s->play_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
-        s->radio_state ? s->radio_state : "off", st, su, sti, re,
+        s->radio_state ? s->radio_state : "off", st, su, sti, bc, re,
         fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
     return n;
@@ -524,7 +525,7 @@ const char RMT_PAGE_HTML[] =
 "#shb{position:fixed;inset:0;background:#0006}#sh{position:fixed;left:0;right:0;bottom:0;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:.6em 1em 1.2em;max-width:30em;margin:0 auto}\n"
 "#sh b{display:block;padding:.6em 0;color:var(--mut);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#sh button{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;color:var(--fg);font-size:1em;padding:.75em 0}\n"
 "#fv{position:absolute;right:.6em;top:.6em;border:0;background:none;color:var(--acc);font-size:1.5em}.card{position:relative}\n"
-".hide{display:none}\n"
+".hide{display:none}.hint{font-size:.8em;color:var(--mut)}\n"
 "select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .4em}\n"
 ".kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}\n"
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
@@ -542,7 +543,7 @@ const char RMT_PAGE_HTML[] =
 "<div id=lib class=hide><input id=q type=search placeholder=Search aria-label=Search>\n"
 "<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label='More' class=hide>&#8943;</button><button id=pa class=pa>Play all</button></div>\n"
 "<div id=list></div><button id=mo class='more hide'>Load more</button></div>\n"
-"<div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div></div>\n"
+"<div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div><div id=btc class='card hide'><label for=btk>Bluetooth codec <span id=btn></span></label><select id=btk></select><div id=bth class=hint></div></div></div>\n"
 "<div id=stv class=hide></div>\n"
 "<div id=shb class=hide></div><div id=sh class=hide></div>\n"
 "<div id=msg></div></main>\n"
@@ -560,7 +561,7 @@ const char RMT_PAGE_HTML[] =
 "$('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;\n"
 "var ra=s.source==='radio';if(ra){var sn=s.station||'Web radio',ok=s.radio_state!=='starting'&&s.radio_state!=='error';$('t').textContent=ok&&s.stream_title?s.stream_title:sn;$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):s.stream_title?sn:'Web radio';$('al').textContent=s.station_url||''}$('al').classList.toggle('u',ra);\n"
 "$('rs').classList.toggle('hide',!ra);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||s.play_mode<0);\n"
-"var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');$('tx').textContent=s.has_track||ra?tx:'';\n"
+"var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');if(s.bt_codec)tx+=(tx?' · ':'')+'Bluetooth '+s.bt_codec;$('tx').textContent=s.has_track||ra?tx:'';\n"
 "fav=s.favorite;$('fv').classList.toggle('hide',fav===null||fav===undefined||ra);$('fv').innerHTML=fav?'&#9829;':'&#9825;';\n"
 "if(s.art!==art){art=s.art;if(art)$('cv').src='api/cover?v='+encodeURIComponent(art);else $('cv').classList.add('hide')}\n"
 "$('pp').innerHTML=s.playing?'&#9208;':'&#9654;';\n"
@@ -587,6 +588,8 @@ const char RMT_PAGE_HTML[] =
 "setInterval(status,3000);\n"
 "/* Bluetooth: the Disc's own Bluetooth screen calls; a search takes ~15 s, connecting a few seconds */\n"
 "var bton=0;function bt(){if(V!=='bt'||document.hidden)return;fetch('api/bluetooth',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='bt'||!j.ok)return;\n"
+"var k=j.codec,e=$('btk');$('btc').classList.toggle('hide',!k||!k.settable);if(k&&k.settable&&document.activeElement!==e){if(e.options.length!==k.choices.length){e.textContent='';k.choices.forEach(function(c){var o=document.createElement('option');o.value=c.id;o.textContent=c.name;e.appendChild(o)})}\n"
+"e.value=k.current;$('bth').textContent=(k.choices[k.current]||{}).hint||''}$('btn').textContent=k&&k.live?'· now '+k.live:'';\n"
 "var on=j.state==='on';bton=j.state!=='off';$('bts').textContent=on?(j.busy?'Looking for devices…':'Bluetooth is on'):j.state==='off'?'Bluetooth is off':'Turning on…';\n"
 "$('bto').textContent=bton?'Turn off':'Turn on';$('bto').className=bton?'':'pa';$('btf').disabled=!on||j.busy;var l=$('btl');l.textContent='';\n"
 "if(on&&!j.devices.length){l.className='card';l.textContent=j.busy?'Searching…':'No audio devices found. Put your headphones in pairing mode and search.';return}l.className=j.devices.length?'card':'';l.style.padding='0';\n"
@@ -597,6 +600,7 @@ const char RMT_PAGE_HTML[] =
 "cmd('bt_device',enc({action:'rename',mac:d.mac,name:n.trim()})).then(function(ok){if(ok){say('Renamed',1);bt()}})}],['Forget device',function(){if(!confirm('Forget “'+d.name+'”? You will need to pair it again.'))return;\n"
 "cmd('bt_device',enc({action:'forget',mac:d.mac})).then(function(ok){if(ok){say('Device forgotten',1);setTimeout(bt,1800)}})}]])};w.appendChild(b);w.appendChild(x);l.appendChild(w)})}).catch(function(){say('Player not reachable')})}\n"
 "setInterval(bt,2000);$('bto').onclick=function(){cmd('bluetooth','action='+(bton?'off':'on')).then(function(ok){if(ok){say(bton?'Turning Bluetooth off':'Turning Bluetooth on - this takes up to half a minute',1);setTimeout(bt,500)}})};\n"
+"$('btk').onchange=function(){cmd('bluetooth',enc({action:'codec',codec:$('btk').value})).then(function(ok){if(ok){say('Saved - applies from the next connection',1);bt()}})};\n"
 "$('btf').onclick=function(){cmd('bluetooth','action=search').then(function(ok){if(ok){$('btf').disabled=true;say('Searching for about 15 seconds',1);setTimeout(bt,500)}})};\n"
 "$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};\n"
 "/* library: st = stack of views {l:list, p:params, t:title, play:item for Play all, row:function(item)->[title,sub,action]} */\n"

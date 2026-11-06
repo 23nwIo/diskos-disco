@@ -124,5 +124,6 @@ assert stat['Playback']['EQ'] == 'R&B' and stat['Playback']['Library'] == '6 son
 assert {'Bluetooth', 'Wi-Fi', 'Storage', 'System'} <= set(stat) and 'Uptime' in stat['System'], stat
 # no Bluetooth radio on a host: the real bt.c reports it off and refuses device actions
 assert res[52]['rc'] == 0 and res[52]['body']['state'] == 'off' and res[52]['body']['devices'] == [], res[52]
+k = res[52]['body']['codec']; assert [c['name'] for c in k['choices']] == ['SBC', 'AAC', 'aptX/LDAC Mobile', 'aptX/LDAC Standard', 'aptX/LDAC High'] and k['live'] == '' and k['current'] == 0, k
 assert res[53]['rc'] == -1 and res[53]['why'] == 'Bluetooth is off' and res[54]['rc'] == -1, res[53:]
 print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth')

@@ -27,7 +27,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Control | Notes |
 |---|---|
 | Play/Pause, Next, Previous | Exactly what the Music screen's buttons do: audiobooks skip 30 s / back 15 s, fast repeated skips are paced, Music Assistant (MA Sendspin) is controlled when it plays. |
-| Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory). |
+| Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory), and the Bluetooth codec when headphones play. |
 | Position slider | Seeks the current song. |
 | Volume | 0-120, the player's own scale (the same as the hardware keys). |
 | EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
@@ -68,7 +68,7 @@ card) and can stop it; the tab shows its progress.
 The **Bluetooth** tab does what the Disc's Bluetooth screen does: **Turn on**/**Turn off** the radio (switching on takes
 up to half a minute), **Search** for headphones and speakers in pairing mode (about 15 s), tap a device to connect
 (it is paired first if needed) or the connected one to disconnect, and under **⋯** give it its own name on this Disc
-(an empty name or the device's own name goes back to that) or **Forget** it. Local names are the same ones the Disc
+(an empty name or the device's own name goes back to that) or **Forget** it. **Bluetooth codec** below the list is the Settings choice (SBC, AAC, aptX/LDAC Mobile/Standard/High; firmware V2.57 only) with the codec running now; a new choice applies from the next connection, as on the Disc. Local names are the same ones the Disc
 shows; two devices with the same name get the end of their address. The list refreshes every 2 s while the tab is
 open; the Disc shows its usual messages ("Connected: …") on its own screen.
 
@@ -106,7 +106,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 
 | Request | Effect |
 |---|---|
-| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","stream_title":"Artist - Title" or "","radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
+| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","stream_title":"Artist - Title" or "","bt_codec":"LDAC" or "" (the codec the Bluetooth headphones run),"radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
 | `GET api/status` | `{"ok":true,"groups":[{"name":"Wi-Fi","rows":[["Signal","-60 dBm (good)"],…]},…]}` (display text) |
 | `GET api/eq`, `POST api/eq` with `preset=0..20` | The presets (`{"current":N,"presets":[{"id":0,"name":"Off"},…]}`) / select one. |
 | `POST api/playlist_create` (`name`, 1-64 bytes), `playlist_rename` (`id`, `name`), `playlist_delete` (`id`) | Playlists. Create answers `{"ok":true,"id":N}`. |
@@ -114,8 +114,8 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/playlist_remove` with `id`, `pos`, `song_id` | Remove one row; refused if that row no longer holds that song. |
 | `POST api/favorite` with `on=0\|1` and `song_id` (none: the song playing now) | Favourite on/off. Song lists carry `"fav":true\|false`. |
 | `POST api/rescan` with `action=start\|stop` | Library rescan; `GET api/status` has `"scan":{"active":…,"done":N}`. |
-| `GET api/bluetooth` | `{"ok":true,"state":"on"\|"off"\|"turning_on","busy":…,"devices":[{"mac":"AA:BB:…","name":"shown name","own":"device's name","alias":"local name or empty","connected":…,"codec":"LDAC"…}]}` (connected first; `busy`: a search or listing is running). |
-| `POST api/bluetooth` with `action=on\|off\|search\|refresh` | Radio on/off (only acts if needed), a ~15 s search, or list the known devices again. |
+| `GET api/bluetooth` | `{"ok":true,"state":"on"\|"off"\|"turning_on","busy":…,"devices":[{"mac":"AA:BB:…","name":"shown name","own":"device's name","alias":"local name or empty","connected":…,"codec":"LDAC"…}],"codec":{"settable":…,"current":N,"live":"LDAC","choices":[{"id":0,"name":"SBC","hint":"…"},…]}}` (connected first; `busy`: a search or listing is running). |
+| `POST api/bluetooth` with `action=on\|off\|search\|refresh`, or `action=codec&codec=N` | Radio on/off (only acts if needed), a ~15 s search, list the known devices again, or the Bluetooth Codec setting (an id from `choices`). |
 | `POST api/bt_device` with `action=connect\|disconnect\|forget\|rename` and `mac=AA:BB:CC:DD:EE:FF` (+ `name`, up to 47 bytes, for rename) | As on the Disc; refused (409) while Bluetooth is off. |
 | `GET api/cover` | The playing song's cover as the Disc decoded it (148 px BMP); `art` in the state changes with it, so `api/cover?v=<art>` can be cached by the page. 409 when there is none. |
 | `POST api/play_pause` | Toggle. |

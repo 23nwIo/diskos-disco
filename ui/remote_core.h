@@ -51,7 +51,8 @@ typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, R
  * that song) | favorite (on=0/1, song_id; no song_id = the song playing now) */
 /* POST api/bluetooth action=on|off|refresh|search; POST api/bt_device action=connect|disconnect|forget|rename, mac
  * (AA:BB:CC:DD:EE:FF), name (rename; "" clears the local name) */
-typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME } rmt_bt_t;
+/* action=codec with codec=0..9: the Bluetooth Codec setting (arg) */
+typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
 #define RMT_PL_NAME_MAX 64
 #define RMT_LIMIT_DEF 200
@@ -110,6 +111,7 @@ typedef struct {
     const char *source;      /* "local" | "music_assistant" | "radio" | "other" (static string) */
     const char *radio_state; /* "off" | "starting" | "playing" | "error" (static string; NULL = "off") */
     char station[96], radio_error[96];
+    char bt_codec[16];       /* the codec the Bluetooth headphones run now ("" when the output is not Bluetooth) */
     char stream_title[330];  /* the song the station names (ICY / Ogg comments), "" none */
     char station_url[512];   /* the playing station's stream URL ("" when no radio plays) */
     char format[16];         /* "FLAC", "MP3", "DSD128", a radio codec; "" unknown */

@@ -144,6 +144,10 @@ static void test_core(void){
     r = req("POST", p("/api/bluetooth"), "action=search"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_SEARCH);
     CHECK(req("POST", p("/api/bluetooth"), "action=connect&mac=00:11:22:33:44:55").kind == RMT_R_BAD_PARAM);   /* a device action */
     CHECK(req("POST", p("/api/bluetooth"), "action=dance").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/bluetooth"), "action=codec&codec=4"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_CODEC && r.cmd.arg == 4);
+    CHECK(req("POST", p("/api/bluetooth"), "action=codec").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bluetooth"), "action=codec&codec=10").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bt_device"), "action=codec&codec=1&mac=00:11:22:33:44:55").kind == RMT_R_BAD_PARAM);
     CHECK(req("GET", p("/api/bt_device"), NULL).kind == RMT_R_BAD_METHOD);
     r = req("POST", p("/api/bt_device"), "action=connect&mac=00:11:22:aa:BB:55"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_CONNECT && !strcmp(r.cmd.q, "00:11:22:aa:BB:55"));
     r = req("POST", p("/api/bt_device"), "action=rename&mac=00:11:22:33:44:55&name=Kitchen+%3Cx%3E"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_RENAME && !strcmp(r.cmd.name, "Kitchen <x>"));
@@ -211,7 +215,7 @@ static void test_core(void){
     CHECK(strstr(js, "\"station_url\":\"https://radio.example/stream?a=1\\u0026b=\\\"2\\\"\"") || strstr(js, "\"station_url\":\"https://radio.example/stream?a=1&b=\\\"2\\\"\""));
     memset(s.title, 1, sizeof s.title - 1); s.title[sizeof s.title - 1] = 0;   /* worst-case escaping still fits */
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
-    memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0;
+    memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strlen(RMT_PAGE_HTML) < 32768);
 }
@@ -264,7 +268,7 @@ static char *fake_browse(const rmt_cmd_t *c){
     return rmt_buf_take(&b);
 }
 /* stand-in Bluetooth: three devices, a search "finds" a fourth after 3 s, switching on takes 2 s */
-static int g_bt_on = 1, g_bt_conn = 0, g_bt_n = 3; static time_t g_bt_until, g_bt_up;
+static int g_bt_codec = 3; static int g_bt_on = 1, g_bt_conn = 0, g_bt_n = 3; static time_t g_bt_until, g_bt_up;
 static char g_bt_alias[4][48] = { "", "Kitchen", "", "" };
 static const char *const BT_MAC[4] = { "00:11:22:33:44:01", "00:11:22:33:44:02", "00:11:22:33:44:03", "00:11:22:33:44:04" };
 static const char *const BT_OWN[4] = { "FiiO EH11", "JBL Flip 5", "WH-1000XM4 <b>", "Car audio" };
@@ -281,7 +285,10 @@ static char *fake_bt(void){
         rmt_buf_put(&b, ",\"own\":"); rmt_buf_str(&b, BT_OWN[i]); rmt_buf_put(&b, ",\"alias\":"); rmt_buf_str(&b, g_bt_alias[i]);
         rmt_buf_printf(&b, ",\"connected\":%s,\"codec\":\"%s\"}", i == g_bt_conn ? "true" : "false", i == g_bt_conn ? "LDAC" : "");
     }
-    rmt_buf_put(&b, "]}");
+    static const char *const CN[5] = { "SBC", "AAC", "aptX/LDAC Mobile", "aptX/LDAC Standard", "aptX/LDAC High" };
+    rmt_buf_printf(&b, "],\"codec\":{\"settable\":true,\"current\":%d,\"live\":\"%s\",\"choices\":[", g_bt_codec, g_bt_on && g_bt_conn >= 0 ? "LDAC" : "");
+    for(int i = 0; i < 5; i++){ rmt_buf_printf(&b, "%s{\"id\":%d,\"name\":", i ? "," : "", i); rmt_buf_str(&b, CN[i]); rmt_buf_printf(&b, ",\"hint\":\"Hint for %s <x>\"}", i ? "a choice" : "SBC"); }
+    rmt_buf_put(&b, "]}}");
     return rmt_buf_take(&b);
 }
 static void fake_bt_cmd(const rmt_cmd_t *c){
@@ -291,6 +298,7 @@ static void fake_bt_cmd(const rmt_cmd_t *c){
     case RMT_BT_OFF: g_bt_on = 0; g_bt_up = 0; g_bt_until = 0; break;
     case RMT_BT_SEARCH: if(!g_bt_on){ rsrv_done(0, "Bluetooth is off"); return; } g_bt_until = time(NULL) + 3; break;
     case RMT_BT_REFRESH: break;
+    case RMT_BT_CODEC: if(c->arg > 4){ rsrv_done(0, "Unknown codec"); return; } g_bt_codec = (int)c->arg; break;
     case RMT_BT_CONNECT: if(i >= g_bt_n){ rsrv_done(0, "Couldn't reach that device"); return; } g_bt_conn = i; break;
     case RMT_BT_DISCONNECT: if(i == g_bt_conn) g_bt_conn = -1; break;
     case RMT_BT_FORGET: if(i >= g_bt_n){ rsrv_done(0, "Couldn't forget that device"); return; }
@@ -307,7 +315,7 @@ static void *emu(void *a){
     rmt_state_t s; memset(&s, 0, sizeof s);
     snprintf(s.title, sizeof s.title, "Track <one>"); s.has_track = 1; s.volume = 33; s.volume_max = 120; s.source = "local"; s.controllable = 1;
     snprintf(s.format, sizeof s.format, "FLAC"); s.bits = 24; s.sample_rate = 96000; s.kbps = 2304; s.channels = 2; s.favorite = 0;
-    snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz");
+    snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz"); snprintf(s.bt_codec, sizeof s.bt_codec, "LDAC");
     while(g_emu_run){
         if(!g_emu_pause){
             rsrv_publish(&s);
