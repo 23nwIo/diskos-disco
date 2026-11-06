@@ -53,4 +53,19 @@ int  rc_set_uri_args(const rc_station_t *s, char *out, size_t n);
 int  rc_xml_value(const char *xml, const char *tag, char *out, size_t n);
 /* Split http://host[:port]/path. Returns 0, -1 for anything else (https is not used by UPnP control). */
 int  rc_split_http(const char *url, char *host, size_t hn, int *port, char *path, size_t pn);
+
+/* ---- ICY (SHOUTcast/Icecast) in-stream metadata: asked for with "Icy-MetaData: 1", the reply carries
+ * "icy-metaint: N"; after every N audio bytes comes one length byte L and L*16 bytes of "StreamTitle='...';..." */
+#define RC_ICY_METAINT_MAX 262144
+int  rc_icy_head_end(const char *buf, size_t n);              /* offset just past the header block, -1 not complete */
+long rc_icy_metaint(const char *head, size_t n);              /* icy-metaint (1..RC_ICY_METAINT_MAX), -1 none */
+/* StreamTitle from one metadata block: UTF-8 (Latin-1 is converted), control characters as spaces, trimmed.
+ * Returns 0 (out may be "": the station sends an empty title), -1 if the block has no StreamTitle. */
+int  rc_icy_title(const char *meta, size_t n, char *out, size_t on);
+/* "Artist - Title" at the first " - ": 1 split; 0 not (title = the whole text, artist = ""). */
+int  rc_icy_split(const char *t, char *artist, size_t an, char *title, size_t tn);
+/* ---- Ogg streams (Vorbis, Opus) carry no ICY blocks: each song starts a new chained stream whose comment header
+ * (TITLE=, ARTIST=) the server sends again to every new listener. */
+size_t rc_ogg_payload(const unsigned char *in, size_t n, unsigned char *out, size_t on);  /* the first stream's page bodies, joined */
+int  rc_ogg_tags(const unsigned char *payload, size_t n, char *artist, size_t an, char *title, size_t tn);   /* 0 found, -1 none */
 #endif

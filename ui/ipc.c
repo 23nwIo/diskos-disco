@@ -504,9 +504,27 @@ void ipc_clear_external(void){
     pthread_mutex_lock(&g_mu); if(g_ext.on){ g_ext.on = 0; g_ext.bump++; } pthread_mutex_unlock(&g_mu);
 }
 int ipc_external_active(void){ return g_ext.on; }
+/* Web radio: the player plays the stream (its state, position and path stay), only the words are ours - the song
+ * from the stream's own metadata instead of the player's "(NULL)". */
+static struct { int on; char title[160], artist[160], album[160]; unsigned bump; } g_tags;
+void ipc_set_tags(const char *title, const char *artist, const char *album){
+    pthread_mutex_lock(&g_mu);
+    if(!g_tags.on || strcmp(g_tags.title, title) || strcmp(g_tags.artist, artist) || strcmp(g_tags.album, album)){
+        snprintf(g_tags.title, sizeof g_tags.title, "%s", title); snprintf(g_tags.artist, sizeof g_tags.artist, "%s", artist);
+        snprintf(g_tags.album, sizeof g_tags.album, "%s", album); g_tags.on = 1; g_tags.bump++;
+    }
+    pthread_mutex_unlock(&g_mu);
+}
+void ipc_clear_tags(void){
+    pthread_mutex_lock(&g_mu); if(g_tags.on){ g_tags.on = 0; g_tags.bump++; } pthread_mutex_unlock(&g_mu);
+}
 void ipc_get_state(track_state_t*out){
     pthread_mutex_lock(&g_mu); *out=g_state;
-    out->seq += g_ext.bump;
+    out->seq += g_ext.bump + g_tags.bump;
+    if(g_tags.on && !g_ext.on){
+        snprintf(out->title, sizeof out->title, "%s", g_tags.title); snprintf(out->artist, sizeof out->artist, "%s", g_tags.artist);
+        snprintf(out->album, sizeof out->album, "%s", g_tags.album); out->have_track = 1;
+    }
     if(g_ext.on){
         snprintf(out->title, sizeof out->title, "%s", g_ext.title); snprintf(out->artist, sizeof out->artist, "%s", g_ext.artist);
         snprintf(out->album, sizeof out->album, "%s", g_ext.album); snprintf(out->path, sizeof out->path, "%s", g_ext.path);

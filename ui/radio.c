@@ -27,12 +27,14 @@
 #include "zune_dial.h"
 #include "command_spawn.h"
 #include "version.h"
+#include "ipc.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <signal.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +44,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -78,6 +81,9 @@ static rc_station_t g_hits[RC_MAX_HITS];
 static int g_nhits, g_sstate = SR_IDLE;
 static unsigned g_search_gen, g_search_seen;
 static char g_ctl[RC_URL_LEN];                          /* the renderer's AVTransport control URL, "" unknown */
+static char g_icy[160], g_icy_artist[160];              /* the song the stream names ("" none / not yet) */
+static unsigned g_icy_gen;                              /* the play generation g_icy belongs to */
+static unsigned g_icy_bump;                             /* bumped on every change (main thread republishes) */
 
 /* ================================================================ HTTP + UPnP (worker only) */
 static long long ms_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000LL + t.tv_nsec / 1000000; }
@@ -182,9 +188,10 @@ static int soap(const char *action, const char *args){  /* 0 = HTTP 200 */
 }
 
 /* ================================================================ jobs (worker) */
+static void icy_kick(void);
 static void set_play(unsigned gen, int st, const char *err){
     pthread_mutex_lock(&g_mu);
-    if(gen == g_play_gen){ g_rstate = st; snprintf(g_err, sizeof g_err, "%s", err ? err : ""); }
+    if(gen == g_play_gen){ g_rstate = st; snprintf(g_err, sizeof g_err, "%s", err ? err : ""); if(st == RS_PLAYING) icy_kick(); }
     pthread_mutex_unlock(&g_mu);
     ui_loop_wake();
 }
@@ -265,6 +272,112 @@ static void post_job(int job){                          /* caller holds g_mu; a 
     g_job = job; pthread_cond_signal(&g_cv);
 }
 
+/* ================================================================ the song title (its own thread)
+ * The player does not pass the stream's metadata on, so every ICY_EVERY_MS a second, short connection to the
+ * station asks for it: ICY blocks (MP3/AAC from Icecast/SHOUTcast) or, for Ogg Vorbis/Opus, the comment header
+ * the server sends every new listener. wget does DNS, HTTPS and redirects; it is killed once the title is read. */
+#define ICY_EVERY_MS 20000
+#define ICY_BUF (96 * 1024)
+static pthread_cond_t g_icy_cv = PTHREAD_COND_INITIALIZER;
+static int g_icy_thread;
+/* reads until want bytes are there, the stream ends or the deadline passes; returns bytes held */
+static size_t read_to(int fd, unsigned char *b, size_t have, size_t want, long long end){
+    while(have < want){
+        long long left = end - ms_now(); if(left <= 0) break;
+        struct pollfd p = { fd, POLLIN, 0 };
+        if(poll(&p, 1, (int)(left > 1000 ? 1000 : left)) <= 0) continue;
+        ssize_t r = read(fd, b + have, want - have);
+        if(r <= 0) break;
+        have += (size_t)r;
+    }
+    return have;
+}
+/* 1 a title was read (title/artist set, may be ""), 0 the stream names none, -1 the connection failed */
+static int icy_fetch(const char *url, char *title, size_t tn, char *artist, size_t an){
+    static unsigned char buf[ICY_BUF], pay[ICY_BUF];
+    title[0] = artist[0] = 0;
+    int pfd[2]; if(pipe2(pfd, O_CLOEXEC)) return -1;
+    char u[RC_URL_LEN]; snprintf(u, sizeof u, "%s", url);
+    char *argv[] = { "wget", "-q", "-T", "8", "-t", "1", "--save-headers", "--header=Icy-MetaData: 1",
+                     "-U", DISCO_NAME "/" DISCO_VERSION, "-O", "-", u, NULL };
+    pid_t pid = -1; int rc = command_spawn_io(&pid, argv, pfd[1], -1);
+    close(pfd[1]);
+    if(rc){ close(pfd[0]); return -1; }
+    long long end = ms_now() + 12000;
+    int res = -1;
+    size_t have = 0; int he = -1;
+    while(he < 0 && have < 16384){                          /* the reply header (wget passes ICY 200 on as body: same shape) */
+        size_t was = have; have = read_to(pfd[0], buf, have, have + 1, end);
+        if(have == was) break;
+        he = rc_icy_head_end((const char *)buf, have);
+    }
+    if(he > 0){
+        long mi = rc_icy_metaint((const char *)buf, (size_t)he);
+        if(mi > 0 && (size_t)he + (size_t)mi + 1 + 255 * 16 <= sizeof buf){
+            have = read_to(pfd[0], buf, have, (size_t)he + (size_t)mi + 1, end);
+            if(have >= (size_t)he + (size_t)mi + 1){
+                size_t ml = buf[he + mi] * 16u, at = (size_t)he + (size_t)mi + 1;
+                have = read_to(pfd[0], buf, have, at + ml, end);
+                if(have >= at + ml){
+                    char full[320];
+                    if(ml && rc_icy_title((const char *)buf + at, ml, full, sizeof full) == 0){
+                        rc_icy_split(full, artist, an, title, tn); res = 1;
+                    } else res = 0;                     /* an empty block: the title has not changed / none */
+                }
+            }
+        } else {                                        /* no ICY: an Ogg stream names its song in its headers */
+            have = read_to(pfd[0], buf, have, sizeof buf < (size_t)he + 65536 ? sizeof buf : (size_t)he + 65536, end);
+            if(have > (size_t)he + 4 && !memcmp(buf + he, "OggS", 4)){
+                size_t pl = rc_ogg_payload(buf + he, have - (size_t)he, pay, sizeof pay);
+                res = rc_ogg_tags(pay, pl, artist, an, title, tn) == 0 ? 1 : 0;
+            } else if(have > (size_t)he) res = 0;
+        }
+    }
+    close(pfd[0]);
+    kill(-pid, SIGKILL); kill(pid, SIGKILL);
+    while(waitpid(pid, NULL, 0) < 0 && errno == EINTR){}
+    return res;
+}
+static void *icy_thread(void *arg){
+    (void)arg;
+    unsigned done_gen = 0; int misses = 0; long long next = 0;
+    for(;;){
+        pthread_mutex_lock(&g_mu);
+        for(;;){
+            int playing = g_rstate == RS_PLAYING;
+            if(playing && g_play_gen != done_gen){ next = ms_now() + 3000; done_gen = g_play_gen; misses = 0;
+                                                   g_icy[0] = g_icy_artist[0] = 0; g_icy_gen = g_play_gen; g_icy_bump++; }
+            if(playing && ms_now() >= next) break;
+            struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += playing ? 1 : 30;
+            pthread_cond_timedwait(&g_icy_cv, &g_mu, &ts);
+        }
+        rc_station_t s = g_now; unsigned gen = g_play_gen;
+        pthread_mutex_unlock(&g_mu);
+        char t[160], a[160];
+        int r = icy_fetch(s.url, t, sizeof t, a, sizeof a);
+        pthread_mutex_lock(&g_mu);
+        if(gen == g_play_gen && r > 0 && (strcmp(t, g_icy) || strcmp(a, g_icy_artist))){
+            snprintf(g_icy, sizeof g_icy, "%s", t); snprintf(g_icy_artist, sizeof g_icy_artist, "%s", a); g_icy_bump++;
+            fprintf(stderr, "radio: now \"%s%s%s\"\n", a, a[0] ? " - " : "", t);
+        }
+        misses = r > 0 ? 0 : misses + 1;
+        /* a station that names nothing is asked again only every few minutes */
+        next = ms_now() + (misses >= 3 ? 5 * 60000 : ICY_EVERY_MS);
+        pthread_mutex_unlock(&g_mu);
+        if(r > 0) ui_loop_wake();
+    }
+    return NULL;
+}
+static void icy_kick(void){                             /* caller holds g_mu */
+    if(!g_icy_thread){
+        pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+        pthread_attr_setstacksize(&a, 128 * 1024);
+        if(pthread_create(&t, &a, icy_thread, NULL) == 0) g_icy_thread = 1;
+        pthread_attr_destroy(&a);
+    }
+    pthread_cond_signal(&g_icy_cv);
+}
+
 /* ================================================================ favourites (main thread) */
 static rc_station_t g_fav[RC_MAX_FAV];
 static int g_nfav, g_fav_loaded, g_fav_test;
@@ -335,6 +448,32 @@ int radio_station(rc_station_t *out){
 const char *radio_station_name(void){
     pthread_mutex_lock(&g_mu); snprintf(g_name_main, sizeof g_name_main, "%s", g_rstate == RS_OFF ? "" : g_now.name); pthread_mutex_unlock(&g_mu);
     return g_name_main;
+}
+const char *radio_stream_title(void){
+    static char t[330];
+    pthread_mutex_lock(&g_mu);
+    int on = g_rstate == RS_PLAYING && g_icy_gen == g_play_gen && g_icy[0];
+    if(!on) t[0] = 0;
+    else snprintf(t, sizeof t, "%s%s%s", g_icy_artist, g_icy_artist[0] ? " - " : "", g_icy);
+    pthread_mutex_unlock(&g_mu);
+    return t;
+}
+/* the words on the Now Playing screens while the radio plays (1 s timer, main thread) */
+static int g_tags_on;
+static void tags_cb(lv_timer_t *t){
+    (void)t;
+    pthread_mutex_lock(&g_mu);
+    int on = (g_rstate == RS_PLAYING || g_rstate == RS_STARTING) && radio_active();
+    rc_station_t s = g_now;
+    char song[160] = "", artist[160] = "";
+    if(on && g_rstate == RS_PLAYING && g_icy_gen == g_play_gen){ snprintf(song, sizeof song, "%s", g_icy); snprintf(artist, sizeof artist, "%s", g_icy_artist); }
+    pthread_mutex_unlock(&g_mu);
+    if(!on){ if(g_tags_on){ ipc_clear_tags(); g_tags_on = 0; } return; }
+    char detail[128]; rc_detail(&s, detail, sizeof detail);
+    if(song[0] && artist[0]) ipc_set_tags(song, artist, s.name);           /* the song, its artist, the station */
+    else if(song[0]) ipc_set_tags(song, s.name, detail);                   /* a show name or "Title" only */
+    else ipc_set_tags(s.name, detail[0] ? detail : "Web radio", "");      /* no song named (yet) */
+    g_tags_on = 1;
 }
 const char *radio_last_error(void){
     pthread_mutex_lock(&g_mu); snprintf(g_err_main, sizeof g_err_main, "%s", g_err); pthread_mutex_unlock(&g_mu);
@@ -577,6 +716,7 @@ static void header_back_cb(lv_event_t *e){
 }
 void radio_create(lv_obj_t *root){
     g_root = root;
+    lv_timer_create(tags_cb, 1000, NULL);
     lv_obj_set_style_bg_color(root, TC(CANVAS), 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     if(th_zune()){ g_title = zune_pivot(root, "radio", header_back_cb); zune_status(root, SCR_RADIO); }

@@ -39,11 +39,15 @@ accepted.
 - The output stays as it was in Playback: headphones, or Bluetooth headphones that were already playing (tested with
   dlnatest over Bluetooth). Headphones that connect only while the radio plays are not switched to automatically;
   connect them first.
-- The current song title from the stream (ICY metadata) is not shown yet; the station name is.
+- The song the station names is shown on the Music screen (title, artist, the station as album): ICY metadata for
+  MP3/AAC from Icecast or SHOUTcast, the comment header (TITLE, ARTIST) for Ogg Vorbis and Opus. The player does not
+  pass this on, so the Disc opens a second, short connection to the station every 20 seconds (a few seconds of extra
+  data); a station that names nothing is asked again only every 5 minutes. A song change can take up to 20 seconds to
+  show. Without a title the station name is shown. FLAC streams are not read for titles. Not yet tested on a Disc.
 - As in the other working modes, a microSD card inserted while the radio plays is not mounted automatically.
 - Playlists (`.pls`, `.m3u`) are resolved by the directory; a bare playlist URL in the favourites file may not play.
 
 For a front end such as Remote Control, `ui/radio.h` offers `radio_favorites`, `radio_play`, `radio_play_url`,
-`radio_stop`, `radio_state`, `radio_station_name`, the directory search (`radio_search`, `radio_search_result`) and
+`radio_stop`, `radio_state`, `radio_station_name`, `radio_stream_title` ("Artist - Title", "" none), the directory search (`radio_search`, `radio_search_result`) and
 `radio_fav_add` / `radio_fav_remove` (main thread only). [Remote Control](REMOTE_CONTROL.md) uses them for
 its Radio tab.

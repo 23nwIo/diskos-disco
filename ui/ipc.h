@@ -37,6 +37,8 @@ void ipc_set_external(const char *title, const char *artist, const char *album, 
                       long dur_ms, long pos_ms, long long pos_at_ms, int speed);   /* MA Sendspin's track (pos at CLOCK_MONOTONIC ms) */
 void ipc_clear_external(void);
 int  ipc_external_active(void);
+void ipc_set_tags(const char *title, const char *artist, const char *album);   /* web radio: words only, the player's state stays */
+void ipc_clear_tags(void);
 int  ipc_send_cmd(const char *frame);  /* e.g. "0201000C0000" play/pause; 0=queued, -1=failed */
 int  ipc_send_probe(const char *frame);/* background send (state-sync/health): silent, no toast */
 int  ipc_send_quiet(const char *frame);/* background command that retries itself: waits in line, never toasts */

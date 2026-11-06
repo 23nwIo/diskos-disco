@@ -317,3 +317,124 @@ int rc_set_uri_args(const rc_station_t *s, char *out, size_t n){
     k = snprintf(out, n, "<CurrentURI>%s</CurrentURI><CurrentURIMetaData>%s</CurrentURIMetaData>", eurl, edidl);
     return (k < 0 || (size_t)k >= n) ? -1 : 0;
 }
+
+/* ================================================================ ICY in-stream metadata */
+int rc_icy_head_end(const char *buf, size_t n){
+    for(size_t i = 0; i + 1 < n; i++){
+        if(buf[i] == '\n' && buf[i + 1] == '\n') return (int)(i + 2);
+        if(i + 3 < n && buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') return (int)(i + 4);
+    }
+    return -1;
+}
+long rc_icy_metaint(const char *head, size_t n){
+    static const char key[] = "icy-metaint:";
+    const size_t kl = sizeof key - 1;
+    for(size_t i = 0; i + kl <= n; i++){
+        if((i && head[i - 1] != '\n') || strncasecmp(head + i, key, kl)) continue;
+        size_t j = i + kl; long v = 0; int digits = 0;
+        while(j < n && (head[j] == ' ' || head[j] == '\t')) j++;
+        while(j < n && head[j] >= '0' && head[j] <= '9' && digits < 7){ v = v * 10 + (head[j] - '0'); j++; digits++; }
+        return (digits && v > 0 && v <= RC_ICY_METAINT_MAX) ? v : -1;
+    }
+    return -1;
+}
+static int utf8_valid(const unsigned char *s, size_t n){
+    for(size_t i = 0; i < n;){
+        unsigned c = s[i]; size_t k = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 0;
+        if(!k || i + k > n || (k == 2 && c < 0xC2)) return 0;
+        for(size_t j = 1; j < k; j++) if((s[i + j] & 0xC0) != 0x80) return 0;
+        i += k;
+    }
+    return 1;
+}
+int rc_icy_title(const char *meta, size_t n, char *out, size_t on){
+    static const char key[] = "StreamTitle='";
+    const size_t kl = sizeof key - 1;
+    if(!on) return -1;
+    out[0] = 0;
+    size_t len = 0; while(len < n && meta[len]) len++;    /* the block is NUL-padded */
+    const char *s = NULL;
+    for(size_t i = 0; i + kl <= len; i++) if(!strncmp(meta + i, key, kl)){ s = meta + i + kl; break; }
+    if(!s) return -1;
+    size_t rest = len - (size_t)(s - meta), vl = rest;
+    for(size_t i = 0; i + 1 < rest; i++) if(s[i] == '\'' && s[i + 1] == ';'){ vl = i; break; }   /* titles may hold ' */
+    if(vl == rest && vl && s[vl - 1] == '\'') vl--;
+    const unsigned char *u = (const unsigned char *)s;
+    int utf8 = utf8_valid(u, vl);
+    size_t o = 0;
+    for(size_t i = 0; i < vl && o + 1 < on; i++){
+        unsigned c = u[i];
+        if(c < 0x20 || c == 0x7F){ if(o && out[o - 1] != ' ') out[o++] = ' '; continue; }
+        if(utf8 || c < 0x80){ out[o++] = (char)c; continue; }
+        if(c < 0xA0) continue;                              /* Latin-1 C1 controls */
+        if(o + 2 >= on) break;
+        out[o++] = (char)(0xC0 | c >> 6); out[o++] = (char)(0x80 | (c & 63));   /* Latin-1 -> UTF-8 */
+    }
+    out[o] = 0;
+    if(utf8 && o){                                          /* never end on a cut UTF-8 sequence */
+        size_t b = o; while(b && ((unsigned char)out[b - 1] & 0xC0) == 0x80) b--;
+        if(b){ unsigned c = (unsigned char)out[b - 1]; size_t need = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
+               if(o - (b - 1) < need) out[b - 1] = 0; }
+    }
+    trim(out);
+    return 0;
+}
+int rc_icy_split(const char *t, char *artist, size_t an, char *title, size_t tn){
+    const char *d = t ? strstr(t, " - ") : NULL;
+    if(!d || d == t || !d[3]){ cpy(artist, an, ""); cpy(title, tn, t); return 0; }
+    size_t al = (size_t)(d - t);
+    if(an){ if(al >= an) al = an - 1; memcpy(artist, t, al); artist[al] = 0; trim(artist); }
+    cpy(title, tn, d + 3); trim(title);
+    return artist[0] && title[0];
+}
+
+/* ================================================================ Ogg (Vorbis / Opus) comments */
+static unsigned le32(const unsigned char *p){ return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24; }
+size_t rc_ogg_payload(const unsigned char *in, size_t n, unsigned char *out, size_t on){
+    size_t i = 0, o = 0; int have = 0; unsigned serial = 0;
+    while(i + 27 <= n && o < on){
+        if(memcmp(in + i, "OggS", 4)){ i++; continue; }    /* resync (a page may be cut at the start) */
+        unsigned segs = in[i + 26];
+        if(i + 27 + segs > n) break;
+        size_t body = 0; for(unsigned k = 0; k < segs; k++) body += in[i + 27 + k];
+        unsigned sn = le32(in + i + 14);
+        size_t at = i + 27 + segs;
+        if(!have){ serial = sn; have = 1; }
+        if(sn == serial){
+            size_t take = body; if(at + take > n) take = n - at;
+            if(take > on - o) take = on - o;
+            memcpy(out + o, in + at, take); o += take;
+        }
+        i = at + body;
+    }
+    return o;
+}
+static void field_val(const unsigned char *c, size_t cl, size_t kl, char *out, size_t on){
+    size_t vl = cl - kl; char tmp[512]; if(vl >= sizeof tmp) vl = sizeof tmp - 1;
+    memcpy(tmp, c + kl, vl); tmp[vl] = 0;
+    char q[600]; snprintf(q, sizeof q, "StreamTitle='%s';", tmp);  /* the same cleaning as an ICY title */
+    rc_icy_title(q, strlen(q), out, on);
+}
+int rc_ogg_tags(const unsigned char *p, size_t n, char *artist, size_t an, char *title, size_t tn){
+    if(an) artist[0] = 0;
+    if(tn) title[0] = 0;
+    size_t i = 0, start = 0; int found = 0;
+    for(; i + 8 <= n; i++){
+        if(!memcmp(p + i, "\x03vorbis", 7)){ start = i + 7; found = 1; break; }
+        if(!memcmp(p + i, "OpusTags", 8)){ start = i + 8; found = 1; break; }
+    }
+    if(!found || start + 4 > n) return -1;
+    size_t at = start, vl = le32(p + at); at += 4;
+    if(vl > n - at) return -1;
+    at += vl;
+    if(at + 4 > n) return -1;
+    unsigned cnt = le32(p + at); at += 4;
+    for(unsigned k = 0; k < cnt && at + 4 <= n; k++){
+        size_t cl = le32(p + at); at += 4;
+        if(cl > n - at) break;                              /* cut (e.g. embedded cover art past our window) */
+        const unsigned char *c = p + at; at += cl;
+        if(cl > 6 && !strncasecmp((const char *)c, "TITLE=", 6) && tn && !title[0]) field_val(c, cl, 6, title, tn);
+        else if(cl > 7 && !strncasecmp((const char *)c, "ARTIST=", 7) && an && !artist[0]) field_val(c, cl, 7, artist, an);
+    }
+    return (tn && title[0]) || (an && artist[0]) ? 0 : -1;
+}

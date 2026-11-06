@@ -118,8 +118,69 @@ static void test_upnp(void){
     CHECK(strstr(body, "<u:Play xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>0</InstanceID><Speed>1</Speed></u:Play>") != NULL);
     CHECK(rc_soap_body("Play", "", body, 50) == -1);
 }
+static void test_icy(void){
+    const char *h = "HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\nicy-name: Vintage\r\nICY-MetaInt: 16000\r\n\r\nAUDIO";
+    CHECK(rc_icy_head_end(h, strlen(h)) == (int)(strstr(h, "AUDIO") - h));
+    CHECK(rc_icy_head_end(h, 20) == -1);
+    CHECK(rc_icy_metaint(h, strlen(h)) == 16000);
+    const char *s1 = "ICY 200 OK\nicy-metaint:8192\n\n";
+    CHECK(rc_icy_head_end(s1, strlen(s1)) == (int)strlen(s1) && rc_icy_metaint(s1, strlen(s1)) == 8192);
+    CHECK(rc_icy_metaint("HTTP/1.0 200 OK\r\nX-icy-metaint: 5\r\n", 36) == -1);   /* only at a line start */
+    CHECK(rc_icy_metaint("icy-metaint: 0\r\n", 17) == -1);
+    CHECK(rc_icy_metaint("icy-metaint: 99999999\r\n", 24) == -1);
+    char t[160], a[80], ti[80];
+    char blk[96] = "StreamTitle='Rude Norton - Tits On The Beach [Canada ,(Joke)Punk] (1980)';StreamUrl='';";
+    CHECK(rc_icy_title(blk, sizeof blk, t, sizeof t) == 0 && !strcmp(t, "Rude Norton - Tits On The Beach [Canada ,(Joke)Punk] (1980)"));
+    CHECK(rc_icy_split(t, a, sizeof a, ti, sizeof ti) == 1 && !strcmp(a, "Rude Norton") && !strcmp(ti, "Tits On The Beach [Canada ,(Joke)Punk] (1980)"));
+    CHECK(rc_icy_title("StreamTitle='Guns N' Roses - Don't Cry';", 41, t, sizeof t) == 0 && !strcmp(t, "Guns N' Roses - Don't Cry"));
+    CHECK(rc_icy_title("StreamTitle='';", 15, t, sizeof t) == 0 && t[0] == 0);
+    CHECK(rc_icy_title("StreamUrl='x';", 14, t, sizeof t) == -1);
+    CHECK(rc_icy_title("StreamTitle='Caf\xE9  \x01 Tune';", 30, t, sizeof t) == 0 && !strcmp(t, "Caf\xC3\xA9   Tune"));   /* Latin-1 */
+    CHECK(rc_icy_title("StreamTitle='Caf\xC3\xA9';", 20, t, sizeof t) == 0 && !strcmp(t, "Caf\xC3\xA9"));                /* UTF-8 kept */
+    CHECK(rc_icy_title("StreamTitle='ab\xC3\xA9';", 19, t, 4) == 0 && !strcmp(t, "ab"));                                   /* no cut sequence */
+    CHECK(rc_icy_title("StreamTitle='  No end", 21, t, sizeof t) == 0 && !strcmp(t, "No end"));
+    CHECK(rc_icy_split("Just a show", a, sizeof a, ti, sizeof ti) == 0 && a[0] == 0 && !strcmp(ti, "Just a show"));
+    CHECK(rc_icy_split(" - x", a, sizeof a, ti, sizeof ti) == 0);
+}
+static size_t ogg_page(unsigned char *o, unsigned serial, const unsigned char *d, size_t n){   /* one page, n <= 255*10 */
+    size_t segs = n / 255 + 1, k = 0;
+    memcpy(o, "OggS", 4); memset(o + 4, 0, 22);
+    o[14] = serial & 255; o[15] = serial >> 8 & 255; o[16] = serial >> 16 & 255; o[17] = serial >> 24;
+    o[26] = (unsigned char)segs;
+    for(size_t i = 0; i < segs; i++) o[27 + i] = i + 1 < segs ? 255 : (unsigned char)(n % 255);
+    k = 27 + segs; memcpy(o + k, d, n);
+    return k + n;
+}
+static size_t put32(unsigned char *o, const char *s){ size_t l = strlen(s); o[0] = l & 255; o[1] = l >> 8 & 255; o[2] = 0; o[3] = 0; memcpy(o + 4, s, l); return 4 + l; }
+static void test_ogg(void){
+    unsigned char pk[600], st[4000], pay[4000]; size_t n = 0, k = 0;
+    memcpy(pk, "\x03vorbis", 7); n = 7;
+    n += put32(pk + n, "Xiph.Org libVorbis I 20200704");
+    pk[n++] = 3; pk[n++] = 0; pk[n++] = 0; pk[n++] = 0;
+    n += put32(pk + n, "artist=Kraftwerk");
+    n += put32(pk + n, "GENRE=Electronic");
+    n += put32(pk + n, "Title=Das Model");
+    k += ogg_page(st + k, 7, (const unsigned char *)"\x01vorbis-ident", 13);
+    k += ogg_page(st + k, 7, pk, 30);                          /* the comment packet spans two pages ... */
+    k += ogg_page(st + k, 9, (const unsigned char *)"\x03vorbis-other-stream", 20);   /* ... with another stream between */
+    k += ogg_page(st + k, 7, pk + 30, n - 30);
+    size_t pl = rc_ogg_payload(st, k, pay, sizeof pay);
+    CHECK(pl == 13 + n);
+    char a[80], t[80];
+    CHECK(rc_ogg_tags(pay, pl, a, sizeof a, t, sizeof t) == 0 && !strcmp(a, "Kraftwerk") && !strcmp(t, "Das Model"));
+    CHECK(rc_ogg_payload(st + 3, k - 3, pay, sizeof pay) == 30 + n - 30);        /* cut first page: resync at the next */
+    CHECK(rc_ogg_tags(pay, rc_ogg_payload(st, k - 10, pay, sizeof pay), a, sizeof a, t, sizeof t) == 0 && !strcmp(a, "Kraftwerk") && t[0] == 0);  /* cut title */
+    n = 0; memcpy(pk, "OpusTags", 8); n = 8; n += put32(pk + n, "libopus 1.3"); pk[n++] = 1; pk[n++] = 0; pk[n++] = 0; pk[n++] = 0;
+    n += put32(pk + n, "TITLE=Clair de lune");
+    k = ogg_page(st, 3, (const unsigned char *)"OpusHead", 8); k += ogg_page(st + k, 3, pk, n);
+    pl = rc_ogg_payload(st, k, pay, sizeof pay);
+    CHECK(rc_ogg_tags(pay, pl, a, sizeof a, t, sizeof t) == 0 && a[0] == 0 && !strcmp(t, "Clair de lune"));
+    CHECK(rc_ogg_tags((const unsigned char *)"ID3 junk", 8, a, sizeof a, t, sizeof t) == -1);
+    unsigned char bad[] = "OpusTags\xff\xff\xff\x7f";
+    CHECK(rc_ogg_tags(bad, sizeof bad - 1, a, sizeof a, t, sizeof t) == -1);
+}
 int main(void){
-    test_url(); test_encode(); test_detail(); test_fav(); test_json(); test_upnp();
+    test_url(); test_encode(); test_detail(); test_fav(); test_json(); test_upnp(); test_icy(); test_ogg();
     if(fails){ fprintf(stderr, "%d radio core check(s) failed\n", fails); return 1; }
     puts("PASS radio core");
     return 0;

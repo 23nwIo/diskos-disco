@@ -21,6 +21,7 @@ const char *radio_state(void);                          /* "off" | "starting" | 
 const char *radio_station_name(void);                   /* the current station, "" none */
 int  radio_station(rc_station_t *out);                  /* the current station with codec and bitrate; 0 none */
 const char *radio_last_error(void);                     /* "" none */
+const char *radio_stream_title(void);                   /* the song the stream names ("Artist - Title"), "" none / not yet */
 /* The Radio screen's directory search, for other front ends: the same worker, download and parser. One search runs at
  * a time (a newer one replaces a waiting one); the Disc's Results view shows whichever finished last. */
 int  radio_search(const char *query);                   /* "" = popular; 0 started, -1 no Wi-Fi */
