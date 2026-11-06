@@ -199,6 +199,15 @@ void bt_open(void);
 int  bt_toggle(void);          /* Quick Settings tile short-press: flip BT + persist, returns new state */
 int  bt_radio_on(void);        /* cheap actual BT-enabled state (rfkill), for the status icon + QS tile */
 enum { BT_OFF, BT_ON, BT_TURNING_ON };
+/* Bluetooth for other front ends (bt.c, main thread only) */
+typedef struct { char mac[20]; char shown[144]; char own[128]; char alias[48]; int connected; char codec[16]; } bt_remote_dev_t;
+int bt_remote_refresh(int search);                                  /* list known devices again, or search (~13 s); -1 Bluetooth off */
+int bt_remote_devices(bt_remote_dev_t *out, int cap, int *busy);    /* the device list as the Bluetooth screen shows it */
+int bt_remote_connect(const char *mac, int on);                     /* connect (pair + trust as needed) / disconnect; -1 refused */
+int bt_remote_forget(const char *mac);                              /* unpair; 0 gone, -1 failed */
+int bt_remote_rename(const char *mac, const char *name);            /* local name; 0 ok, -2 too long, -1 failed */
+int bt_toggle(void);
+int bt_state(void);
 int  bt_state(void);          /* off / on / turning on: cheap (/proc + /sys), safe to poll every second */
 void bt_info_create(lv_obj_t *root);
 void bt_info_open(void);

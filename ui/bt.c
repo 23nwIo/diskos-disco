@@ -2068,6 +2068,72 @@ static void search_or_list(void){
     if(ui_route_mac()[0]) scan_kick();                    /* known devices, no discovery window */
     else start_scan();
 }
+
+/* ---- for other front ends (Remote Control): the same calls the Bluetooth screen makes, main thread only. The
+ * screen's own list and messages follow along (it is the same device list). ---- */
+int bt_remote_refresh(int search){
+    if(bt_state() != BT_ON) return -1;
+    if(search) start_scan(); else scan_kick();             /* a search opens a ~13 s discovery window first */
+    return 0;
+}
+int bt_remote_devices(bt_remote_dev_t *out, int cap, int *busy){
+    static bt_scan_dev_t local[40]; static char shown[40][BT_SHOWN_CAP];
+    int n, run;
+    pthread_mutex_lock(&g_scan_mu);
+    n = g_scan_n > 40 ? 40 : g_scan_n; run = g_scan_running;
+    memcpy(local, g_scan_res, (size_t)n * sizeof(bt_scan_dev_t));
+    pthread_mutex_unlock(&g_scan_mu);
+    if(busy) *busy = run || g_scan_timer != NULL || g_scanpoll_timer != NULL;
+    bt_shown_names(local, n, shown);
+    if(n > cap) n = cap;
+    for(int i = 0; i < n; i++){
+        memset(&out[i], 0, sizeof out[i]);
+        snprintf(out[i].mac, sizeof out[i].mac, "%.19s", local[i].mac);
+        snprintf(out[i].shown, sizeof out[i].shown, "%.143s", shown[i]);
+        snprintf(out[i].own, sizeof out[i].own, "%s", local[i].name);
+        bt_alias_get(local[i].mac, out[i].alias, sizeof out[i].alias);
+        out[i].connected = local[i].connected;
+        snprintf(out[i].codec, sizeof out[i].codec, "%s", local[i].codec);
+    }
+    return n;
+}
+int bt_remote_connect(const char *mac, int on){
+    if(!bt_mac_valid(mac) || bt_state() != BT_ON) return -1;
+    if(on) bt_connect(mac); else bt_disconnect(mac);
+    if(g_scan_timer) lv_timer_del(g_scan_timer);           /* list the devices again once the link has settled */
+    g_scan_timer = lv_timer_create(scan_timer_cb, on ? 8000 : 3000, NULL);
+    lv_timer_set_repeat_count(g_scan_timer, 1);
+    return 0;
+}
+int bt_remote_forget(const char *mac){                     /* as the details screen's Forget */
+    if(!bt_mac_valid(mac) || bt_state() != BT_ON) return -1;
+    bt_disconnect(mac);
+    char cmd[128], o[256], chk[96], info[512];
+    snprintf(cmd, sizeof cmd, "bluetoothctl remove %s >/dev/null 2>&1", mac);
+    int ok = run_cap_to(cmd, o, sizeof o, 3000) >= 0 && g_last_exit == 0;
+    if(ok){ snprintf(chk, sizeof chk, "bluetoothctl info %s 2>/dev/null", mac);
+            if(run_cap_to(chk, info, sizeof info, 1500) > 0 && strstr(info, mac)) ok = 0; }
+    if(ok && !strcmp(cfg_get_str("bt_last", ""), mac)) cfg_set_str("bt_last", "");
+    if(ok) bt_alias_set(mac, "");
+    if(g_scan_timer) lv_timer_del(g_scan_timer);
+    g_scan_timer = lv_timer_create(scan_timer_cb, 1500, NULL);
+    lv_timer_set_repeat_count(g_scan_timer, 1);
+    return ok ? 0 : -1;
+}
+int bt_remote_rename(const char *mac, const char *name){   /* a local name; "" or the device's own name clears it */
+    if(!bt_mac_valid(mac) || !name) return -1;
+    while(*name == ' ') name++;
+    if(strlen(name) > BT_ALIAS_MAX) return -2;
+    char own[128] = ""; int running;
+    pthread_mutex_lock(&g_scan_mu);
+    for(int i = 0; i < g_scan_n && i < 40; i++) if(!strcasecmp(g_scan_res[i].mac, mac)){ snprintf(own, sizeof own, "%s", g_scan_res[i].name); break; }
+    running = g_scan_running;
+    pthread_mutex_unlock(&g_scan_mu);
+    if(bt_alias_set(mac, (own[0] && !strcmp(name, own)) ? "" : name) != 0) return -1;
+    if(!running) scan_render();
+    if(!strcmp(g_sel_mac, mac) && screen_current() == SCR_BT_INFO) bt_info_open_again();
+    return 0;
+}
 static void delayed_scan_cb(lv_timer_t *t){ (void)t; if(bt_on() && screen_current() == SCR_BT) search_or_list(); }
 static void radio_on_poll_cb(lv_timer_t *t){
     (void)t;

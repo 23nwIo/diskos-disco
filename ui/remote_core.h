@@ -31,6 +31,8 @@ typedef enum {
     RMT_CMD_EQ,              /* select EQ preset arg (0 = off .. 20) */
     RMT_CMD_EDIT,            /* change playlists / favourites: sub = rmt_edit_t */
     RMT_CMD_RESCAN,          /* arg 1 start / 0 stop a library rescan */
+    RMT_CMD_BT_LIST,         /* Bluetooth state and devices (JSON answer) */
+    RMT_CMD_BT,              /* sub = rmt_bt_t; q = device address, name = a local name */
     RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
 } rmt_cmd_kind_t;
 
@@ -47,6 +49,9 @@ typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, R
 /* POST api/playlist_create (name) | playlist_rename (id, name) | playlist_delete (id) | playlist_add (id + kind=song
  * song_id | kind=album name | kind=artist name) | playlist_remove (id, pos, song_id: refused unless that row still holds
  * that song) | favorite (on=0/1, song_id; no song_id = the song playing now) */
+/* POST api/bluetooth action=on|off|refresh|search; POST api/bt_device action=connect|disconnect|forget|rename, mac
+ * (AA:BB:CC:DD:EE:FF), name (rename; "" clears the local name) */
+typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
 #define RMT_PL_NAME_MAX 64
 #define RMT_LIMIT_DEF 200

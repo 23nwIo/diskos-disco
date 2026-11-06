@@ -762,6 +762,47 @@ static char *eq_json(void){
     rmt_buf_put(&b, "]}");
     return rmt_buf_take(&b);
 }
+/* ---------------------------------------------------------------- Bluetooth: the Bluetooth screen's own calls
+ * (the radio switch, search, connect/disconnect, Forget, Rename) through bt.c */
+static char *bt_json(void){
+    static bt_remote_dev_t d[40];
+    int st = bt_state(), busy = 0, n = st == BT_ON ? bt_remote_devices(d, 40, &busy) : 0;
+    rmt_buf_t b; memset(&b, 0, sizeof b);
+    rmt_buf_printf(&b, "{\"ok\":true,\"state\":\"%s\",\"busy\":%s,\"devices\":[",
+                   st == BT_ON ? "on" : st == BT_TURNING_ON ? "turning_on" : "off", busy ? "true" : "false");
+    for(int pass = 0, k = 0; pass < 2; pass++) for(int i = 0; i < n; i++){       /* connected first, as on the Disc */
+        if((d[i].connected == 0) != pass) continue;
+        rmt_buf_put(&b, k++ ? ",{\"mac\":" : "{\"mac\":"); rmt_buf_str(&b, d[i].mac);
+        rmt_buf_put(&b, ",\"name\":"); rmt_buf_str(&b, d[i].shown);
+        rmt_buf_put(&b, ",\"own\":"); rmt_buf_str(&b, d[i].own);
+        rmt_buf_put(&b, ",\"alias\":"); rmt_buf_str(&b, d[i].alias);
+        rmt_buf_printf(&b, ",\"connected\":%s,\"codec\":", d[i].connected ? "true" : "false"); rmt_buf_str(&b, d[i].codec);
+        rmt_buf_put(&b, "}");
+    }
+    rmt_buf_put(&b, "]}");
+    return rmt_buf_take(&b);
+}
+static int bt_cmd(const rmt_cmd_t *c, const char **why){
+    int st = bt_state();
+    switch(c->sub){
+    case RMT_BT_ON:  if(st == BT_OFF) bt_toggle(); return 0;            /* already on or coming up: nothing to do */
+    case RMT_BT_OFF: if(st != BT_OFF) bt_toggle(); return 0;
+    default: break;
+    }
+    if(st != BT_ON){ *why = st == BT_TURNING_ON ? "Bluetooth is still turning on" : "Bluetooth is off"; return -1; }
+    switch(c->sub){
+    case RMT_BT_REFRESH: case RMT_BT_SEARCH: bt_remote_refresh(c->sub == RMT_BT_SEARCH); return 0;
+    case RMT_BT_CONNECT: case RMT_BT_DISCONNECT:
+        if(bt_remote_connect(c->q, c->sub == RMT_BT_CONNECT)){ *why = "Couldn't reach that device"; return -1; }
+        return 0;
+    case RMT_BT_FORGET: if(bt_remote_forget(c->q)){ *why = "Couldn't forget that device"; return -1; } return 0;
+    case RMT_BT_RENAME: {
+        int rc = bt_remote_rename(c->q, c->name);
+        if(rc){ *why = rc == -2 ? "Name too long" : "Couldn't save the name"; return -1; }
+        return 0; }
+    default: *why = "Unknown action"; return -1;
+    }
+}
 /* ---------------------------------------------------------------- playlists and favourites: the Disc's own calls
  * (Playlists screen, Add to playlist, the song menu's heart), then a Library refresh so an open list follows */
 static int edit(const rmt_cmd_t *c, const char **why, char **body){
@@ -828,6 +869,8 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
         return *body ? 0 : -1;
     }
     if(c->kind == RMT_CMD_EDIT) return edit(c, why, body);
+    if(c->kind == RMT_CMD_BT_LIST){ *body = bt_json(); if(!*body) *why = "Out of memory"; return *body ? 0 : -1; }
+    if(c->kind == RMT_CMD_BT) return bt_cmd(c, why);
     if(c->kind == RMT_CMD_RESCAN){                          /* as Settings > Rescan library (the main loop reports the end) */
         if(!c->arg){
             if(!scanner_active()){ *why = "No scan is running"; return -1; }
@@ -874,7 +917,7 @@ void remote_pump(void){
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);
         if(rc == 0 && c.kind == RMT_CMD_PLAY_MODE) g_mode_at = 0;   /* show the new mode at once */
-        if(rc == 0 && c.kind != RMT_CMD_BROWSE && c.kind != RMT_CMD_COVER && c.kind != RMT_CMD_STATUS && c.kind != RMT_CMD_EQ_LIST){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
+        if(rc == 0 && c.kind != RMT_CMD_BROWSE && c.kind != RMT_CMD_COVER && c.kind != RMT_CMD_STATUS && c.kind != RMT_CMD_EQ_LIST && c.kind != RMT_CMD_BT_LIST){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
     }
 }
 

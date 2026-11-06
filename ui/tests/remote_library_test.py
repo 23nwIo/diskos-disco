@@ -53,7 +53,8 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'GET /api/library/playlist?id=2', 'POST /api/playlist_remove id=2&pos=1&song_id=5', 'POST /api/playlist_remove id=2&pos=1&song_id=3',
         'POST /api/playlist_rename id=2&name=Late+drive', 'GET /api/library/playlists',
         'POST /api/favorite on=1&song_id=6', 'GET /api/library/album?name=Other', 'POST /api/favorite on=0&song_id=2', 'GET /api/library/favorites',
-        'POST /api/playlist_delete id=2', 'GET /api/library/playlists', 'POST /api/rescan action=stop', 'POST /api/eq preset=3', 'GET /api/status']
+        'POST /api/playlist_delete id=2', 'GET /api/library/playlists', 'POST /api/rescan action=stop', 'POST /api/eq preset=3', 'GET /api/status',
+        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -121,4 +122,7 @@ assert res[50]['rc'] == 0
 stat = {g['name']: dict(g['rows']) for g in res[51]['body']['groups']}
 assert stat['Playback']['EQ'] == 'R&B' and stat['Playback']['Library'] == '6 songs, 3 albums, 3 artists' and res[51]['body']['scan']['active'] is False, stat
 assert {'Bluetooth', 'Wi-Fi', 'Storage', 'System'} <= set(stat) and 'Uptime' in stat['System'], stat
-print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status')
+# no Bluetooth radio on a host: the real bt.c reports it off and refuses device actions
+assert res[52]['rc'] == 0 and res[52]['body']['state'] == 'off' and res[52]['body']['devices'] == [], res[52]
+assert res[53]['rc'] == -1 and res[53]['why'] == 'Bluetooth is off' and res[54]['rc'] == -1, res[53:]
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth')

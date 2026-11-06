@@ -286,6 +286,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_STATUS) return "status";
     if(k == RMT_CMD_EDIT) return "edit";
     if(k == RMT_CMD_RESCAN) return "rescan";
+    if(k == RMT_CMD_BT_LIST || k == RMT_CMD_BT) return "bluetooth";
     if(k == RMT_CMD_EQ_LIST || k == RMT_CMD_EQ) return "eq";
     if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
@@ -306,6 +307,23 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
     if(strncmp(rest, "/api/", 5)) return rt;
     const char *ep = rest + 5;
     if(!strcmp(ep, "state")){ rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; return rt; }
+    if(!strcmp(ep, "bluetooth") || !strcmp(ep, "bt_device")){
+        int dev = ep[1] == 't';
+        if(!dev && get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_BT_LIST; return rt; }
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        static const char *const A[] = { "on", "off", "refresh", "search", "connect", "disconnect", "forget", "rename" };
+        char a[12]; int k = 0;
+        if(!param_str(r, "action", a, sizeof a)) for(int i = 0; i < 8; i++) if(!strcmp(a, A[i])) k = i + 1;
+        int ok = k && (dev ? k >= RMT_BT_CONNECT : k < RMT_BT_CONNECT);
+        if(ok && dev){
+            ok = !param_str(r, "mac", rt.cmd.q, sizeof rt.cmd.q) && strlen(rt.cmd.q) == 17;
+            for(int i = 0; ok && i < 17; i++) ok = i % 3 == 2 ? rt.cmd.q[i] == ':' : isxdigit((unsigned char)rt.cmd.q[i]) != 0;
+            if(ok && k == RMT_BT_RENAME){ int pr = param_str(r, "name", rt.cmd.name, 48); ok = pr == 0 || pr == -1; if(pr == -1) rt.cmd.name[0] = 0; }
+        }
+        if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.cmd.kind = RMT_CMD_BT; rt.cmd.sub = k; rt.kind = RMT_R_CMD;
+        return rt;
+    }
     if(!strcmp(ep, "rescan")){
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         char a[8]; int pr = param_str(r, "action", a, sizeof a);
@@ -497,7 +515,7 @@ const char RMT_PAGE_HTML[] =
 "#msg{position:fixed;left:50%;bottom:1em;transform:translateX(-50%);max-width:90%;background:var(--card);border:1px solid var(--line);padding:.5em 1em;border-radius:99px;font-size:.9em;box-shadow:0 2px 12px #0004}#msg:empty{display:none}#msg.err{color:#e66}label{font-size:.85em;color:var(--mut)}\n"
 ".hd{display:flex;align-items:center;gap:.5em;margin:.8em 0 .4em}.hd b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n"
 ".hd button,.more{border:0;border-radius:10px;padding:.5em .8em;background:var(--card);color:var(--fg);font-size:.95em}\n"
-".hd .pa{background:var(--acc);color:#fff}\n"
+".hd .pa{background:var(--acc);color:#fff}.hd button:disabled{opacity:.35}\n"
 "#list{background:var(--card);border-radius:14px;overflow:hidden}\n"
 ".r{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;color:var(--fg);padding:.65em 1em;font-size:1em}\n"
 ".rw{display:flex;border-bottom:1px solid var(--line)}.rw .r{border-bottom:0;flex:1;min-width:0}.st{flex:none;border:0;background:none;color:var(--acc);font-size:1.3em;padding:0 .8em}\n"
@@ -511,7 +529,7 @@ const char RMT_PAGE_HTML[] =
 ".kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}\n"
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
 "<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>\n"
-"<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button><button data-v=status>Status</button></div>\n"
+"<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button><button data-v=bt>Bluetooth</button><button data-v=status>Status</button></div>\n"
 "<div id=np><div class=card><img id=cv class=hide alt=''><button id=fv class=hide aria-label=Favourite></button><div id=t>-</div><div id=a></div><div id=al></div><div id=tx></div>\n"
 "<input id=pos type=range min=0 max=1 value=0 aria-label=Position><div class=row><span id=pc>0:00</span><span id=du>0:00</span></div></div>\n"
 "<button id=rs class='more hide'>Stop radio</button>\n"
@@ -524,6 +542,7 @@ const char RMT_PAGE_HTML[] =
 "<div id=lib class=hide><input id=q type=search placeholder=Search aria-label=Search>\n"
 "<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label='More' class=hide>&#8943;</button><button id=pa class=pa>Play all</button></div>\n"
 "<div id=list></div><button id=mo class='more hide'>Load more</button></div>\n"
+"<div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div></div>\n"
 "<div id=stv class=hide></div>\n"
 "<div id=shb class=hide></div><div id=sh class=hide></div>\n"
 "<div id=msg></div></main>\n"
@@ -566,6 +585,19 @@ const char RMT_PAGE_HTML[] =
 "j.groups.forEach(function(g){if(!g.rows.length)return;var h=document.createElement('h2');h.textContent=g.name;d.appendChild(h);var c=document.createElement('div');c.id='';c.className='card';c.style.padding='0';\n"
 "g.rows.forEach(function(r){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');a.textContent=r[0];b.textContent=r[1];k.appendChild(a);k.appendChild(b);c.appendChild(k)});d.appendChild(c)})}).catch(function(){say('Player not reachable')})}\n"
 "setInterval(status,3000);\n"
+"/* Bluetooth: the Disc's own Bluetooth screen calls; a search takes ~15 s, connecting a few seconds */\n"
+"var bton=0;function bt(){if(V!=='bt'||document.hidden)return;fetch('api/bluetooth',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='bt'||!j.ok)return;\n"
+"var on=j.state==='on';bton=j.state!=='off';$('bts').textContent=on?(j.busy?'Looking for devices…':'Bluetooth is on'):j.state==='off'?'Bluetooth is off':'Turning on…';\n"
+"$('bto').textContent=bton?'Turn off':'Turn on';$('bto').className=bton?'':'pa';$('btf').disabled=!on||j.busy;var l=$('btl');l.textContent='';\n"
+"if(on&&!j.devices.length){l.className='card';l.textContent=j.busy?'Searching…':'No audio devices found. Put your headphones in pairing mode and search.';return}l.className=j.devices.length?'card':'';l.style.padding='0';\n"
+"j.devices.forEach(function(d){var w=document.createElement('div');w.className='rw';var b=document.createElement('button');b.className='r';var t=document.createElement('b'),m=document.createElement('small');\n"
+"t.textContent=(d.connected?'\\u25cf ':'')+d.name;m.textContent=d.connected?'Connected'+(d.codec?' · '+d.codec:'')+' · tap to disconnect':(d.alias&&d.own?d.own+' · ':'')+d.mac;b.appendChild(t);b.appendChild(m);\n"
+"b.onclick=function(){cmd('bt_device',enc({action:d.connected?'disconnect':'connect',mac:d.mac})).then(function(ok){if(ok){say(d.connected?'Disconnecting…':'Connecting to '+d.name+'…',1);setTimeout(bt,1500)}})};\n"
+"var x=document.createElement('button');x.className='st';x.innerHTML='&#8943;';x.setAttribute('aria-label','More');x.onclick=function(){sheet(d.name,[['Rename…',function(){var n=prompt('Name on this Disc (empty: the device\\u2019s own name)',d.alias||d.name);if(n===null)return;\n"
+"cmd('bt_device',enc({action:'rename',mac:d.mac,name:n.trim()})).then(function(ok){if(ok){say('Renamed',1);bt()}})}],['Forget device',function(){if(!confirm('Forget “'+d.name+'”? You will need to pair it again.'))return;\n"
+"cmd('bt_device',enc({action:'forget',mac:d.mac})).then(function(ok){if(ok){say('Device forgotten',1);setTimeout(bt,1800)}})}]])};w.appendChild(b);w.appendChild(x);l.appendChild(w)})}).catch(function(){say('Player not reachable')})}\n"
+"setInterval(bt,2000);$('bto').onclick=function(){cmd('bluetooth','action='+(bton?'off':'on')).then(function(ok){if(ok){say(bton?'Turning Bluetooth off':'Turning Bluetooth on - this takes up to half a minute',1);setTimeout(bt,500)}})};\n"
+"$('btf').onclick=function(){cmd('bluetooth','action=search').then(function(ok){if(ok){$('btf').disabled=true;say('Searching for about 15 seconds',1);setTimeout(bt,500)}})};\n"
 "$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};\n"
 "/* library: st = stack of views {l:list, p:params, t:title, play:item for Play all, row:function(item)->[title,sub,action]} */\n"
 "var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,{kind:'album',name:x.name},function(s){return song(s,{kind:'album',name:x.name,song_id:s.id})},null,function(){return[['Add album to a playlist…',function(){addto({kind:'album',name:x.name},x.name)}]]})}]}],\n"
@@ -616,8 +648,8 @@ const char RMT_PAGE_HTML[] =
 "if(v!==cur()||g!==v.gen)return;if(j.ok&&j.search==='busy'){if(n<40)setTimeout(function(){rpoll(v,g,n+1)},750);else $('list').textContent='The station directory did not answer - try again';return}\n"
 "if(j.ok&&j.search==='failed'){$('list').textContent='The station directory did not answer - try again';return}render(v,j,0)}).catch(function(){say('Player not reachable')})}\n"
 "function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});\n"
-"$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np'||v==='status');$('stv').classList.toggle('hide',v!=='status');say('');\n"
-"if(v==='np'){poll();return}if(v==='status'){$('stv').textContent='Loading…';status();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
+"$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np'||v==='status'||v==='bt');$('stv').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');\n"
+"if(v==='np'){poll();return}if(v==='status'){$('stv').textContent='Loading…';status();return}if(v==='bt'){$('btl').textContent='Loading…';bt();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
 "[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});\n"
 "$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};\n"
 "$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('shb').onclick=shut;\n"

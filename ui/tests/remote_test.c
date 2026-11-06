@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -138,6 +139,21 @@ static void test_core(void){
     r = req("POST", p("/api/rescan"), "action=stop"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 0);
     CHECK(req("POST", p("/api/rescan"), "").kind == RMT_R_BAD_PARAM);
     CHECK(req("GET", p("/api/rescan"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("GET", p("/api/bluetooth"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BT_LIST);
+    r = req("POST", p("/api/bluetooth"), "action=off"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BT && r.cmd.sub == RMT_BT_OFF);
+    r = req("POST", p("/api/bluetooth"), "action=search"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_SEARCH);
+    CHECK(req("POST", p("/api/bluetooth"), "action=connect&mac=00:11:22:33:44:55").kind == RMT_R_BAD_PARAM);   /* a device action */
+    CHECK(req("POST", p("/api/bluetooth"), "action=dance").kind == RMT_R_BAD_PARAM);
+    CHECK(req("GET", p("/api/bt_device"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/bt_device"), "action=connect&mac=00:11:22:aa:BB:55"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_CONNECT && !strcmp(r.cmd.q, "00:11:22:aa:BB:55"));
+    r = req("POST", p("/api/bt_device"), "action=rename&mac=00:11:22:33:44:55&name=Kitchen+%3Cx%3E"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_RENAME && !strcmp(r.cmd.name, "Kitchen <x>"));
+    r = req("POST", p("/api/bt_device"), "action=rename&mac=00:11:22:33:44:55"); CHECK(r.kind == RMT_R_CMD && !r.cmd.name[0]);      /* clears it */
+    CHECK(req("POST", p("/api/bt_device"), "action=rename&mac=00:11:22:33:44:55&name=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bt_device"), "action=forget&mac=00:11:22:33:44").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bt_device"), "action=forget&mac=00:11:22:33:44:5G").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bt_device"), "action=forget&mac=00-11-22-33-44-55").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bt_device"), "action=forget&mac=00:11:22:33:44:55%3Bx").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bt_device"), "action=on&mac=00:11:22:33:44:55").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/playlist_create"), "name=Road+trip"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_EDIT && r.cmd.sub == RMT_E_PL_CREATE && !strcmp(r.cmd.name, "Road trip"));
     CHECK(req("POST", p("/api/playlist_create"), "name=++").kind == RMT_R_BAD_PARAM);             /* blank */
     CHECK(req("POST", p("/api/playlist_create"), "name=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").kind == RMT_R_BAD_PARAM);   /* 65 bytes */
@@ -245,6 +261,45 @@ static char *fake_browse(const rmt_cmd_t *c){
     rmt_buf_printf(&b, "],\"total\":%ld,\"offset\":%ld}", total, c->offset);
     return rmt_buf_take(&b);
 }
+/* stand-in Bluetooth: three devices, a search "finds" a fourth after 3 s, switching on takes 2 s */
+static int g_bt_on = 1, g_bt_conn = 0, g_bt_n = 3; static time_t g_bt_until, g_bt_up;
+static char g_bt_alias[4][48] = { "", "Kitchen", "", "" };
+static const char *const BT_MAC[4] = { "00:11:22:33:44:01", "00:11:22:33:44:02", "00:11:22:33:44:03", "00:11:22:33:44:04" };
+static const char *const BT_OWN[4] = { "FiiO EH11", "JBL Flip 5", "WH-1000XM4 <b>", "Car audio" };
+static char *fake_bt(void){
+    rmt_buf_t b; memset(&b, 0, sizeof b);
+    time_t now = time(NULL);
+    if(g_bt_until && now >= g_bt_until){ g_bt_until = 0; g_bt_n = 4; }
+    if(g_bt_up && now >= g_bt_up){ g_bt_up = 0; g_bt_on = 1; }
+    rmt_buf_printf(&b, "{\"ok\":true,\"state\":\"%s\",\"busy\":%s,\"devices\":[", g_bt_up ? "turning_on" : g_bt_on ? "on" : "off", g_bt_until ? "true" : "false");
+    for(int pass = 0, k = 0; g_bt_on && pass < 2; pass++) for(int i = 0; i < g_bt_n; i++){
+        if((i == g_bt_conn) == pass) continue;
+        rmt_buf_put(&b, k++ ? ",{\"mac\":" : "{\"mac\":"); rmt_buf_str(&b, BT_MAC[i]);
+        rmt_buf_put(&b, ",\"name\":"); rmt_buf_str(&b, g_bt_alias[i][0] ? g_bt_alias[i] : BT_OWN[i]);
+        rmt_buf_put(&b, ",\"own\":"); rmt_buf_str(&b, BT_OWN[i]); rmt_buf_put(&b, ",\"alias\":"); rmt_buf_str(&b, g_bt_alias[i]);
+        rmt_buf_printf(&b, ",\"connected\":%s,\"codec\":\"%s\"}", i == g_bt_conn ? "true" : "false", i == g_bt_conn ? "LDAC" : "");
+    }
+    rmt_buf_put(&b, "]}");
+    return rmt_buf_take(&b);
+}
+static void fake_bt_cmd(const rmt_cmd_t *c){
+    int i = 0; while(i < 4 && strcasecmp(BT_MAC[i], c->q)) i++;
+    switch(c->sub){
+    case RMT_BT_ON: if(!g_bt_on && !g_bt_up) g_bt_up = time(NULL) + 2; break;
+    case RMT_BT_OFF: g_bt_on = 0; g_bt_up = 0; g_bt_until = 0; break;
+    case RMT_BT_SEARCH: if(!g_bt_on){ rsrv_done(0, "Bluetooth is off"); return; } g_bt_until = time(NULL) + 3; break;
+    case RMT_BT_REFRESH: break;
+    case RMT_BT_CONNECT: if(i >= g_bt_n){ rsrv_done(0, "Couldn't reach that device"); return; } g_bt_conn = i; break;
+    case RMT_BT_DISCONNECT: if(i == g_bt_conn) g_bt_conn = -1; break;
+    case RMT_BT_FORGET: if(i >= g_bt_n){ rsrv_done(0, "Couldn't forget that device"); return; }
+        if(i == g_bt_conn) g_bt_conn = -1;
+        if(i == 3) g_bt_n = 3; else g_bt_alias[i][0] = 0;
+        break;
+    case RMT_BT_RENAME: if(i >= g_bt_n){ rsrv_done(0, "Couldn't save the name"); return; }
+        snprintf(g_bt_alias[i], sizeof g_bt_alias[i], "%.47s", strcmp(c->name, BT_OWN[i]) ? c->name : ""); break;
+    }
+    rsrv_done(1, NULL);
+}
 static void *emu(void *a){
     (void)a;
     rmt_state_t s; memset(&s, 0, sizeof s);
@@ -260,6 +315,8 @@ static void *emu(void *a){
                 if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));
                 else if(c.kind == RMT_CMD_RESCAN){ g_scan = (int)c.arg; rsrv_done(1, NULL); }
+                else if(c.kind == RMT_CMD_BT_LIST) rsrv_done_body(1, NULL, fake_bt());
+                else if(c.kind == RMT_CMD_BT) fake_bt_cmd(&c);
                 else if(c.kind == RMT_CMD_STATUS)
                     rsrv_done_body(1, NULL, strdup(g_scan ? "{\"ok\":true,\"scan\":{\"active\":true,\"done\":12},\"groups\":[{\"name\":\"Playback\",\"rows\":[[\"Library scan\",\"Running, 12 files so far\"]]}]}" : "{\"ok\":true,\"groups\":[{\"name\":\"Wi-Fi\",\"rows\":[[\"Network\",\"<home>\"],[\"Signal\",\"-60 dBm (good)\"]]},"
                                                     "{\"name\":\"Battery\",\"rows\":[[\"Charge\",\"89%\"],[\"Temperature\",\"33.0 \xC2\xB0" "C\"]]},{\"name\":\"Empty\",\"rows\":[]}]}"));

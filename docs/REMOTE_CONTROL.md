@@ -63,6 +63,15 @@ previous refresh), free memory and the UI's own memory. The Disc has no CPU temp
 ([HARDWARE](HARDWARE.md)). **Rescan library** starts the same scan as Settings (it needs local playback and a ready
 card) and can stop it; the tab shows its progress.
 
+### Bluetooth
+
+The **Bluetooth** tab does what the Disc's Bluetooth screen does: **Turn on**/**Turn off** the radio (switching on takes
+up to half a minute), **Search** for headphones and speakers in pairing mode (about 15 s), tap a device to connect
+(it is paired first if needed) or the connected one to disconnect, and under **⋯** give it its own name on this Disc
+(an empty name or the device's own name goes back to that) or **Forget** it. Local names are the same ones the Disc
+shows; two devices with the same name get the end of their address. The list refreshes every 2 s while the tab is
+open; the Disc shows its usual messages ("Connected: …") on its own screen.
+
 ### Radio
 
 The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md). Tap one to play it; the star removes it.
@@ -105,6 +114,9 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/playlist_remove` with `id`, `pos`, `song_id` | Remove one row; refused if that row no longer holds that song. |
 | `POST api/favorite` with `on=0\|1` and `song_id` (none: the song playing now) | Favourite on/off. Song lists carry `"fav":true\|false`. |
 | `POST api/rescan` with `action=start\|stop` | Library rescan; `GET api/status` has `"scan":{"active":…,"done":N}`. |
+| `GET api/bluetooth` | `{"ok":true,"state":"on"\|"off"\|"turning_on","busy":…,"devices":[{"mac":"AA:BB:…","name":"shown name","own":"device's name","alias":"local name or empty","connected":…,"codec":"LDAC"…}]}` (connected first; `busy`: a search or listing is running). |
+| `POST api/bluetooth` with `action=on\|off\|search\|refresh` | Radio on/off (only acts if needed), a ~15 s search, or list the known devices again. |
+| `POST api/bt_device` with `action=connect\|disconnect\|forget\|rename` and `mac=AA:BB:CC:DD:EE:FF` (+ `name`, up to 47 bytes, for rename) | As on the Disc; refused (409) while Bluetooth is off. |
 | `GET api/cover` | The playing song's cover as the Disc decoded it (148 px BMP); `art` in the state changes with it, so `api/cover?v=<art>` can be cached by the page. 409 when there is none. |
 | `POST api/play_pause` | Toggle. |
 | `POST api/play`, `POST api/pause` | Only acts if needed. |
