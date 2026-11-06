@@ -702,6 +702,16 @@ static char *status_json(void){
             unsigned long long tot = (unsigned long long)sv.f_blocks * sv.f_frsize, fr = (unsigned long long)sv.f_bavail * sv.f_frsize;
             st_row(&s, "SD card", "%s free of %s (%d%% used)", bytes(fr, a, sizeof a), bytes(tot, b2, sizeof b2), (int)((tot - fr) * 100 / tot));
         }
+        FILE *m = fopen("/proc/mounts", "r");                /* the card's file system and device, as mounted now */
+        if(m){
+            char line[512], dev[128], mp[128], fs[32], opt[256];
+            while(fgets(line, sizeof line, m))
+                if(sscanf(line, "%127s %127s %31s %255s", dev, mp, fs, opt) == 4 && !strcmp(mp, FOLDERBROWSER_ROOT)){
+                    const char *nm = !strcmp(fs, "vfat") ? "FAT32" : !strcmp(fs, "exfat") ? "exFAT" : !strcmp(fs, "ext4") ? "ext4" : fs;
+                    st_row(&s, "File system", "%s (%s%s)", nm, dev, !strncmp(opt, "ro", 2) && (opt[2] == ',' || !opt[2]) ? ", read-only" : "");
+                }
+            fclose(m);
+        }
         sd_io_end();
     } else st_row(&s, "SD card", "Not available");
     if(statvfs("/usr/data", &sv) == 0 && sv.f_blocks)
