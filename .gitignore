@@ -95,3 +95,4 @@ shelf.conf
 # build outputs of the Linux packages and the aptX BlueALSA (rebuilt by their build.sh; never committed)
 build/linux-packages/out/
 build/bluealsa-aptx/out/
+build/out/

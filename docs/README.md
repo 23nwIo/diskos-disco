@@ -20,6 +20,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [Build, test and deliver](DEV_WORKFLOW.md), [branch rules](DEVELOPMENT.md), [current targets](../todo.md).
 - [Source map and upstream comparison](SOURCE_MAP.md), [UI implementation](UI.md), [theme contract](../themes.md).
 - [Settings implementation](SETTINGS_TEMPLATE.md), [design rules](DESIGN_SYSTEM.md).
+- [SSH keys, reboot-proof Debug Mode and rsync](SSH_ACCESS.md) (optional, on `/usr/data`; not yet device-tested).
 - [Hardware](HARDWARE.md), [IPC commands](COMMAND_MAP.md), [reverse engineering](RE_CATALOGUE.md).
 - [Audiobook speed](AUDIOBOOK_SPEED.md): why there is no playback-speed control (investigated, not planned).
 

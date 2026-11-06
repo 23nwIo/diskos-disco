@@ -43,6 +43,11 @@ While it is on, it grants **root access over the network**.
   disabling Debug Mode deletes it. A reboot while still enabled can leave a stale copy - the SSH
   overlay is dropped on reboot so that password no longer authenticates until re-enabled. It is only
   as protected as root/physical access to the device.
+- **Optional boot hook:** a developer can install `/usr/data/sshd/start-ssh.sh`
+  ([docs/SSH_ACCESS.md](docs/SSH_ACCESS.md)). It adds public-key login and turns Debug Mode back on
+  after a reboot if it was on before (same password, through the same fail-closed `diskos-debug.sh
+  ssh-on`). With it installed, Debug Mode stays on until it is turned off in the UI. It is not part of
+  the image and is not installed by default.
 - **SSH server:** Dropbear **2022.83**, which predates the CVE-2023-48795 "Terrapin" Strict-KEX
   mitigation (update planned); exposure is limited by Debug Mode being opt-in and short-lived.
 - **Serial:** the local USB-serial root shell exists only on **dev** builds and is passwordless-root by
