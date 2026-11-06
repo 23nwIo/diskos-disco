@@ -522,12 +522,12 @@ static int play_item(const rmt_cmd_t *c, const char **why){
 /* ---------------------------------------------------------------- the Status tab (main thread; files under /proc and
  * /sys, statvfs, cached Bluetooth/Wi-Fi facts - nothing that spawns or waits, except the Wi-Fi status thread below) */
 static pthread_mutex_t g_wst_mu = PTHREAD_MUTEX_INITIALIZER;
-static char g_wst_ssid[64], g_wst_freq[16], g_wst_sec[32], g_wst_bssid[24];
+static char g_wst_ssid[64], g_wst_freq[16], g_wst_sec[32], g_wst_bssid[24], g_wst_cipher[16], g_wst_gen[8];
 static uint32_t g_wst_at; static int g_wst_busy, g_wst_want_wifi, g_wst_want_bt;
 static long long g_bt_rx = -1, g_bt_tx = -1;
 static void *wst_worker(void *arg){                       /* wpa_cli status, as Settings > Wi-Fi reads it; hciconfig's counters */
     (void)arg;
-    char ssid[64] = "", freq[16] = "", sec[32] = "", bssid[24] = "", line[160];
+    char ssid[64] = "", freq[16] = "", sec[32] = "", bssid[24] = "", cipher[16] = "", gen[8] = "", line[160];
     pthread_mutex_lock(&g_wst_mu); int want_wifi = g_wst_want_wifi, want_bt = g_wst_want_bt; pthread_mutex_unlock(&g_wst_mu);
     long long brx = -1, btx = -1;
     FILE *h = want_bt ? popen("/usr/bin/hciconfig hci0 2>/dev/null", "r") : NULL;
@@ -546,12 +546,15 @@ static void *wst_worker(void *arg){                       /* wpa_cli status, as 
             if(!strncmp(line, "ssid=", 5)) snprintf(ssid, sizeof ssid, "%.63s", line + 5);
             else if(!strncmp(line, "freq=", 5)) snprintf(freq, sizeof freq, "%.15s", line + 5);
             else if(!strncmp(line, "key_mgmt=", 9)) snprintf(sec, sizeof sec, "%.31s", line + 9);
+            else if(!strncmp(line, "pairwise_cipher=", 16)) snprintf(cipher, sizeof cipher, "%.15s", line + 16);
+            else if(!strncmp(line, "wifi_generation=", 16)) snprintf(gen, sizeof gen, "%.7s", line + 16);
             else if(!strncmp(line, "bssid=", 6)) snprintf(bssid, sizeof bssid, "%.23s", line + 6);
         }
         pclose(p);
     }
     pthread_mutex_lock(&g_wst_mu);
     g_bt_rx = brx; g_bt_tx = btx;
+    memcpy(g_wst_cipher, cipher, sizeof cipher); memcpy(g_wst_gen, gen, sizeof gen);
     memcpy(g_wst_ssid, ssid, sizeof ssid); memcpy(g_wst_freq, freq, sizeof freq); memcpy(g_wst_sec, sec, sizeof sec); memcpy(g_wst_bssid, bssid, sizeof bssid);
     g_wst_busy = 0;
     pthread_mutex_unlock(&g_wst_mu);
@@ -632,25 +635,60 @@ static char *status_json(void){
     st_row(&s, "Wi-Fi", "%s", wifi_radio_live() ? (up ? "Connected" : "On, not connected") : "Off");
     if(up){
         pthread_mutex_lock(&g_wst_mu);
-        char ssid[64], freq[16], sec[32], bssid[24];
+        char ssid[64], freq[16], sec[32], bssid[24], cipher[16], gen[8];
         memcpy(ssid, g_wst_ssid, sizeof ssid); memcpy(freq, g_wst_freq, sizeof freq); memcpy(sec, g_wst_sec, sizeof sec); memcpy(bssid, g_wst_bssid, sizeof bssid);
+        memcpy(cipher, g_wst_cipher, sizeof cipher); memcpy(gen, g_wst_gen, sizeof gen);
         pthread_mutex_unlock(&g_wst_mu);
-        st_row(&s, "Network", "%s", ssid);
-        st_row(&s, "Address", "%s", ip);
+        st_row(&s, "Network (SSID)", "%s", ssid);
+        st_row(&s, "Access point MAC", "%s", bssid);
+        if(sec[0]) st_row(&s, "Security", "%s%s%s", sec, cipher[0] ? ", " : "", cipher);
         int mhz = atoi(freq);
-        if(mhz >= 2412 && mhz <= 2484) st_row(&s, "Channel", "%d (%d MHz)", mhz == 2484 ? 14 : (mhz - 2407) / 5, mhz);
-        st_row(&s, "Security", "%s", sec);
+        if(mhz >= 2412 && mhz <= 2484) st_row(&s, "Channel", "%d (%d MHz)%s%s", mhz == 2484 ? 14 : (mhz - 2407) / 5, mhz, gen[0] ? ", Wi-Fi " : "", gen);
+        /* address, prefix and network from the interface; the default gateway from the kernel's route table */
+        int prefix = -1; struct in_addr net = { 0 };
+        int sk = socket(AF_INET, SOCK_DGRAM, 0);
+        if(sk >= 0){
+            struct ifreq ifr; memset(&ifr, 0, sizeof ifr); snprintf(ifr.ifr_name, sizeof ifr.ifr_name, "wlan0");
+            if(ioctl(sk, SIOCGIFNETMASK, &ifr) == 0){
+                uint32_t m = ntohl(((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr);
+                prefix = 0; while(prefix < 32 && (m & (0x80000000u >> prefix))) prefix++;
+                struct in_addr ia; if(inet_pton(AF_INET, ip, &ia) == 1) net.s_addr = ia.s_addr & htonl(m);
+            }
+            close(sk);
+        }
+        if(prefix >= 0){ char ns[INET_ADDRSTRLEN] = ""; inet_ntop(AF_INET, &net, ns, sizeof ns); st_row(&s, "IP address", "%s/%d (network %s)", ip, prefix, ns); }
+        else st_row(&s, "IP address", "%s", ip);
+        FILE *rt = fopen("/proc/net/route", "r");
+        if(rt){
+            char line[200], ifn[16]; unsigned long dst, gw; unsigned flags;
+            while(fgets(line, sizeof line, rt))
+                if(sscanf(line, "%15s %lx %lx %x", ifn, &dst, &gw, &flags) == 4 && !strcmp(ifn, "wlan0") && dst == 0 && (flags & 2)){
+                    struct in_addr g; g.s_addr = (in_addr_t)gw; char gs[INET_ADDRSTRLEN]; inet_ntop(AF_INET, &g, gs, sizeof gs);
+                    st_row(&s, "Gateway", "%s", gs); break;
+                }
+            fclose(rt);
+        }
+        FILE *rc = fopen("/etc/resolv.conf", "r");
+        if(rc){
+            char line[128], dns[96] = ""; size_t dl = 0;
+            while(fgets(line, sizeof line, rc)){
+                char a1[64];
+                if(sscanf(line, "nameserver %63s", a1) == 1 && dl + strlen(a1) + 3 < sizeof dns) dl += (size_t)snprintf(dns + dl, sizeof dns - dl, "%s%s", dl ? ", " : "", a1);
+            }
+            fclose(rc);
+            st_row(&s, "DNS", "%s", dns);
+        }
         FILE *w = fopen("/proc/net/wireless", "r");
         if(w){
-            char line[200]; int lvl = 0, got = 0;
+            char line[200]; int lvl = 0, qual = 0, got = 0;
             while(fgets(line, sizeof line, w)){
                 char *p = strstr(line, "wlan0:"); float q, l;
-                if(p && sscanf(p + 6, "%*s %f %f", &q, &l) == 2){ lvl = (int)l; got = 1; }
+                if(p && sscanf(p + 6, "%*s %f %f", &q, &l) == 2){ lvl = (int)l; qual = (int)q; got = 1; }
             }
             fclose(w);
             if(got && lvl < 0) st_row(&s, "Signal", "%d dBm (%s)", lvl, lvl >= -55 ? "excellent" : lvl >= -67 ? "good" : lvl >= -75 ? "fair" : "weak");
+            if(got && qual > 0) st_row(&s, "Link quality", "%d/70 (%d%%)", qual, qual * 100 / 70 > 100 ? 100 : qual * 100 / 70);
         }
-        st_row(&s, "Access point", "%s", bssid);
     }
     long long rx = read_ll("/sys/class/net/wlan0/statistics/rx_bytes"), tx = read_ll("/sys/class/net/wlan0/statistics/tx_bytes");
     if(rx >= 0 && tx >= 0) st_row(&s, "Data since start", "%s received, %s sent", bytes((unsigned long long)rx, a, sizeof a), bytes((unsigned long long)tx, b2, sizeof b2));

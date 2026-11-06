@@ -56,7 +56,7 @@ playlist (the Disc has no reorder function either).
 ### Status
 
 The **Status** tab shows, refreshed every 3 s while it is open: working mode, output, volume, EQ and library size;
-Bluetooth (on/off, connected headphones, the codec they run); Wi-Fi (network, address, channel, security, signal, data
+Bluetooth (on/off, connected headphones, the codec they run); Wi-Fi (network name and access point MAC, security and cipher, channel, signal and link quality, IP address with prefix and network, gateway, DNS, data
 received and sent since start-up; Bluetooth data since Bluetooth came on, from `hciconfig`); SD card and internal storage; battery (charge, charging, voltage, temperature,
 health, cycles, as the battery gauge reports them); and diskOS and firmware versions, uptime, load, CPU use (since the
 previous refresh), free memory and the UI's own memory. The Disc has no CPU temperature sensor
