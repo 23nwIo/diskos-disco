@@ -301,6 +301,24 @@ static void fav_toggle(const rc_station_t *s){
     if(fav_save()){ fav_load(); ui_toast("Couldn't save favourites"); return; }
     ui_toast(i >= 0 ? "Removed from favourites" : "Saved to favourites");
 }
+static void refuse(const char *why);
+int radio_fav_add(const rc_station_t *s){
+    if(!s || !s->name[0] || !rc_url_ok(s->url)){ refuse("That station address can't be saved"); return -1; }
+    if(!g_fav_loaded) fav_load();
+    if(rc_fav_find(g_fav, g_nfav, s->url) >= 0) return 0;
+    if(g_nfav >= RC_MAX_FAV){ refuse("Favourites are full"); return -1; }
+    g_fav[g_nfav++] = *s;
+    if(fav_save()){ fav_load(); refuse("Couldn't save favourites"); return -1; }
+    return 0;
+}
+int radio_fav_remove(const char *url){
+    if(!g_fav_loaded) fav_load();
+    int i = url ? rc_fav_find(g_fav, g_nfav, url) : -1;
+    if(i < 0) return 0;
+    memmove(&g_fav[i], &g_fav[i + 1], sizeof g_fav[0] * (size_t)(g_nfav - i - 1)); g_nfav--;
+    if(fav_save()){ fav_load(); refuse("Couldn't save favourites"); return -1; }
+    return 0;
+}
 
 /* ================================================================ player link (main thread) */
 static char g_err_main[96], g_name_main[RC_NAME_LEN];
@@ -336,6 +354,23 @@ int radio_play(const rc_station_t *s){
     ui_toast("Tuning in...");
     poll_start();
     return 0;
+}
+int radio_search(const char *query){
+    char ip[32];
+    if(!wlan_ip(ip, sizeof ip)) return -1;
+    pthread_mutex_lock(&g_mu);
+    g_sstate = SR_BUSY; snprintf(g_job_query, sizeof g_job_query, "%s", query ? query : ""); post_job(J_SEARCH);
+    pthread_mutex_unlock(&g_mu);
+    return 0;
+}
+int radio_search_result(rc_station_t *out, int cap, int *state){
+    pthread_mutex_lock(&g_mu);
+    int n = g_sstate == SR_DONE ? g_nhits : 0;
+    if(n > cap) n = cap;
+    if(n > 0) memcpy(out, g_hits, sizeof g_hits[0] * (size_t)n);
+    if(state) *state = g_sstate;
+    pthread_mutex_unlock(&g_mu);
+    return n;
 }
 int radio_play_url(const char *name, const char *url){
     rc_station_t s; memset(&s, 0, sizeof s);

@@ -44,11 +44,14 @@ card on the Disc after copying new music). Folders never leave the card: `..` an
 
 ### Radio
 
-The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md) (save a station there by holding it). Tap
-one to play it; the Disc needs Wi-Fi, which it has anyway when the page works. While the radio plays, Now playing shows
+The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md). Tap one to play it; the star removes it.
+**Find stations** searches the same station directory as the Radio app (radio-browser.info, through the Disc's own
+search): an empty field shows the popular stations, typing searches by name. The Disc downloads the answer, which takes
+a few seconds. Tap a hit to play it, or its star to save it as a favourite. The Disc and the page share one search, so
+a search started on the Disc at the same moment replaces the page's (search again). While the radio plays, Now playing shows
 the station and a **Stop radio** button; play/pause and volume work, while the position, Next, Previous and Play mode
 are hidden or refused because a live stream has none of them. Starting anything from the library ends the radio, as on
-the Disc. Searching for new stations is only on the Disc.
+the Disc.
 
 ## Security
 
@@ -80,8 +83,10 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/volume` with `value=0..120` or `step=-120..120` | Absolute or relative volume. |
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
-| `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
-| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed). `pos` counts from 1. |
+| `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`, `fav`), `radio_search` (the last station search: also `"search":"idle"|"busy"|"done"|"failed"`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
+| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed); `kind=radio_hit` + `pos` + `url` (a search hit). `pos` counts from 1. |
+| `POST api/radio_search` with `q` | Start a station search (`q` empty: popular stations); then poll `GET api/library/radio_search` until `search` is not `busy`. |
+| `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`. |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused

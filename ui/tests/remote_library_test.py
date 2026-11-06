@@ -43,7 +43,10 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/play_item kind=file&path=Music%2Funindexed.mp3', 'POST /api/play_item kind=file&path=Music%2Fescape%2Fpasswd',
         'POST /api/play_item kind=all', 'GET /api/library/radio', 'GET /api/library/radio?q=fran',
         'POST /api/play_item kind=radio&pos=1&url=http%3A%2F%2Fs.example%2Fjazz', 'POST /api/play_item kind=radio&pos=2&url=http%3A%2F%2Fs.example%2Fjazz',
-        'POST /api/play_item kind=radio&pos=3', 'POST /api/radio_stop', 'POST /api/next']
+        'POST /api/play_item kind=radio&pos=3', 'POST /api/radio_stop', 'POST /api/next',
+        'POST /api/radio_search q=jazz', 'GET /api/library/radio_search', 'POST /api/play_item kind=radio_hit&pos=1&url=http%3A%2F%2Fx',
+        'POST /api/radio_fav_add kind=radio&pos=1&url=http%3A%2F%2Fs.example%2Fjazz',
+        'POST /api/radio_fav_remove kind=radio&pos=2&url=https%3A%2F%2Fs.example%2Ftalk', 'GET /api/library/radio']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -81,12 +84,18 @@ assert res[17]['rc'] == 0 and res[17]['plays'] == ["type=1 name='' pos=4"]   # S
 assert res[18]['rc'] == -1 and 'rescan' in res[18]['why']
 assert res[19]['rc'] == -1 and res[19]['why'] == 'No such file'
 assert res[20]['rc'] == 0 and res[20]['plays'] == ["type=1 name='' pos=1"]
-assert items(21) == [{'pos': 1, 'name': 'Jazz <FM>', 'url': 'http://s.example/jazz', 'codec': 'MP3', 'bitrate': 128, 'country': 'Germany'},
-                     {'pos': 2, 'name': 'Talk', 'url': 'https://s.example/talk', 'codec': 'AAC', 'bitrate': 64, 'country': 'France'}], items(21)
+assert items(21) == [{'pos': 1, 'name': 'Jazz <FM>', 'url': 'http://s.example/jazz', 'codec': 'MP3', 'bitrate': 128, 'country': 'Germany', 'fav': True},
+                     {'pos': 2, 'name': 'Talk', 'url': 'https://s.example/talk', 'codec': 'AAC', 'bitrate': 64, 'country': 'France', 'fav': True}], items(21)
 assert [x['pos'] for x in items(22)] == [2]
 assert res[23]['rc'] == -1 and res[23]['why'] == 'Connect to Wi-Fi to play radio', res[23]   # the radio's own refusal (no Wi-Fi on a host)
 assert res[24]['why'] == res[25]['why'] == 'The radio favourites changed - reload'
 assert res[26]['rc'] == -1 and res[26]['why'] == 'The radio is not playing'
 assert res[27]['rc'] == 0                                                   # not radio: next goes to the player as before
+assert res[28]['rc'] == -1 and res[28]['why'] == 'Connect the Disc to Wi-Fi to find stations'
+assert res[29]['rc'] == 0 and res[29]['body']['search'] == 'idle' and res[29]['body']['items'] == []
+assert res[30]['why'] == 'The search results changed - search again'
+assert res[31]['rc'] == 0                                                   # already a favourite: no duplicate
+assert res[32]['rc'] == 0 and [x['name'] for x in items(33)] == ['Jazz <FM>']
+assert favs.read_text() == 'Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n', favs.read_text()   # radio.c's own file format
 favs.unlink()
-print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites')
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove')

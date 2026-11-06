@@ -181,11 +181,11 @@ int rmt_match(const char *hay, const char *needle){
 static const struct { const char *name; rmt_list_t l; } LISTS[] = {
     { "albums", RMT_L_ALBUMS }, { "album", RMT_L_ALBUM }, { "artists", RMT_L_ARTISTS }, { "artist", RMT_L_ARTIST },
     { "playlists", RMT_L_PLAYLISTS }, { "playlist", RMT_L_PLAYLIST }, { "favorites", RMT_L_FAVORITES },
-    { "songs", RMT_L_SONGS }, { "folder", RMT_L_FOLDER }, { "radio", RMT_L_RADIO },
+    { "songs", RMT_L_SONGS }, { "folder", RMT_L_FOLDER }, { "radio", RMT_L_RADIO }, { "radio_search", RMT_L_RADIO_HITS },
 };
 static const struct { const char *name; rmt_item_t i; } ITEMS[] = {
     { "album", RMT_I_ALBUM }, { "artist", RMT_I_ARTIST }, { "playlist", RMT_I_PLAYLIST }, { "favorites", RMT_I_FAVORITES },
-    { "song", RMT_I_SONG }, { "file", RMT_I_FILE }, { "all", RMT_I_ALL }, { "radio", RMT_I_RADIO },
+    { "song", RMT_I_SONG }, { "file", RMT_I_FILE }, { "all", RMT_I_ALL }, { "radio", RMT_I_RADIO }, { "radio_hit", RMT_I_RADIO_HIT },
 };
 /* optional number: absent = def; out of [lo, hi] or malformed = -1 */
 static int opt_num(const rmt_req_t *r, const char *name, long lo, long hi, long def, long *out){
@@ -227,10 +227,10 @@ static int route_item(const rmt_req_t *r, rmt_cmd_t *c){
     case RMT_I_FILE:
         if(param_str(r, "path", c->name, sizeof c->name) || !c->name[0] || !rmt_relpath_ok(c->name)) return -1;
         break;
-    case RMT_I_RADIO: {
+    case RMT_I_RADIO: case RMT_I_RADIO_HIT: {
         if(c->pos <= 0) return -1;
         int u = param_str(r, "url", c->name, sizeof c->name);
-        if(u == -2) return -1;
+        if(u == -2 || (u == -1 && it == RMT_I_RADIO_HIT)) return -1;   /* search results change under you: say which */
         if(u == -1) c->name[0] = 0;
         break; }
     default: break;
@@ -248,6 +248,8 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_VOLUME_STEP) return "volume";
     if(k == RMT_CMD_BROWSE) return "library";
     if(k == RMT_CMD_PLAY_ITEM) return "play_item";
+    if(k == RMT_CMD_RADIO_SEARCH) return "radio_search";
+    if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -270,6 +272,20 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         int k = route_list(r, ep + 8, &rt.cmd);
         if(k == 0){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
         rt.kind = !get ? RMT_R_BAD_METHOD : k < 0 ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);
+        return rt;
+    }
+    if(!strcmp(ep, "radio_search")){                             /* starts a download on the Disc: POST */
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        rt.cmd.kind = RMT_CMD_RADIO_SEARCH; rt.kind = RMT_R_CMD;
+        if(param_str(r, "q", rt.cmd.q, sizeof rt.cmd.q) == -2){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; }
+        return rt;
+    }
+    if(!strcmp(ep, "radio_fav_add") || !strcmp(ep, "radio_fav_remove")){
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        int add = ep[10] == 'a';
+        rt.kind = route_item(r, &rt.cmd) < 0 || (rt.cmd.sub != RMT_I_RADIO && rt.cmd.sub != RMT_I_RADIO_HIT) || !rt.cmd.name[0] ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        rt.cmd.kind = RMT_CMD_RADIO_FAV; rt.cmd.arg = add;
         if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);
         return rt;
     }
@@ -419,6 +435,7 @@ const char RMT_PAGE_HTML[] =
 ".hd .pa{background:var(--acc);color:#fff}\n"
 "#list{background:var(--card);border-radius:14px;overflow:hidden}\n"
 ".r{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;color:var(--fg);padding:.65em 1em;font-size:1em}\n"
+".rw{display:flex;border-bottom:1px solid var(--line)}.rw .r{border-bottom:0;flex:1;min-width:0}.st{flex:none;border:0;background:none;color:var(--acc);font-size:1.3em;padding:0 .8em}\n"
 ".r b{font-weight:500}.r small{font-size:.85em}\n"
 ".more{display:block;margin:.6em auto}\n"
 ".hide{display:none}\n"
@@ -468,26 +485,39 @@ const char RMT_PAGE_HTML[] =
 "favorites:['Favourites',function(s){return song(s,{kind:'favorites',pos:s.pos})},{kind:'favorites'}],\n"
 "songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all'}],\n"
 "folder:['Folders',null],\n"
-"radio:['Radio favourites',function(x){return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play({kind:'radio',pos:x.pos,url:x.url})}]}]};\n"
+"radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}]]};\n"
+"function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},\n"
+"{on:x.fav,set:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}}]}\n"
+"function star(b,on){b.innerHTML=on?'&#9733;':'&#9734;';b.setAttribute('aria-label',on?'Remove from favourites':'Save to favourites')}\n"
 "function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)}]}\n"
 "function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[(x.dir?'📁 ':'')+x.name,'',x.dir?function(){open('folder',{path:p},x.name,null,frow(p))}:function(){play({kind:'file',path:p})}]}}\n"
-"function open(l,p,t,pl,row){st.push({l:l,p:p,t:t,play:pl,row:row});$('q').value='';load(0)}\n"
+"function open(l,p,t,pl,row,act){st.push({l:l,p:p,t:t,play:pl,row:row,act:act});$('q').value='';load(0)}\n"
+"function act(v){return v.act||(v.play?['Play all',function(){play(v.play)}]:null)}\n"
 "function cur(){return st[st.length-1]}\n"
 "function load(off){var v=cur(),p={};for(var k in v.p)p[k]=v.p[k];if($('q').value)p.q=$('q').value;p.offset=off;p.limit=100;\n"
-"$('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';$('pa').classList.toggle('hide',!v.play);\n"
+"$('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';var a=act(v);$('pa').classList.toggle('hide',!a);if(a)$('pa').textContent=a[0];\n"
+"$('q').placeholder=v.l==='radio_search'?'Search all stations':'Search';\n"
 "if(!off){items=[];$('list').textContent='Loading…'}\n"
-"fetch('api/library/'+v.l+'?'+enc(p),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){\n"
-"if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}say('');\n"
+"if(v.l==='radio_search'){rsearch(v);return}\n"
+"fetch('api/library/'+v.l+'?'+enc(p),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){render(v,j,off)}).catch(function(){say('Player not reachable')})}\n"
+"function render(v,j,off){if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}say('');\n"
 "if(!off)$('list').textContent='';tot=j.total;j.items.forEach(function(x){items.push(x);var r=v.row(x),b=document.createElement('button');b.className='r';\n"
 "var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);if(r[1]){var s=document.createElement('small');s.textContent=r[1];b.appendChild(s)}\n"
-"b.onclick=r[2];$('list').appendChild(b)});\n"
-"if(!tot)$('list').textContent=$('q').value?'No matches':v.l==='radio'?'No favourites yet - hold a station in the Radio app on the Disc to save it':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}).catch(function(){say('Player not reachable')})}\n"
+"b.onclick=r[2];if(r[3]){var w=document.createElement('div'),f=document.createElement('button');w.className='rw';f.className='st';star(f,r[3].on);\n"
+"f.onclick=function(){r[3].set(f)};w.appendChild(b);w.appendChild(f);b=w}$('list').appendChild(b)});\n"
+"if(!tot)$('list').textContent=v.l==='radio_search'?'No stations found':$('q').value?'No matches':v.l==='radio'?'No favourites yet - press Find stations':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}\n"
+"/* station search: the Disc downloads from the directory (a few seconds), the page asks for the result */\n"
+"function rsearch(v){var g=v.gen=(v.gen||0)+1;$('mo').classList.add('hide');$('list').textContent='Searching…';\n"
+"cmd('radio_search',enc({q:$('q').value})).then(function(ok){if(ok)rpoll(v,g,0);else if(v===cur()&&g===v.gen)$('list').textContent=''})}\n"
+"function rpoll(v,g,n){if(v!==cur()||g!==v.gen)return;fetch('api/library/radio_search?limit=100',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){\n"
+"if(v!==cur()||g!==v.gen)return;if(j.ok&&j.search==='busy'){if(n<40)setTimeout(function(){rpoll(v,g,n+1)},750);else $('list').textContent='The station directory did not answer - try again';return}\n"
+"if(j.ok&&j.search==='failed'){$('list').textContent='The station directory did not answer - try again';return}render(v,j,0)}).catch(function(){say('Player not reachable')})}\n"
 "function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});\n"
 "$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np');say('');\n"
-"if(v==='np'){poll();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1])}\n"
+"if(v==='np'){poll();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
 "[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});\n"
 "$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};\n"
-"$('pa').onclick=function(){if(cur().play)play(cur().play)};$('mo').onclick=function(){load(items.length)};\n"
-"var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},300)};\n"
+"$('pa').onclick=function(){var a=act(cur());if(a)a[1]()};$('mo').onclick=function(){load(items.length)};\n"
+"var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},cur().l==='radio_search'?600:300)};\n"
 "setInterval(poll,1000);document.addEventListener('visibilitychange',poll);poll();\n"
 "</script></html>";

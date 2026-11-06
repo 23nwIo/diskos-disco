@@ -135,6 +135,7 @@ static void snapshot(rmt_state_t *s){
     snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
     s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
 }
+static int radio_fav_cmd(const rmt_cmd_t *c, const char **why);
 static const char *const NOT_LOCAL = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)";
 static int run(const rmt_cmd_t *c, const char **why){
     static const char PP[] = "0201000C0000", NEXT[] = "0201000C0001", PREV[] = "0201000C0002";
@@ -160,6 +161,10 @@ static int run(const rmt_cmd_t *c, const char **why){
         if(!ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }
         ui_set_workmode((int)c->arg);
         return 0;
+    case RMT_CMD_RADIO_SEARCH:
+        if(radio_search(c->q)){ *why = "Connect the Disc to Wi-Fi to find stations"; return -1; }
+        return 0;
+    case RMT_CMD_RADIO_FAV: return radio_fav_cmd(c, why);
     case RMT_CMD_RADIO_STOP:
         if(!radio_active() && !strcmp(radio_state(), "off")){ *why = "The radio is not playing"; return -1; }
         radio_stop();
@@ -171,10 +176,11 @@ static int run(const rmt_cmd_t *c, const char **why){
 /* ---------------------------------------------------------------- the library (main thread) */
 /* Lists answer {"ok":true,"total":N,"offset":O,"items":[...]}: total counts every match of q, items is one page. */
 typedef struct { rmt_buf_t b; long total, offset, limit; int first; } page_t;
-static void page_begin(page_t *pg, const rmt_cmd_t *c){
+static void page_begin_with(page_t *pg, const rmt_cmd_t *c, const char *extra){   /* extra: more fields, e.g. "\"x\":1," */
     memset(pg, 0, sizeof *pg); pg->offset = c->offset; pg->limit = c->limit; pg->first = 1;
-    rmt_buf_put(&pg->b, "{\"ok\":true,\"items\":[");
+    rmt_buf_printf(&pg->b, "{\"ok\":true,%s\"items\":[", extra ? extra : "");
 }
+static void page_begin(page_t *pg, const rmt_cmd_t *c){ page_begin_with(pg, c, NULL); }
 static int page_take(page_t *pg){                      /* count a match; 1 = it belongs on this page (write it) */
     long i = pg->total++;
     if(i < pg->offset || i >= pg->offset + pg->limit) return 0;
@@ -312,17 +318,23 @@ static char *browse(const rmt_cmd_t *c, const char **why){
         free(rows);
         return page_end(&pg); }
     case RMT_L_FOLDER: return list_folder(c, why);
-    case RMT_L_RADIO: {                                    /* the Radio app's favourites; pos counts from 1 */
-        static rc_station_t fav[RC_MAX_FAV];
-        int n = radio_favorites(fav, RC_MAX_FAV);
-        page_begin(&pg, c);
+    case RMT_L_RADIO: case RMT_L_RADIO_HITS: {             /* the Radio app's favourites, or its last search; pos counts from 1 */
+        static rc_station_t fav[RC_MAX_FAV], hits[RC_MAX_HITS];
+        static const char *const SEARCH[] = { "idle", "busy", "done", "failed" };
+        int nf = radio_favorites(fav, RC_MAX_FAV), n = nf, st = 0;
+        const rc_station_t *l = fav;
+        if(c->sub == RMT_L_RADIO_HITS){
+            n = radio_search_result(hits, RC_MAX_HITS, &st); l = hits;
+            char ex[32]; snprintf(ex, sizeof ex, "\"search\":\"%s\",", SEARCH[st >= 0 && st <= 3 ? st : 0]);
+            page_begin_with(&pg, c, ex);
+        } else page_begin(&pg, c);
         for(int i = 0; i < n; i++){
-            if(!(rmt_match(fav[i].name, c->q) || rmt_match(fav[i].country, c->q)) || !page_take(&pg)) continue;
-            rmt_buf_printf(&pg.b, "{\"pos\":%d,\"name\":", i + 1); rmt_buf_str(&pg.b, fav[i].name);
-            rmt_buf_put(&pg.b, ",\"url\":"); rmt_buf_str(&pg.b, fav[i].url);
-            rmt_buf_put(&pg.b, ",\"codec\":"); rmt_buf_str(&pg.b, fav[i].codec);
-            rmt_buf_printf(&pg.b, ",\"bitrate\":%d,\"country\":", fav[i].bitrate); rmt_buf_str(&pg.b, fav[i].country);
-            rmt_buf_put(&pg.b, "}");
+            if(!(rmt_match(l[i].name, c->q) || rmt_match(l[i].country, c->q)) || !page_take(&pg)) continue;
+            rmt_buf_printf(&pg.b, "{\"pos\":%d,\"name\":", i + 1); rmt_buf_str(&pg.b, l[i].name);
+            rmt_buf_put(&pg.b, ",\"url\":"); rmt_buf_str(&pg.b, l[i].url);
+            rmt_buf_put(&pg.b, ",\"codec\":"); rmt_buf_str(&pg.b, l[i].codec);
+            rmt_buf_printf(&pg.b, ",\"bitrate\":%d,\"country\":", l[i].bitrate); rmt_buf_str(&pg.b, l[i].country);
+            rmt_buf_printf(&pg.b, ",\"fav\":%s}", l == fav || rc_fav_find(fav, nf, l[i].url) >= 0 ? "true" : "false");
         }
         return page_end(&pg); }
     default: *why = "Unknown list"; return out;
@@ -332,18 +344,36 @@ static int play_song_id(int id){                       /* in the all-songs scope
     int pos = mdb_play_pos(id, 1, "");
     return pos >= 1 && ui_play_list(1, "", pos);
 }
+/* The station a request names: favourite or search hit number pos, checked against its url when one is given. */
+static const rc_station_t *radio_pick(const rmt_cmd_t *c, const char **why){
+    static rc_station_t l[RC_MAX_FAV > RC_MAX_HITS ? RC_MAX_FAV : RC_MAX_HITS];
+    int hit = c->sub == RMT_I_RADIO_HIT, st = 0;
+    int n = hit ? radio_search_result(l, RC_MAX_HITS, &st) : radio_favorites(l, RC_MAX_FAV);
+    if(c->pos < 1 || c->pos > n || (c->name[0] && strcmp(c->name, l[c->pos - 1].url))){
+        *why = hit ? "The search results changed - search again" : "The radio favourites changed - reload"; return NULL;
+    }
+    return &l[c->pos - 1];
+}
+static int radio_fav_cmd(const rmt_cmd_t *c, const char **why){
+    const rc_station_t *s = radio_pick(c, why);
+    if(!s) return -1;
+    if((c->arg ? radio_fav_add(s) : radio_fav_remove(s->url)) == 0) return 0;
+    const char *e = radio_last_error();
+    *why = e && e[0] ? e : "Couldn't save favourites";
+    return -1;
+}
 static int play_radio(const rmt_cmd_t *c, const char **why){
-    static rc_station_t fav[RC_MAX_FAV];
-    int n = radio_favorites(fav, RC_MAX_FAV);
-    if(c->pos < 1 || c->pos > n || (c->name[0] && strcmp(c->name, fav[c->pos - 1].url))){ *why = "The radio favourites changed - reload"; return -1; }
-    if(radio_play(&fav[c->pos - 1]) == 0) return 0;
+    const rc_station_t *s = radio_pick(c, why);
+    if(!s) return -1;
+    rc_station_t copy = *s;
+    if(radio_play(&copy) == 0) return 0;
     const char *e = radio_last_error();
     *why = e && e[0] ? e : "Couldn't start the radio";
     return -1;
 }
 static int play_item(const rmt_cmd_t *c, const char **why){
     static const char *const REFUSED = "The player refused - see the Disc";
-    if(c->sub == RMT_I_RADIO) return play_radio(c, why);   /* the radio switches the player's mode itself */
+    if(c->sub == RMT_I_RADIO || c->sub == RMT_I_RADIO_HIT) return play_radio(c, why);   /* the radio switches the player's mode itself */
     if(!ui_local_playback_allowed()){ *why = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)"; return -1; }
     int ok = 0;
     switch(c->sub){

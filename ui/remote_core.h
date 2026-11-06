@@ -23,17 +23,20 @@ typedef enum {
     RMT_CMD_VOLUME, RMT_CMD_VOLUME_STEP, RMT_CMD_SEEK, RMT_CMD_PLAY_MODE,
     RMT_CMD_BROWSE,          /* list part of the library: sub = rmt_list_t; the answer is a JSON body */
     RMT_CMD_PLAY_ITEM,       /* start something from the library: sub = rmt_item_t */
-    RMT_CMD_RADIO_STOP       /* stop the web radio, back to local playback */
+    RMT_CMD_RADIO_STOP,      /* stop the web radio, back to local playback */
+    RMT_CMD_RADIO_SEARCH,    /* start a station search: q ("" = popular) */
+    RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
 } rmt_cmd_kind_t;
 
 /* GET api/library/<list>: albums | album (name) | artists | artist (name) | playlists | playlist (id) | favorites |
  * songs (q: search) | folder (path, relative to the SD card). Lists take q (filter), offset, limit. */
 typedef enum { RMT_L_ALBUMS = 1, RMT_L_ALBUM, RMT_L_ARTISTS, RMT_L_ARTIST, RMT_L_PLAYLISTS, RMT_L_PLAYLIST,
-               RMT_L_FAVORITES, RMT_L_SONGS, RMT_L_FOLDER, RMT_L_RADIO } rmt_list_t;
+               RMT_L_FAVORITES, RMT_L_SONGS, RMT_L_FOLDER, RMT_L_RADIO, RMT_L_RADIO_HITS } rmt_list_t;
 /* POST api/play_item with kind=album (name, song_id) | artist (name, song_id) | playlist (id, pos) | favorites (pos)
- * | song (song_id) | file (path) | all | radio (pos, optional url: refused if that favourite is no longer there).
+ * | song (song_id) | file (path) | all | radio (pos, optional url: refused if that favourite is no longer there)
+ * | radio_hit (pos, url: a station from the last search).
  * song_id / pos are optional: the list starts at its first song. */
-typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL, RMT_I_RADIO } rmt_item_t;
+typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL, RMT_I_RADIO, RMT_I_RADIO_HIT } rmt_item_t;
 
 #define RMT_LIMIT_DEF 200
 #define RMT_LIMIT_MAX 500
