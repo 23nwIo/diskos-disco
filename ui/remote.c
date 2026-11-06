@@ -913,11 +913,12 @@ void remote_pump(void){
     if(rsrv_take(&c)){
         const char *why = NULL; char *body = NULL;
         int rc = dispatch(&c, &why, &body);
-        fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr);
+        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST;
+        if(!ro || rc != 0){ fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr); }   /* pages poll the reads: log only changes and failures */
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);
         if(rc == 0 && c.kind == RMT_CMD_PLAY_MODE) g_mode_at = 0;   /* show the new mode at once */
-        if(rc == 0 && c.kind != RMT_CMD_BROWSE && c.kind != RMT_CMD_COVER && c.kind != RMT_CMD_STATUS && c.kind != RMT_CMD_EQ_LIST && c.kind != RMT_CMD_BT_LIST){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
+        if(rc == 0 && !ro){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
     }
 }
 
