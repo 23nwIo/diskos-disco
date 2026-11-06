@@ -19,8 +19,8 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   player cannot mount ext4 itself, so a card inserted while the Disc is on stays unmounted until the next start.
   Leaving USB storage, diskOS mounts an ext4 card itself; only if that fails does the Disc restart. Windows and macOS
   cannot read ext4 in USB storage. After start-up the stock player unmounts the card and fails to mount ext4 again; diskOS then mounts it
-  again within a few seconds. Cover files are found ignoring upper/lower case on ext4 cards (COVER.JPG). Not yet
-  tested on a Disc.
+  again within a few seconds. Cover files are found ignoring upper/lower case on ext4 cards (COVER.JPG). Tested on a
+  Disc (V2.57): start-up mount, USB storage and return.
 
 ## 3.4.1
 
