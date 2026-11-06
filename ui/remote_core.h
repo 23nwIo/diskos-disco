@@ -29,6 +29,8 @@ typedef enum {
     RMT_CMD_STATUS,          /* the Status tab: device facts (JSON answer) */
     RMT_CMD_EQ_LIST,         /* the EQ presets and the current one (JSON answer) */
     RMT_CMD_EQ,              /* select EQ preset arg (0 = off .. 20) */
+    RMT_CMD_EDIT,            /* change playlists / favourites: sub = rmt_edit_t */
+    RMT_CMD_RESCAN,          /* arg 1 start / 0 stop a library rescan */
     RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
 } rmt_cmd_kind_t;
 
@@ -42,12 +44,18 @@ typedef enum { RMT_L_ALBUMS = 1, RMT_L_ALBUM, RMT_L_ARTISTS, RMT_L_ARTIST, RMT_L
  * song_id / pos are optional: the list starts at its first song. */
 typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL, RMT_I_RADIO, RMT_I_RADIO_HIT } rmt_item_t;
 
+/* POST api/playlist_create (name) | playlist_rename (id, name) | playlist_delete (id) | playlist_add (id + kind=song
+ * song_id | kind=album name | kind=artist name) | playlist_remove (id, pos, song_id: refused unless that row still holds
+ * that song) | favorite (on=0/1, song_id; no song_id = the song playing now) */
+typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
+#define RMT_PL_NAME_MAX 64
 #define RMT_LIMIT_DEF 200
 #define RMT_LIMIT_MAX 500
 typedef struct {
     rmt_cmd_kind_t kind;
     long arg;                /* volume / step / seek ms / play mode */
-    int  sub;                /* rmt_list_t or rmt_item_t */
+    int  sub;                /* rmt_list_t, rmt_item_t or rmt_edit_t */
+    int  item;               /* playlist_add: what to add (RMT_I_SONG / ALBUM / ARTIST) */
     long id, song_id, pos;   /* playlist id, SONG.ID, 1-based position (0 = absent) */
     long offset, limit;
     char name[512];          /* album / artist name, a folder/file path relative to the SD card, or a station URL */

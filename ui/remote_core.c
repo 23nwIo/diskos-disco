@@ -238,6 +238,39 @@ static int route_item(const rmt_req_t *r, rmt_cmd_t *c){
     return 1;
 }
 
+static const struct { const char *name; rmt_edit_t e; } EDITS[] = {
+    { "playlist_create", RMT_E_PL_CREATE }, { "playlist_rename", RMT_E_PL_RENAME }, { "playlist_delete", RMT_E_PL_DELETE },
+    { "playlist_add", RMT_E_PL_ADD }, { "playlist_remove", RMT_E_PL_REMOVE }, { "favorite", RMT_E_FAV },
+};
+static int pl_name(const rmt_req_t *r, rmt_cmd_t *c){       /* 1..RMT_PL_NAME_MAX bytes, not only blanks */
+    if(param_str(r, "name", c->name, RMT_PL_NAME_MAX + 1)) return -1;
+    for(const char *p = c->name; *p; p++) if(*p != ' ') return 0;
+    return -1;
+}
+static int route_edit(const rmt_req_t *r, rmt_edit_t e, rmt_cmd_t *c){
+    c->kind = RMT_CMD_EDIT; c->sub = e;
+    long v;
+    if(e != RMT_E_PL_CREATE && e != RMT_E_FAV && (param(r, "id", &c->id) || c->id <= 0)) return -1;
+    switch(e){
+    case RMT_E_PL_CREATE: case RMT_E_PL_RENAME: return pl_name(r, c);
+    case RMT_E_PL_DELETE: return 0;
+    case RMT_E_PL_ADD: {
+        char kind[16];
+        if(param_str(r, "kind", kind, sizeof kind)) return -1;
+        if(!strcmp(kind, "song")){ c->item = RMT_I_SONG; return param(r, "song_id", &c->song_id) || c->song_id <= 0 ? -1 : 0; }
+        c->item = !strcmp(kind, "album") ? RMT_I_ALBUM : !strcmp(kind, "artist") ? RMT_I_ARTIST : 0;
+        if(!c->item || param_str(r, "name", c->name, sizeof c->name) || !c->name[0]) return -1;
+        return 0; }
+    case RMT_E_PL_REMOVE:
+        if(param(r, "pos", &c->pos) || c->pos <= 0 || param(r, "song_id", &c->song_id) || c->song_id <= 0) return -1;
+        return 0;
+    case RMT_E_FAV:
+        if(param(r, "on", &v) || (v != 0 && v != 1)) return -1;
+        c->arg = v;
+        return opt_num(r, "song_id", 1, 0x7fffffffL, 0, &c->song_id);
+    }
+    return -1;
+}
 static const struct { const char *name; rmt_cmd_kind_t kind; } CMDS[] = {
     { "play_pause", RMT_CMD_PLAY_PAUSE }, { "play", RMT_CMD_PLAY }, { "pause", RMT_CMD_PAUSE },
     { "next", RMT_CMD_NEXT }, { "previous", RMT_CMD_PREV },
@@ -251,6 +284,8 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_RADIO_SEARCH) return "radio_search";
     if(k == RMT_CMD_COVER) return "cover";
     if(k == RMT_CMD_STATUS) return "status";
+    if(k == RMT_CMD_EDIT) return "edit";
+    if(k == RMT_CMD_RESCAN) return "rescan";
     if(k == RMT_CMD_EQ_LIST || k == RMT_CMD_EQ) return "eq";
     if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
@@ -271,6 +306,13 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
     if(strncmp(rest, "/api/", 5)) return rt;
     const char *ep = rest + 5;
     if(!strcmp(ep, "state")){ rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; return rt; }
+    if(!strcmp(ep, "rescan")){
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        char a[8]; int pr = param_str(r, "action", a, sizeof a);
+        rt.kind = pr || (strcmp(a, "start") && strcmp(a, "stop")) ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        if(rt.kind == RMT_R_CMD){ rt.cmd.kind = RMT_CMD_RESCAN; rt.cmd.arg = !strcmp(a, "start"); }
+        return rt;
+    }
     if(!strcmp(ep, "status")){ rt.kind = get ? RMT_R_CMD : RMT_R_BAD_METHOD; if(get) rt.cmd.kind = RMT_CMD_STATUS; return rt; }
     if(!strcmp(ep, "eq")){
         if(get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_EQ_LIST; return rt; }
@@ -298,6 +340,13 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         int add = ep[10] == 'a';
         rt.kind = route_item(r, &rt.cmd) < 0 || (rt.cmd.sub != RMT_I_RADIO && rt.cmd.sub != RMT_I_RADIO_HIT) || !rt.cmd.name[0] ? RMT_R_BAD_PARAM : RMT_R_CMD;
         rt.cmd.kind = RMT_CMD_RADIO_FAV; rt.cmd.arg = add;
+        if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);
+        return rt;
+    }
+    for(size_t i = 0; i < sizeof EDITS / sizeof EDITS[0]; i++){
+        if(strcmp(ep, EDITS[i].name)) continue;
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        rt.kind = route_edit(r, EDITS[i].e, &rt.cmd) ? RMT_R_BAD_PARAM : RMT_R_CMD;
         if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);
         return rt;
     }
@@ -454,13 +503,16 @@ const char RMT_PAGE_HTML[] =
 ".rw{display:flex;border-bottom:1px solid var(--line)}.rw .r{border-bottom:0;flex:1;min-width:0}.st{flex:none;border:0;background:none;color:var(--acc);font-size:1.3em;padding:0 .8em}\n"
 ".r b{font-weight:500}.r small{font-size:.85em}\n"
 ".more{display:block;margin:.6em auto}\n"
+"#shb{position:fixed;inset:0;background:#0006}#sh{position:fixed;left:0;right:0;bottom:0;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:.6em 1em 1.2em;max-width:30em;margin:0 auto}\n"
+"#sh b{display:block;padding:.6em 0;color:var(--mut);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#sh button{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;color:var(--fg);font-size:1em;padding:.75em 0}\n"
+"#fv{position:absolute;right:.6em;top:.6em;border:0;background:none;color:var(--acc);font-size:1.5em}.card{position:relative}\n"
 ".hide{display:none}\n"
 "select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .4em}\n"
 ".kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}\n"
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
 "<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>\n"
 "<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button><button data-v=status>Status</button></div>\n"
-"<div id=np><div class=card><img id=cv class=hide alt=''><div id=t>-</div><div id=a></div><div id=al></div><div id=tx></div>\n"
+"<div id=np><div class=card><img id=cv class=hide alt=''><button id=fv class=hide aria-label=Favourite></button><div id=t>-</div><div id=a></div><div id=al></div><div id=tx></div>\n"
 "<input id=pos type=range min=0 max=1 value=0 aria-label=Position><div class=row><span id=pc>0:00</span><span id=du>0:00</span></div></div>\n"
 "<button id=rs class='more hide'>Stop radio</button>\n"
 "<div class=tr><button id=pv aria-label=Previous>&#9198;</button><button id=pp class=pp aria-label='Play or pause'>&#9199;</button>\n"
@@ -470,24 +522,27 @@ const char RMT_PAGE_HTML[] =
 "<div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one\n"
 "<option value=3>Repeat all<option value=4>Single</select></div></div></div>\n"
 "<div id=lib class=hide><input id=q type=search placeholder=Search aria-label=Search>\n"
-"<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=pa class=pa>Play all</button></div>\n"
+"<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label='More' class=hide>&#8943;</button><button id=pa class=pa>Play all</button></div>\n"
 "<div id=list></div><button id=mo class='more hide'>Load more</button></div>\n"
 "<div id=stv class=hide></div>\n"
+"<div id=shb class=hide></div><div id=sh class=hide></div>\n"
 "<div id=msg></div></main>\n"
 "<script>\n"
-"var art='',$=function(i){return document.getElementById(i)},drag={},busy=0,V='np',st=[],items=[],tot=0;\n"
+"var fav=null,art='',$=function(i){return document.getElementById(i)},drag={},busy=0,V='np',st=[],items=[],tot=0;\n"
 "function fm(ms){var s=Math.floor(ms/1000);return Math.floor(s/60)+':'+('0'+s%60).slice(-2)}\n"
 "function enc(o){return Object.keys(o).map(function(k){return k+'='+encodeURIComponent(o[k])}).join('&')}\n"
 "var mt;function say(t,ok){var m=$('msg');m.textContent=t||'';m.className=ok?'':'err';clearTimeout(mt);if(ok)mt=setTimeout(function(){say('')},2500)}\n"
-"function cmd(c,b){return fetch('api/'+c,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b||''})\n"
-".then(function(r){return r.json().then(function(j){say(j.ok?'':(j.message||'Not possible right now'));setTimeout(poll,300);return j.ok})})\n"
-".catch(function(){say('Player not reachable')})}\n"
+"function cmdj(c,b){return fetch('api/'+c,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b||''})\n"
+".then(function(r){return r.json().then(function(j){say(j.ok?'':(j.message||'Not possible right now'));setTimeout(poll,300);return j})})\n"
+".catch(function(){say('Player not reachable');return{}})}\n"
+"function cmd(c,b){return cmdj(c,b).then(function(j){return !!j.ok})}\n"
 "function play(o){cmd('play_item',enc(o)).then(function(ok){if(ok)say('Playing',1)})}\n"
 "function poll(){if(document.hidden||busy||V!=='np')return;busy=1;fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){busy=0;\n"
 "$('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;\n"
 "var ra=s.source==='radio';if(ra){$('t').textContent=s.station||'Web radio';$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):'Web radio';$('al').textContent=''}\n"
 "$('rs').classList.toggle('hide',!ra);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||s.play_mode<0);\n"
 "var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');$('tx').textContent=s.has_track||ra?tx:'';\n"
+"fav=s.favorite;$('fv').classList.toggle('hide',fav===null||fav===undefined||ra);$('fv').innerHTML=fav?'&#9829;':'&#9825;';\n"
 "if(s.art!==art){art=s.art;if(art)$('cv').src='api/cover?v='+encodeURIComponent(art);else $('cv').classList.add('hide')}\n"
 "$('pp').innerHTML=s.playing?'&#9208;':'&#9654;';\n"
 "if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}\n"
@@ -501,32 +556,49 @@ const char RMT_PAGE_HTML[] =
 "['pos','vol'].forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value};\n"
 "e.onchange=function(){drag[i]=0;cmd(i==='pos'?'seek':'volume',(i==='pos'?'position_ms=':'value=')+e.value)}});\n"
 "$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};\n"
+"$('fv').onclick=function(){cmd('favorite','on='+(fav?0:1)).then(function(ok){if(ok)say(fav?'Removed from favourites':'Added to favourites',1)})};\n"
 "$('rs').onclick=function(){cmd('radio_stop')};function eqload(cur){fetch('api/eq',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok)return;var e=$('eqs');e.textContent='';\n"
 "j.presets.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;e.appendChild(o)});e.value=j.current;e.dataset.n=(j.presets[j.current]||{}).name||''})}\n"
 "$('eqs').onchange=function(){cmd('eq','preset='+$('eqs').value).then(function(){$('eqs').dataset.n=''})};\n"
 "function status(){if(V!=='status'||document.hidden)return;fetch('api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='status'||!j.ok)return;var d=$('stv');d.textContent='';\n"
+"var sc=j.scan&&j.scan.active,rb=document.createElement('button');rb.className='more';rb.textContent=sc?'Stop library scan':'Rescan library';\n"
+"rb.onclick=function(){if(!sc&&!confirm('Rescan the library on the SD card now? Large cards take a while.'))return;cmd('rescan','action='+(sc?'stop':'start')).then(function(ok){if(ok){say(sc?'Stopping the scan':'Scanning the library',1);setTimeout(status,500)}})};d.appendChild(rb);\n"
 "j.groups.forEach(function(g){if(!g.rows.length)return;var h=document.createElement('h2');h.textContent=g.name;d.appendChild(h);var c=document.createElement('div');c.id='';c.className='card';c.style.padding='0';\n"
 "g.rows.forEach(function(r){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');a.textContent=r[0];b.textContent=r[1];k.appendChild(a);k.appendChild(b);c.appendChild(k)});d.appendChild(c)})}).catch(function(){say('Player not reachable')})}\n"
 "setInterval(status,3000);\n"
 "$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};\n"
 "/* library: st = stack of views {l:list, p:params, t:title, play:item for Play all, row:function(item)->[title,sub,action]} */\n"
-"var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,{kind:'album',name:x.name},function(s){return song(s,{kind:'album',name:x.name,song_id:s.id})})}]}],\n"
-"artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,{kind:'artist',name:x.name},function(s){return song(s,{kind:'artist',name:x.name,song_id:s.id})})}]}],\n"
-"playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,{kind:'playlist',id:x.id},function(s){return song(s,{kind:'playlist',id:x.id,pos:s.pos})})}]}],\n"
+"var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,{kind:'album',name:x.name},function(s){return song(s,{kind:'album',name:x.name,song_id:s.id})},null,function(){return[['Add album to a playlist…',function(){addto({kind:'album',name:x.name},x.name)}]]})}]}],\n"
+"artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,{kind:'artist',name:x.name},function(s){return song(s,{kind:'artist',name:x.name,song_id:s.id})},null,function(){return[['Add all songs to a playlist…',function(){addto({kind:'artist',name:x.name},x.name)}]]})}]}],\n"
+"playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,{kind:'playlist',id:x.id},function(s){return song(s,{kind:'playlist',id:x.id,pos:s.pos})},null,function(){return plmenu(x)})}]},null,['New playlist',function(){newpl(function(){load(0)})}]],\n"
 "favorites:['Favourites',function(s){return song(s,{kind:'favorites',pos:s.pos})},{kind:'favorites'}],\n"
 "songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all'}],\n"
 "folder:['Folders',null],\n"
 "radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}]]};\n"
 "function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},\n"
-"{on:x.fav,set:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}}]}\n"
+"{g:x.fav?'&#9733;':'&#9734;',fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}}]}\n"
 "function star(b,on){b.innerHTML=on?'&#9733;':'&#9734;';b.setAttribute('aria-label',on?'Remove from favourites':'Save to favourites')}\n"
-"function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)}]}\n"
+"function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]}\n"
+"/* edits: a bottom sheet of actions; prompt/confirm for names and deletes */\n"
+"function sheet(t,acts){var s=$('sh');s.textContent='';var h=document.createElement('b');h.textContent=t;s.appendChild(h);\n"
+"acts.concat([['Cancel',null]]).forEach(function(a){var b=document.createElement('button');b.textContent=a[0];b.onclick=function(){shut();if(a[1])a[1]()};s.appendChild(b)});\n"
+"s.classList.remove('hide');$('shb').classList.remove('hide')}\n"
+"function shut(){$('sh').classList.add('hide');$('shb').classList.add('hide')}\n"
+"function smenu(s,o){var a=[[s.fav?'Remove from favourites':'Add to favourites',function(){cmd('favorite',enc({on:s.fav?0:1,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=!s.fav;say(s.fav?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}],\n"
+"['Add to a playlist…',function(){addto({kind:'song',song_id:s.id},s.title)}]];\n"
+"if(o.kind==='playlist')a.push(['Remove from this playlist',function(){cmd('playlist_remove',enc({id:o.id,pos:s.pos,song_id:s.id})).then(function(ok){if(ok){say('Removed',1);load(0)}})}]);sheet(s.title,a)}\n"
+"function addto(o,t){fetch('api/library/playlists?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){\n"
+"var a=(j.items||[]).map(function(p){return[p.name,function(){add(p,o)}]});a.unshift(['New playlist…',function(){newpl(function(p){add(p,o)})}]);sheet('Add “'+t+'” to',a)}).catch(function(){say('Player not reachable')})}\n"
+"function add(p,o){var q={id:p.id};for(var k in o)q[k]=o[k];cmdj('playlist_add',enc(q)).then(function(j){if(j.ok)say((j.added>1?j.added+' songs added to ':'Added to ')+p.name,1)})}\n"
+"function newpl(then){var n=prompt('Name of the new playlist');if(!n||!n.trim())return;cmdj('playlist_create',enc({name:n.trim()})).then(function(j){if(j.ok){say('Playlist created',1);then({id:j.id,name:n.trim()})}})}\n"
+"function plmenu(x){return[['Rename…',function(){var n=prompt('New name',cur().t);if(!n||!n.trim())return;cmd('playlist_rename',enc({id:x.id,name:n.trim()})).then(function(ok){if(ok){cur().t=n.trim();$('ti').textContent=n.trim();say('Renamed',1)}})}],\n"
+"['Delete playlist',function(){if(!confirm('Delete the playlist “'+cur().t+'”? The songs stay on the card.'))return;cmd('playlist_delete',enc({id:x.id})).then(function(ok){if(ok){say('Playlist deleted',1);st.pop();load(0)}})}]]}\n"
 "function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[(x.dir?'📁 ':'')+x.name,'',x.dir?function(){open('folder',{path:p},x.name,null,frow(p))}:function(){play({kind:'file',path:p})}]}}\n"
-"function open(l,p,t,pl,row,act){st.push({l:l,p:p,t:t,play:pl,row:row,act:act});$('q').value='';load(0)}\n"
+"function open(l,p,t,pl,row,act,menu){st.push({l:l,p:p,t:t,play:pl,row:row,act:act,menu:menu});$('q').value='';load(0)}\n"
 "function act(v){return v.act||(v.play?['Play all',function(){play(v.play)}]:null)}\n"
 "function cur(){return st[st.length-1]}\n"
 "function load(off){var v=cur(),p={};for(var k in v.p)p[k]=v.p[k];if($('q').value)p.q=$('q').value;p.offset=off;p.limit=100;\n"
-"$('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';var a=act(v);$('pa').classList.toggle('hide',!a);if(a)$('pa').textContent=a[0];\n"
+"$('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';var a=act(v);$('pa').classList.toggle('hide',!a);$('hm').classList.toggle('hide',!v.menu);if(a)$('pa').textContent=a[0];\n"
 "$('q').placeholder=v.l==='radio_search'?'Search all stations':'Search';\n"
 "if(!off){items=[];$('list').textContent='Loading…'}\n"
 "if(v.l==='radio_search'){rsearch(v);return}\n"
@@ -534,8 +606,8 @@ const char RMT_PAGE_HTML[] =
 "function render(v,j,off){if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}say('');\n"
 "if(!off)$('list').textContent='';tot=j.total;j.items.forEach(function(x){items.push(x);var r=v.row(x),b=document.createElement('button');b.className='r';\n"
 "var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);if(r[1]){var s=document.createElement('small');s.textContent=r[1];b.appendChild(s)}\n"
-"b.onclick=r[2];if(r[3]){var w=document.createElement('div'),f=document.createElement('button');w.className='rw';f.className='st';star(f,r[3].on);\n"
-"f.onclick=function(){r[3].set(f)};w.appendChild(b);w.appendChild(f);b=w}$('list').appendChild(b)});\n"
+"b.onclick=r[2];if(r[3]){var w=document.createElement('div'),f=document.createElement('button');w.className='rw';f.className='st';f.innerHTML=r[3].g;f.setAttribute('aria-label',r[3].a||'Favourite');\n"
+"f.onclick=function(){r[3].fn(f)};w.appendChild(b);w.appendChild(f);b=w}$('list').appendChild(b)});\n"
 "if(!tot)$('list').textContent=v.l==='radio_search'?'No stations found':$('q').value?'No matches':v.l==='radio'?'No favourites yet - press Find stations':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}\n"
 "/* station search: the Disc downloads from the directory (a few seconds), the page asks for the result */\n"
 "function rsearch(v){var g=v.gen=(v.gen||0)+1;$('mo').classList.add('hide');$('list').textContent='Searching…';\n"
@@ -548,6 +620,7 @@ const char RMT_PAGE_HTML[] =
 "if(v==='np'){poll();return}if(v==='status'){$('stv').textContent='Loading…';status();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
 "[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});\n"
 "$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};\n"
+"$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('shb').onclick=shut;\n"
 "$('pa').onclick=function(){var a=act(cur());if(a)a[1]()};$('mo').onclick=function(){load(items.length)};\n"
 "var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},cur().l==='radio_search'?600:300)};\n"
 "setInterval(poll,1000);document.addEventListener('visibilitychange',poll);poll();\n"

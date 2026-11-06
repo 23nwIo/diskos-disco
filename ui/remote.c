@@ -24,6 +24,7 @@
 #include "sdio.h"
 #include "folderbrowser.h"
 #include "radio.h"
+#include "scanner.h"
 #include "system.h"
 #include "modes.h"
 #include <sys/statvfs.h>
@@ -270,8 +271,25 @@ static char *page_end(page_t *pg){
     rmt_buf_printf(&pg->b, "],\"total\":%ld,\"offset\":%ld}", pg->total, pg->offset);
     return rmt_buf_take(&pg->b);
 }
+/* The favourites' SONG.IDs, sorted, so song lists can mark them (one query per list, not one per row). */
+typedef struct { int *ids, n; } favset_t;
+static int int_cmp(const void *a, const void *b){ int x = *(const int *)a, y = *(const int *)b; return x < y ? -1 : x > y; }
+static void favset_load(favset_t *f){
+    f->ids = NULL; f->n = 0;
+    int n = mdb_favorite_count(); if(n <= 0) return;
+    mdb_song_t *rows = calloc((size_t)n, sizeof *rows); f->ids = calloc((size_t)n, sizeof *f->ids);
+    if(!rows || !f->ids){ free(rows); free(f->ids); f->ids = NULL; return; }
+    int got = mdb_favorites(rows, n, 0);
+    for(int i = 0; i < got && i < n; i++) if(rows[i].id > 0) f->ids[f->n++] = rows[i].id;
+    free(rows);
+    qsort(f->ids, (size_t)f->n, sizeof *f->ids, int_cmp);
+}
+static int favset_has(const favset_t *f, int id){ return f->n && bsearch(&id, f->ids, (size_t)f->n, sizeof id, int_cmp) != NULL; }
+static favset_t *g_fs;                                  /* the set for the list being written (NULL: no "fav" field) */
+static int g_fs_all;                                    /* the list is the favourites themselves */
 static void song_json(rmt_buf_t *b, const mdb_song_t *s, long pos){
     rmt_buf_printf(b, "{\"id\":%d,\"title\":", s->id); rmt_buf_str(b, s->title);
+    if(g_fs) rmt_buf_printf(b, ",\"fav\":%s", g_fs_all || favset_has(g_fs, s->id) ? "true" : "false");
     rmt_buf_put(b, ",\"artist\":"); rmt_buf_str(b, s->artist);
     rmt_buf_put(b, ",\"album\":"); rmt_buf_str(b, s->album);
     rmt_buf_printf(b, ",\"dur_ms\":%d,\"track\":%d", s->dur_ms, s->track);
@@ -363,11 +381,13 @@ static char *browse(const rmt_cmd_t *c, const char **why){
         else if(c->q[0]) got = mdb_search(c->q, rows, cap);
         else { got = 0; for(int i = 0; i < cap; i++){ const mdb_song_t *s = mdb_song(i); if(s) rows[got++] = s; } }
         page_begin(&pg, c);
+        favset_t fs; favset_load(&fs); g_fs = &fs;
         int filter = c->sub != RMT_L_SONGS;                          /* search already filtered */
         for(int i = 0; i < got && i < cap; i++){
             if((filter && !song_hit(rows[i], c->q)) || !page_take(&pg)) continue;
             song_json(&pg.b, rows[i], 0);
         }
+        g_fs = NULL; free(fs.ids);
         free(rows);
         return page_end(&pg); }
     case RMT_L_PLAYLISTS: {
@@ -389,11 +409,21 @@ static char *browse(const rmt_cmd_t *c, const char **why){
         mdb_song_t *rows = calloc((size_t)n + 1, sizeof *rows);
         if(!rows){ *why = "Out of memory"; return NULL; }
         int got = fav ? mdb_favorites(rows, n, fw_fav_play_by_love_id()) : mdb_playlist_songs(c->id, rows, n);
+        if(!fav && got > 0){                                         /* playlist rows carry no SONG.ID: look them up */
+            int *ids = calloc((size_t)got, sizeof *ids);
+            int k = ids ? mdb_playlist_song_ids(c->id, ids, got) : 0;
+            for(int i = 0; i < k && i < got; i++) rows[i].id = ids[i];
+            free(ids);
+        }
         page_begin(&pg, c);
+        favset_t fs = { NULL, 0 };
+        if(!fav) favset_load(&fs);
+        g_fs = &fs; g_fs_all = fav;                                   /* every favourite is one */
         for(int i = 0; i < got && i < n; i++){
             if(!song_hit(&rows[i], c->q) || !page_take(&pg)) continue;
             song_json(&pg.b, &rows[i], i + 1);                       /* pos: what play_item takes to start here */
         }
+        g_fs = NULL; g_fs_all = 0; free(fs.ids);
         free(rows);
         return page_end(&pg); }
     case RMT_L_FOLDER: return list_folder(c, why);
@@ -493,11 +523,23 @@ static int play_item(const rmt_cmd_t *c, const char **why){
  * /sys, statvfs, cached Bluetooth/Wi-Fi facts - nothing that spawns or waits, except the Wi-Fi status thread below) */
 static pthread_mutex_t g_wst_mu = PTHREAD_MUTEX_INITIALIZER;
 static char g_wst_ssid[64], g_wst_freq[16], g_wst_sec[32], g_wst_bssid[24];
-static uint32_t g_wst_at; static int g_wst_busy;
-static void *wst_worker(void *arg){                       /* wpa_cli status, as Settings > Wi-Fi reads it */
+static uint32_t g_wst_at; static int g_wst_busy, g_wst_want_wifi, g_wst_want_bt;
+static long long g_bt_rx = -1, g_bt_tx = -1;
+static void *wst_worker(void *arg){                       /* wpa_cli status, as Settings > Wi-Fi reads it; hciconfig's counters */
     (void)arg;
     char ssid[64] = "", freq[16] = "", sec[32] = "", bssid[24] = "", line[160];
-    FILE *p = popen("/usr/sbin/wpa_cli -i wlan0 status 2>/dev/null", "r");
+    pthread_mutex_lock(&g_wst_mu); int want_wifi = g_wst_want_wifi, want_bt = g_wst_want_bt; pthread_mutex_unlock(&g_wst_mu);
+    long long brx = -1, btx = -1;
+    FILE *h = want_bt ? popen("/usr/bin/hciconfig hci0 2>/dev/null", "r") : NULL;
+    if(h){
+        while(fgets(line, sizeof line, h)){
+            char *q;
+            if((q = strstr(line, "RX bytes:"))) brx = atoll(q + 9);
+            if((q = strstr(line, "TX bytes:"))) btx = atoll(q + 9);
+        }
+        pclose(h);
+    }
+    FILE *p = want_wifi ? popen("/usr/sbin/wpa_cli -i wlan0 status 2>/dev/null", "r") : NULL;
     if(p){
         while(fgets(line, sizeof line, p)){
             line[strcspn(line, "\r\n")] = 0;
@@ -509,6 +551,7 @@ static void *wst_worker(void *arg){                       /* wpa_cli status, as 
         pclose(p);
     }
     pthread_mutex_lock(&g_wst_mu);
+    g_bt_rx = brx; g_bt_tx = btx;
     memcpy(g_wst_ssid, ssid, sizeof ssid); memcpy(g_wst_freq, freq, sizeof freq); memcpy(g_wst_sec, sec, sizeof sec); memcpy(g_wst_bssid, bssid, sizeof bssid);
     g_wst_busy = 0;
     pthread_mutex_unlock(&g_wst_mu);
@@ -555,14 +598,25 @@ static char *status_json(void){
     st_row(&s, "Volume", "%d / %d", st.volume, VOL_MAX);
     char eqn[48]; int eq = simple_cfg_get_int("eq_preset", 0); eqpreset_name(eq, eqn, sizeof eqn);
     st_row(&s, "EQ", "%s", eqn);
+    int sdone = 0, stot = 0, sact = scanner_active();
+    if(sact){ scanner_progress(&sdone, &stot); st_row(&s, "Library scan", "Running, %d files so far", sdone); }
     if(sd_io_begin()){
         st_row(&s, "Library", "%d songs, %d albums, %d artists", mdb_song_count(), mdb_album_count(), mdb_artist_count());
         st_row(&s, "Favourites", "%d", mdb_favorite_count());
         sd_io_end();
     }
+    /* the slow facts (wpa_cli, hciconfig) come from a thread, at most every 10 s */
+    char ip[32] = "";
+    int up = wlan_ip(ip, sizeof ip), bs = bt_state();
+    pthread_mutex_lock(&g_wst_mu);
+    if((up || bs == BT_ON) && !g_wst_busy && (!g_wst_at || lv_tick_elaps(g_wst_at) >= 10000)){
+        pthread_t th; g_wst_want_wifi = up; g_wst_want_bt = bs == BT_ON;
+        if(pthread_create(&th, NULL, wst_worker, NULL) == 0){ pthread_detach(th); g_wst_busy = 1; g_wst_at = lv_tick_get() | 1; }
+    }
+    long long brx = g_bt_rx, btx = g_bt_tx;
+    pthread_mutex_unlock(&g_wst_mu);
     /* Bluetooth */
     st_group(&s, "Bluetooth");
-    int bs = bt_state();
     st_row(&s, "Bluetooth", "%s", bs == BT_ON ? "On" : bs == BT_TURNING_ON ? "Turning on" : "Off");
     if(bs == BT_ON){
         char peer[64]; int conn = bt_peer_name(peer, sizeof peer);
@@ -570,18 +624,14 @@ static char *status_json(void){
         char codec[16];
         if(ui_route_mac()[0] && ui_bt_live_codec(codec, sizeof codec) && codec[0]) st_row(&s, "Codec", "%s", codec);
     }
+    if(bs == BT_ON && brx >= 0 && btx >= 0)                 /* the controller's counters since Bluetooth came on */
+        st_row(&s, "Data since on", "%s received, %s sent", bytes((unsigned long long)brx, a, sizeof a), bytes((unsigned long long)btx, b2, sizeof b2));
     if(read_line("/sys/class/bluetooth/hci0/address", a, sizeof a) == 0) st_row(&s, "Address", "%s", a);
     /* Wi-Fi */
     st_group(&s, "Wi-Fi");
-    char ip[32] = "";
-    int up = wlan_ip(ip, sizeof ip);
     st_row(&s, "Wi-Fi", "%s", wifi_radio_live() ? (up ? "Connected" : "On, not connected") : "Off");
     if(up){
         pthread_mutex_lock(&g_wst_mu);
-        if(!g_wst_busy && (!g_wst_at || lv_tick_elaps(g_wst_at) >= 10000)){
-            pthread_t th;
-            if(pthread_create(&th, NULL, wst_worker, NULL) == 0){ pthread_detach(th); g_wst_busy = 1; g_wst_at = lv_tick_get() | 1; }
-        }
         char ssid[64], freq[16], sec[32], bssid[24];
         memcpy(ssid, g_wst_ssid, sizeof ssid); memcpy(freq, g_wst_freq, sizeof freq); memcpy(sec, g_wst_sec, sizeof sec); memcpy(bssid, g_wst_bssid, sizeof bssid);
         pthread_mutex_unlock(&g_wst_mu);
@@ -659,7 +709,8 @@ static char *status_json(void){
     FILE *ps = fopen("/proc/self/status", "r");
     if(ps){ char line[96]; long rss = -1; while(fgets(line, sizeof line, ps)) sscanf(line, "VmRSS: %ld", &rss); fclose(ps);
             if(rss > 0) st_row(&s, "diskOS UI memory", "%ld MB", (rss + 512) / 1024); }
-    rmt_buf_put(&s.b, s.groups ? "]}]}" : "{\"ok\":true,\"groups\":[]}");
+    rmt_buf_put(&s.b, s.groups ? "]}]" : "{\"ok\":true,\"groups\":[]");
+    rmt_buf_printf(&s.b, ",\"scan\":{\"active\":%s,\"done\":%d}}", sact ? "true" : "false", sdone);
     return rmt_buf_take(&s.b);
 }
 static char *eq_json(void){
@@ -672,6 +723,52 @@ static char *eq_json(void){
     }
     rmt_buf_put(&b, "]}");
     return rmt_buf_take(&b);
+}
+/* ---------------------------------------------------------------- playlists and favourites: the Disc's own calls
+ * (Playlists screen, Add to playlist, the song menu's heart), then a Library refresh so an open list follows */
+static int edit(const rmt_cmd_t *c, const char **why, char **body){
+    char path[PATH_MAX];
+    int ok = 0;
+    switch(c->sub){
+    case RMT_E_PL_CREATE: {
+        long id = mdb_playlist_create(c->name);
+        if(id <= 0){ *why = "Couldn't create the playlist"; return -1; }
+        rmt_buf_t b; memset(&b, 0, sizeof b); rmt_buf_printf(&b, "{\"ok\":true,\"id\":%ld}", id); *body = rmt_buf_take(&b);
+        ok = 1; break; }
+    case RMT_E_PL_RENAME: ok = mdb_playlist_rename(c->id, c->name); if(!ok) *why = "Couldn't rename the playlist"; break;
+    case RMT_E_PL_DELETE: ok = mdb_playlist_delete(c->id); if(!ok) *why = "Couldn't delete the playlist"; break;
+    case RMT_E_PL_ADD: {
+        int n = 0;
+        if(c->item == RMT_I_SONG){
+            if(mdb_song_path((int)c->song_id, path, sizeof path) != 1){ *why = "No such song"; return -1; }
+            if(mdb_playlist_has_song(c->id, path)){ *why = "Already in this playlist"; return -1; }
+            n = mdb_playlist_add_song(c->id, path);
+        } else n = mdb_playlist_add_group(c->id, c->item == RMT_I_ALBUM ? "ALBUM" : "ARTIST", c->name);   /* skips duplicates */
+        if(n <= 0){ *why = c->item == RMT_I_SONG ? "Couldn't add the song" : "Nothing added (already there?)"; return -1; }
+        rmt_buf_t b; memset(&b, 0, sizeof b); rmt_buf_printf(&b, "{\"ok\":true,\"added\":%d}", n); *body = rmt_buf_take(&b);
+        ok = 1; break; }
+    case RMT_E_PL_REMOVE: {                               /* only if that row still holds that song: lists change under a page */
+        int n = mdb_playlist_count(c->id);
+        int *ids = n > 0 && c->pos <= n ? calloc((size_t)n, sizeof *ids) : NULL;
+        int got = ids ? mdb_playlist_song_ids(c->id, ids, n) : 0, same = c->pos <= got && ids[c->pos - 1] == c->song_id;
+        free(ids);
+        if(!same){ *why = "The playlist changed - reload"; return -1; }
+        ok = mdb_playlist_remove_at(c->id, (int)c->pos); if(!ok) *why = "Couldn't remove the song";
+        break; }
+    case RMT_E_FAV: {
+        track_state_t st; ipc_get_state(&st);
+        if(!c->song_id){                                    /* the song playing now: through the player, like the Disc's heart */
+            if(!st.have_track || music_assistant() || radio_active()){ *why = "No song from the card is playing"; return -1; }
+            ui_set_favorite((int)c->arg); ok = 1; break;
+        }
+        if(mdb_song_path((int)c->song_id, path, sizeof path) != 1){ *why = "No such song"; return -1; }
+        if(st.have_track && !strcmp(path, st.path) && !music_assistant() && !radio_active()){ ui_set_favorite((int)c->arg); ok = 1; break; }
+        ok = mdb_set_favorite_path(path, (int)c->arg) > 0; if(!ok) *why = "Couldn't change favourites";
+        break; }
+    default: *why = "Unknown change"; return -1;
+    }
+    if(ok) library_refresh();
+    return ok ? 0 : -1;
 }
 static int g_blob_len;                                  /* dispatch's binary answer length (0 = JSON or none) */
 static char *read_cover(const char **why){
@@ -691,6 +788,19 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
         *body = c->kind == RMT_CMD_STATUS ? status_json() : eq_json();
         if(!*body) *why = "Out of memory";
         return *body ? 0 : -1;
+    }
+    if(c->kind == RMT_CMD_EDIT) return edit(c, why, body);
+    if(c->kind == RMT_CMD_RESCAN){                          /* as Settings > Rescan library (the main loop reports the end) */
+        if(!c->arg){
+            if(!scanner_active()){ *why = "No scan is running"; return -1; }
+            if(!scanner_cancel()){ *why = "The scan is saving its result and can't be stopped now"; return -1; }
+            return 0;
+        }
+        if(scanner_active()){ *why = "A scan is already running"; return -1; }
+        if(!ui_local_playback_allowed()){ *why = "Return the Disc to local playback to scan"; return -1; }
+        if(!sd_io_allowed()){ *why = "The SD card is not ready"; return -1; }
+        if(scanner_start() != 0){ *why = "Couldn't start the library scan"; return -1; }
+        return 0;
     }
     if(c->kind == RMT_CMD_EQ){
         if(ui_eq_select((int)c->arg)){ *why = "Couldn't switch EQ"; return -1; }

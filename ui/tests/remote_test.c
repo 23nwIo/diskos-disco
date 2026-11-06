@@ -134,6 +134,25 @@ static void test_core(void){
     r = req("POST", p("/api/eq"), "preset=20"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_EQ && r.cmd.arg == 20);
     CHECK(req("POST", p("/api/eq"), "preset=21").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/status"), "").kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/rescan"), "action=start"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RESCAN && r.cmd.arg == 1);
+    r = req("POST", p("/api/rescan"), "action=stop"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 0);
+    CHECK(req("POST", p("/api/rescan"), "").kind == RMT_R_BAD_PARAM);
+    CHECK(req("GET", p("/api/rescan"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/playlist_create"), "name=Road+trip"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_EDIT && r.cmd.sub == RMT_E_PL_CREATE && !strcmp(r.cmd.name, "Road trip"));
+    CHECK(req("POST", p("/api/playlist_create"), "name=++").kind == RMT_R_BAD_PARAM);             /* blank */
+    CHECK(req("POST", p("/api/playlist_create"), "name=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").kind == RMT_R_BAD_PARAM);   /* 65 bytes */
+    r = req("POST", p("/api/playlist_rename"), "id=3&name=X"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_E_PL_RENAME && r.cmd.id == 3);
+    CHECK(req("POST", p("/api/playlist_rename"), "name=X").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/playlist_delete"), "id=3"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_E_PL_DELETE);
+    CHECK(req("GET", p("/api/playlist_delete?id=3"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/playlist_add"), "id=3&kind=song&song_id=9"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_E_PL_ADD && r.cmd.item == RMT_I_SONG && r.cmd.song_id == 9);
+    r = req("POST", p("/api/playlist_add"), "id=3&kind=album&name=Blue"); CHECK(r.kind == RMT_R_CMD && r.cmd.item == RMT_I_ALBUM && !strcmp(r.cmd.name, "Blue"));
+    CHECK(req("POST", p("/api/playlist_add"), "id=3&kind=genre&name=Pop").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/playlist_remove"), "id=3&pos=2&song_id=9"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_E_PL_REMOVE && r.cmd.pos == 2);
+    CHECK(req("POST", p("/api/playlist_remove"), "id=3&pos=2").kind == RMT_R_BAD_PARAM);          /* which song: lists change */
+    r = req("POST", p("/api/favorite"), "on=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_E_FAV && r.cmd.arg == 1 && !r.cmd.song_id);
+    r = req("POST", p("/api/favorite"), "on=0&song_id=5"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 0 && r.cmd.song_id == 5);
+    CHECK(req("POST", p("/api/favorite"), "on=2").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/radio_search"), "q=jazz+fm"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_SEARCH && !strcmp(r.cmd.q, "jazz fm"));
     r = req("POST", p("/api/radio_search"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_SEARCH && !r.cmd.q[0]);   /* popular */
     CHECK(req("GET", p("/api/radio_search"), NULL).kind == RMT_R_BAD_METHOD);           /* it downloads: POST only */
@@ -176,11 +195,12 @@ static void test_core(void){
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
     memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
-    CHECK(strlen(RMT_PAGE_HTML) < 16384);
+    CHECK(strlen(RMT_PAGE_HTML) < 32768);
 }
 
 /* ---------------------------------------------------------------- server round trip */
 static volatile int g_emu_run = 1, g_emu_pause = 0;
+static int g_scan;
 static time_t g_search_until; static char g_search_q[96]; static int g_nfav = 3;   /* stand-in radio directory */
 static rmt_cmd_t g_last; static int g_ncmd;
 static void notify(void){}
@@ -218,7 +238,7 @@ static char *fake_browse(const rmt_cmd_t *c){
         break;
     default:
         for(int i = 1; i <= 12; i++){ snprintf(nm, sizeof nm, "Song %d of %.40s", i, c->name[0] ? c->name : "all"); if(!rmt_match(nm, c->q)) continue; ITEM_BEGIN();
-            rmt_buf_printf(&b, "{\"id\":%d,\"title\":", 1000 + i); rmt_buf_str(&b, nm);
+            rmt_buf_printf(&b, "{\"id\":%d,\"fav\":%s,\"title\":", 1000 + i, i % 3 ? "false" : "true"); rmt_buf_str(&b, nm);
             rmt_buf_printf(&b, ",\"artist\":\"Artist\",\"album\":\"Album\",\"dur_ms\":180000,\"track\":%d,\"pos\":%d}", i, i); }
     }
 #undef ITEM_BEGIN
@@ -239,12 +259,18 @@ static void *emu(void *a){
                 g_last = c; g_ncmd++;
                 if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));
+                else if(c.kind == RMT_CMD_RESCAN){ g_scan = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_STATUS)
-                    rsrv_done_body(1, NULL, strdup("{\"ok\":true,\"groups\":[{\"name\":\"Wi-Fi\",\"rows\":[[\"Network\",\"<home>\"],[\"Signal\",\"-60 dBm (good)\"]]},"
+                    rsrv_done_body(1, NULL, strdup(g_scan ? "{\"ok\":true,\"scan\":{\"active\":true,\"done\":12},\"groups\":[{\"name\":\"Playback\",\"rows\":[[\"Library scan\",\"Running, 12 files so far\"]]}]}" : "{\"ok\":true,\"groups\":[{\"name\":\"Wi-Fi\",\"rows\":[[\"Network\",\"<home>\"],[\"Signal\",\"-60 dBm (good)\"]]},"
                                                     "{\"name\":\"Battery\",\"rows\":[[\"Charge\",\"89%\"],[\"Temperature\",\"33.0 \xC2\xB0" "C\"]]},{\"name\":\"Empty\",\"rows\":[]}]}"));
                 else if(c.kind == RMT_CMD_EQ_LIST){
                     char b[400]; snprintf(b, sizeof b, "{\"ok\":true,\"current\":%d,\"presets\":[{\"id\":0,\"name\":\"Off\"},{\"id\":1,\"name\":\"Jazz\"},{\"id\":2,\"name\":\"R&B <x>\"}]}", s.eq);
                     rsrv_done_body(1, NULL, strdup(b));
+                } else if(c.kind == RMT_CMD_EDIT){                       /* stand-in edits: create answers an id */
+                    if(c.sub == RMT_E_PL_CREATE) rsrv_done_body(1, NULL, strdup("{\"ok\":true,\"id\":42}"));
+                    else if(c.sub == RMT_E_PL_ADD) rsrv_done_body(1, NULL, strdup(c.item == RMT_I_SONG ? "{\"ok\":true,\"added\":1}" : "{\"ok\":true,\"added\":12}"));
+                    else if(c.sub == RMT_E_FAV && !c.song_id){ s.favorite = (int)c.arg; rsrv_done(1, NULL); }
+                    else rsrv_done(1, NULL);
                 } else if(c.kind == RMT_CMD_EQ){ s.eq = (int)c.arg; snprintf(s.eq_name, sizeof s.eq_name, "%s", c.arg == 0 ? "Off" : c.arg == 1 ? "Jazz" : "R&B <x>"); rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_COVER){                       /* a 16x16 24-bit BMP, a colour gradient */
                     size_t n = 54 + 16 * 16 * 3; unsigned char *b = calloc(1, n);

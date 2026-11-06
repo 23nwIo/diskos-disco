@@ -2834,6 +2834,22 @@ int mdb_playlist_songs(long pid, mdb_song_t *out, int cap){
     sqlite3_finalize(st);
     return n;
 }
+/* The SONG.ID behind each row of mdb_playlist_songs (same order; 0 = the file is no longer in the library). */
+int mdb_playlist_song_ids(long pid, int *ids, int cap){
+    if(pid<=0 || !ids || cap<=0) return 0;
+    sqlite3 *d = db_read(); if(!d) return 0;
+    sqlite3_stmt *st;
+    const char *sql =
+        "SELECT IFNULL((SELECT S.ID FROM SONG S WHERE S.PATH=C.PATH AND IFNULL(S.TRACK,0)=IFNULL(C.TRACK,0) LIMIT 1),"
+        "IFNULL((SELECT S.ID FROM SONG S WHERE S.PATH=C.PATH ORDER BY S.ID LIMIT 1),0)) "
+        "FROM CUSTOM_PLAYLIST C WHERE C.PLAYLIST_ID=? ORDER BY C.ID;";
+    if(sqlite3_prepare_v2(d, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int64(st, 1, pid);
+    int n=0;
+    while(n<cap && sqlite3_step(st) == SQLITE_ROW) ids[n++] = sqlite3_column_int(st,0);
+    sqlite3_finalize(st);
+    return n;
+}
 
 /* Zune's playlist mosaic: the playlist's length (ms) and the SONG ids of its first songs from up to `cap` different
  * albums, in playlist order. Returns the member count (0 on error). */

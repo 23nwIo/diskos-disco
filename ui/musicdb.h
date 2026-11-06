@@ -201,6 +201,7 @@ long mdb_book_scope_set(const char *path);   /* point the reserved single-book p
 int  mdb_playlist_export(long pid, const char *name, char *outname, int cap);   /* write /tmp/sdcard/<name>.m3u; 1=ok */
 int  mdb_playlist_songs(long pid, mdb_song_t *out, int cap);
 int  mdb_playlist_count(long pid);
+int  mdb_playlist_song_ids(long pid, int *ids, int cap);   /* SONG.ID per row, in mdb_playlist_songs order (0 = not indexed) */
 int  mdb_playlist_cover_ids(long pid, int *ids, int cap, int *nids, long *ms);   /* count; covers of up to cap albums; length */
 /* scan a dir for *.m3u / *.m3u8 and import each new one as a playlist; returns # imported */
 int  mdb_import_m3u_dir(const char *dir);

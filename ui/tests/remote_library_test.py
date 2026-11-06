@@ -14,7 +14,8 @@ os.symlink('/etc', sd/'Music/escape')
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
 con = sqlite3.connect(db)
 cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
-        'ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE')
+        'ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE,'
+        'ADD_TIME,SAMPLE_RATE,BIT_PER_SAMPLE,CHANNELS,BIT_RATE,SONG_MIMETYPE,SONG_PRODUCTION_YEAR,IS_SELECT,ALBUM_ARTIST_CODE')
 for t in ['SONG', 'MY_LOVE']: con.execute(f'CREATE TABLE {t}({cols})')
 con.execute('CREATE TABLE CUSTOM_PLAYLIST_INDEX(LIST_ID INTEGER PRIMARY KEY,LIST_NAME,M3U_PATH)')
 con.execute(f'CREATE TABLE CUSTOM_PLAYLIST({cols},PLAYLIST_ID)')
@@ -23,7 +24,7 @@ for album, artist, folder, titles in [('Blue Album', 'Ana & "Bo"', 'Blue Album',
                                       ('Café <Noir>', 'Céline', 'Other', ['Nuit', 'Jour']), ('Other', 'Zed', 'Other', ['Solo'])]:
     for t, title in enumerate(titles):
         i += 1; name = f'{t+1:02d} {title}.flac'; p = sd/'Music'/folder/name; p.write_bytes(b'x')
-        con.execute('INSERT INTO SONG VALUES(' + ','.join('?'*22) + ')', (i, str(p), name, title, album, artist, 'Pop', 1, t+1, 0, 0, 0, 0,
+        con.execute('INSERT INTO SONG(ID,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE) VALUES(' + ','.join('?'*22) + ')', (i, str(p), name, title, album, artist, 'Pop', 1, t+1, 0, 0, 0, 0,
                     200000+i, artist, 0, '', title, name, album, artist, 'Pop'))
 con.execute('INSERT INTO MY_LOVE SELECT * FROM SONG WHERE ID IN (2,5)')
 con.execute("INSERT INTO CUSTOM_PLAYLIST_INDEX VALUES(1,'Road trip','')")
@@ -46,7 +47,13 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/play_item kind=radio&pos=3', 'POST /api/radio_stop', 'POST /api/next',
         'POST /api/radio_search q=jazz', 'GET /api/library/radio_search', 'POST /api/play_item kind=radio_hit&pos=1&url=http%3A%2F%2Fx',
         'POST /api/radio_fav_add kind=radio&pos=1&url=http%3A%2F%2Fs.example%2Fjazz',
-        'POST /api/radio_fav_remove kind=radio&pos=2&url=https%3A%2F%2Fs.example%2Ftalk', 'GET /api/library/radio']
+        'POST /api/radio_fav_remove kind=radio&pos=2&url=https%3A%2F%2Fs.example%2Ftalk', 'GET /api/library/radio',
+        'POST /api/playlist_create name=Night+drive', 'POST /api/playlist_add id=2&kind=song&song_id=3',
+        'POST /api/playlist_add id=2&kind=song&song_id=3', 'POST /api/playlist_add id=2&kind=album&name=Caf%C3%A9+%3CNoir%3E',
+        'GET /api/library/playlist?id=2', 'POST /api/playlist_remove id=2&pos=1&song_id=5', 'POST /api/playlist_remove id=2&pos=1&song_id=3',
+        'POST /api/playlist_rename id=2&name=Late+drive', 'GET /api/library/playlists',
+        'POST /api/favorite on=1&song_id=6', 'GET /api/library/album?name=Other', 'POST /api/favorite on=0&song_id=2', 'GET /api/library/favorites',
+        'POST /api/playlist_delete id=2', 'GET /api/library/playlists', 'POST /api/rescan action=stop', 'POST /api/eq preset=3', 'GET /api/status']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -98,4 +105,20 @@ assert res[31]['rc'] == 0                                                   # al
 assert res[32]['rc'] == 0 and [x['name'] for x in items(33)] == ['Jazz <FM>']
 assert favs.read_text() == 'Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n', favs.read_text()   # radio.c's own file format
 favs.unlink()
-print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove')
+assert res[34]['rc'] == 0 and res[34]['body']['id'] == 2, res[34]
+assert res[35]['rc'] == 0 and res[35]['body']['added'] == 1
+assert res[36]['rc'] == -1 and res[36]['why'] == 'Already in this playlist'
+assert res[37]['rc'] == 0 and res[37]['body']['added'] == 2
+assert [(x['title'], x['pos']) for x in items(38)] == [('Tres', 1), ('Nuit', 2), ('Jour', 3)], items(38)
+assert res[39]['rc'] == -1 and res[39]['why'] == 'The playlist changed - reload'   # pos 1 holds Tres (3), not Jour (5)
+assert res[40]['rc'] == 0, res[40]
+assert res[41]['rc'] == 0 and {x['name'] for x in items(42)} == {'Road trip', 'Late drive'}, items(42)
+assert res[43]['rc'] == 0 and items(44)[0]['fav'] is True
+assert res[45]['rc'] == 0 and [x['title'] for x in items(46)] == ['Jour', 'Solo'] and all(x['fav'] for x in items(46)), items(46)
+assert res[47]['rc'] == 0 and [x['name'] for x in items(48)] == ['Road trip']
+assert res[49]['rc'] == -1 and res[49]['why'] == 'No scan is running'
+assert res[50]['rc'] == 0
+stat = {g['name']: dict(g['rows']) for g in res[51]['body']['groups']}
+assert stat['Playback']['EQ'] == 'R&B' and stat['Playback']['Library'] == '6 songs, 3 albums, 3 artists' and res[51]['body']['scan']['active'] is False, stat
+assert {'Bluetooth', 'Wi-Fi', 'Storage', 'System'} <= set(stat) and 'Uptime' in stat['System'], stat
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status')

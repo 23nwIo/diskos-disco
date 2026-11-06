@@ -44,14 +44,24 @@ folder to open it; tap a song to play it in that context (the album, the artist'
 the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
 card on the Disc after copying new music). Folders never leave the card: `..` and links pointing elsewhere are refused.
 
+### Playlists and favourites
+
+The **⋯** button on a song adds it to or removes it from the favourites, adds it to a playlist (or a new one), and in a
+playlist removes it. The **⋯** in an album's or artist's header adds all its songs to a playlist. Playlists has **New
+playlist**; inside a playlist the header **⋯** renames or deletes it (the songs stay on the card). The heart on Now
+playing marks the song that is playing, through the player like the Disc's own heart. These are the Disc's own
+playlist and favourite functions; a Library list open on the Disc refreshes. Songs cannot be reordered inside a
+playlist (the Disc has no reorder function either).
+
 ### Status
 
 The **Status** tab shows, refreshed every 3 s while it is open: working mode, output, volume, EQ and library size;
 Bluetooth (on/off, connected headphones, the codec they run); Wi-Fi (network, address, channel, security, signal, data
-received and sent since start-up); SD card and internal storage; battery (charge, charging, voltage, temperature,
+received and sent since start-up; Bluetooth data since Bluetooth came on, from `hciconfig`); SD card and internal storage; battery (charge, charging, voltage, temperature,
 health, cycles, as the battery gauge reports them); and diskOS and firmware versions, uptime, load, CPU use (since the
 previous refresh), free memory and the UI's own memory. The Disc has no CPU temperature sensor
-([HARDWARE](HARDWARE.md)).
+([HARDWARE](HARDWARE.md)). **Rescan library** starts the same scan as Settings (it needs local playback and a ready
+card) and can stop it; the tab shows its progress.
 
 ### Radio
 
@@ -90,6 +100,11 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
 | `GET api/status` | `{"ok":true,"groups":[{"name":"Wi-Fi","rows":[["Signal","-60 dBm (good)"],…]},…]}` (display text) |
 | `GET api/eq`, `POST api/eq` with `preset=0..20` | The presets (`{"current":N,"presets":[{"id":0,"name":"Off"},…]}`) / select one. |
+| `POST api/playlist_create` (`name`, 1-64 bytes), `playlist_rename` (`id`, `name`), `playlist_delete` (`id`) | Playlists. Create answers `{"ok":true,"id":N}`. |
+| `POST api/playlist_add` with `id` + `kind=song&song_id=` \| `kind=album&name=` \| `kind=artist&name=` | Add (duplicates are skipped); answers `{"ok":true,"added":N}`. |
+| `POST api/playlist_remove` with `id`, `pos`, `song_id` | Remove one row; refused if that row no longer holds that song. |
+| `POST api/favorite` with `on=0\|1` and `song_id` (none: the song playing now) | Favourite on/off. Song lists carry `"fav":true\|false`. |
+| `POST api/rescan` with `action=start\|stop` | Library rescan; `GET api/status` has `"scan":{"active":…,"done":N}`. |
 | `GET api/cover` | The playing song's cover as the Disc decoded it (148 px BMP); `art` in the state changes with it, so `api/cover?v=<art>` can be cached by the page. 409 when there is none. |
 | `POST api/play_pause` | Toggle. |
 | `POST api/play`, `POST api/pause` | Only acts if needed. |
