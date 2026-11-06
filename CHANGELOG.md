@@ -18,7 +18,9 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 - microSD cards formatted ext4 (also ext2/ext3), with or without a partition table, mount at start-up (firmware V2.40 and V2.57). The stock
   player cannot mount ext4 itself, so a card inserted while the Disc is on stays unmounted until the next start, and
   leaving USB storage with an ext4 card restarts the Disc to mount it again. Windows and macOS cannot read ext4 in USB
-  storage. Cover files are found ignoring upper/lower case on ext4 cards (COVER.JPG). Not yet tested on a Disc.
+  storage. After start-up the stock player unmounts the card and fails to mount ext4 again; diskOS then mounts it
+  again within a few seconds. Cover files are found ignoring upper/lower case on ext4 cards (COVER.JPG). Not yet
+  tested on a Disc.
 
 ## 3.4.1
 

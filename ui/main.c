@@ -2561,6 +2561,47 @@ static int sd_card_is_ext(void){
 static int sd_return_needs_restart(void){
     return !sd_exported_to_host() && !coldplug_mounted() && sd_card_is_ext();
 }
+/* An ext2/3/4 card needs watching after the direct mount. A few seconds later the stock player runs its own SD mount
+ * routine: it unmounts the card ("umount /tmp/sdcard"), clears the mountpoint (the SD guard turns that "rm -rf" into
+ * an rmdir of the then-empty directory) and mounts again with iocharset=utf8, which ext4 rejects. The card is then
+ * left unmounted (device log 2026-11-06, V2.57: our mount at 10.5 s, the player's attempt at 14.9 s). With exFAT/FAT
+ * the player's own mount succeeds, so only ext cards come here. For the rest of the cold-boot window: once the card
+ * has stayed unmounted for SD_EXT_SETTLE_S seconds in a row (the player's routine is over), mount it again, under
+ * the same guards as the first mount. At most SD_EXT_REMOUNTS times; stops for good once the window ends or the
+ * card is (about to be) exported. */
+#define SD_EXT_SETTLE_S 3
+#define SD_EXT_REMOUNTS 3
+static void sd_ext_keep_mounted(const char *dev){
+    int gone = 0, remounts = 0;
+    for(;;){
+        struct timespec ts = { 1, 0 }; nanosleep(&ts, NULL);
+        if(!sd_cold_mount_allowed()){ coldplug_log("ext watch: window elapsed or card exported - done"); return; }
+        if(coldplug_mounted()){ gone = 0; continue; }
+        if(++gone == 1) coldplug_log("ext watch: card was unmounted (stock player's mount routine)");
+        if(gone < SD_EXT_SETTLE_S) continue;
+        pthread_mutex_lock(&g_sd_mode_mu);
+        if(ui_get_source_mode() == 0 && !coldplug_mounted() && sd_cold_mount_allowed()){
+            mkdir("/tmp/sdcard", 0755);              /* the guard's rmdir may have removed the mountpoint */
+            if(mount(dev, "/tmp/sdcard", "ext4", 0, NULL) == 0){
+                if(sd_exported_to_host()){
+                    if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)
+                        coldplug_log("WARNING: post-remount export + unmount BOTH failed (card busy) - possible transient dual-access");
+                    else
+                        coldplug_log("post-remount export detected -> unmounted, host owns card");
+                    pthread_mutex_unlock(&g_sd_mode_mu); return;
+                }
+                coldplug_log("ext watch: SD re-mounted (ext4)");
+            } else {
+                int e = errno; char b[128];
+                snprintf(b, sizeof b, "ext watch: re-mount failed on %s errno=%d(%s)", dev, e, strerror(e)); coldplug_log(b);
+            }
+            remounts++;
+        }
+        pthread_mutex_unlock(&g_sd_mode_mu);
+        gone = 0;
+        if(remounts >= SD_EXT_REMOUNTS){ coldplug_log("ext watch: re-mount limit reached - done"); return; }
+    }
+}
 static void *coldplug_thread(void *arg){
     (void)arg;
     const int direct_sd_mount = fw_needs_direct_sd_mount();
@@ -2639,7 +2680,9 @@ static void *coldplug_thread(void *arg){
                         pthread_mutex_unlock(&g_sd_mode_mu); return NULL;    /* explicit: don't fight the host */
                     }
                     { char b[96]; snprintf(b, sizeof b, "SD direct-mounted (%s on %s)", fstype, dev); coldplug_log(b); }
-                    pthread_mutex_unlock(&g_sd_mode_mu); return NULL;
+                    pthread_mutex_unlock(&g_sd_mode_mu);
+                    if(!strcmp(fstype, "ext4")) sd_ext_keep_mounted(dev);
+                    return NULL;
                 }
                 if(!sd_cold_mount_allowed()){      /* window elapsed / card exported -> give up (one-shot) */
                     pthread_mutex_unlock(&g_sd_mode_mu);
