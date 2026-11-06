@@ -208,6 +208,7 @@ static void snapshot(rmt_state_t *s){
     rc_station_t rs;
     if(radio_active() && radio_station(&rs)){             /* the station's own codec and rate (the directory's word) */
         snprintf(s->station_url, sizeof s->station_url, "%s", rs.url);
+        snprintf(s->stream_title, sizeof s->stream_title, "%s", radio_stream_title());
         snprintf(s->format, sizeof s->format, "%s", rs.codec); s->kbps = rs.bitrate;
     } else if(!music_assistant() && st.have_track){
         tech_fill(s, &st);

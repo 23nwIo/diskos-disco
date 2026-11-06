@@ -110,6 +110,7 @@ typedef struct {
     const char *source;      /* "local" | "music_assistant" | "radio" | "other" (static string) */
     const char *radio_state; /* "off" | "starting" | "playing" | "error" (static string; NULL = "off") */
     char station[96], radio_error[96];
+    char stream_title[330];  /* the song the station names (ICY / Ogg comments), "" none */
     char station_url[512];   /* the playing station's stream URL ("" when no radio plays) */
     char format[16];         /* "FLAC", "MP3", "DSD128", a radio codec; "" unknown */
     int  kbps, bits, sample_rate, channels;   /* 0 = unknown */
