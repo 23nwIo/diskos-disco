@@ -611,7 +611,7 @@ static char *status_json(void){
     }
     /* the slow facts (wpa_cli, hciconfig) come from a thread, at most every 10 s */
     char ip[32] = "";
-    int up = wlan_ip(ip, sizeof ip), bs = bt_state();
+    int up = wlan_ip(ip, sizeof ip) == 0, bs = bt_state();   /* wlan_ip: 0 = has an address */
     pthread_mutex_lock(&g_wst_mu);
     if((up || bs == BT_ON) && !g_wst_busy && (!g_wst_at || lv_tick_elaps(g_wst_at) >= 10000)){
         pthread_t th; g_wst_want_wifi = up; g_wst_want_bt = bs == BT_ON;
