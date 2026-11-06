@@ -23,6 +23,7 @@
 #include "fwcaps.h"
 #include "sdio.h"
 #include "folderbrowser.h"
+#include "radio.h"
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <limits.h>
@@ -113,6 +114,7 @@ void remote_boot(void){
 static int music_assistant(void){ return ma_controls(); }
 static const char *source_name(void){
     if(music_assistant()) return "music_assistant";
+    if(radio_active()) return "radio";
     return ui_get_source_mode() == 0 ? "local" : "other";
 }
 static void snapshot(rmt_state_t *s){
@@ -127,8 +129,11 @@ static void snapshot(rmt_state_t *s){
     s->volume = st.volume; s->volume_max = VOL_MAX;
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
-    s->controllable = music_assistant() || ui_local_playback_allowed();
     s->source = source_name();
+    s->radio_state = radio_state();
+    snprintf(s->station, sizeof s->station, "%s", radio_station_name());
+    snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
+    s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
 }
 static const char *const NOT_LOCAL = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)";
 static int run(const rmt_cmd_t *c, const char **why){
@@ -136,7 +141,11 @@ static int run(const rmt_cmd_t *c, const char **why){
     int ma = music_assistant();
     int transport = c->kind == RMT_CMD_PLAY_PAUSE || c->kind == RMT_CMD_PLAY || c->kind == RMT_CMD_PAUSE ||
                     c->kind == RMT_CMD_NEXT || c->kind == RMT_CMD_PREV || c->kind == RMT_CMD_SEEK;
-    if(transport && !ma && !ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }   /* say why here, no toast on the Disc */
+    int radio = !ma && radio_active();
+    if(radio && (c->kind == RMT_CMD_NEXT || c->kind == RMT_CMD_PREV || c->kind == RMT_CMD_SEEK || c->kind == RMT_CMD_PLAY_MODE)){
+        *why = "Not available for web radio"; return -1;
+    }
+    if(transport && !ma && !radio && !ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }   /* say why here, no toast on the Disc */
     switch(c->kind){
     case RMT_CMD_PLAY_PAUSE: return ui_transport_command(PP);
     case RMT_CMD_PLAY:  if(ma){ ma_send("play"); return 0; }  return ui_is_playing() ? 0 : ui_transport_command(PP);
@@ -150,6 +159,10 @@ static int run(const rmt_cmd_t *c, const char **why){
         if(ma){ *why = "Music Assistant sets the play mode while it plays"; return -1; }
         if(!ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }
         ui_set_workmode((int)c->arg);
+        return 0;
+    case RMT_CMD_RADIO_STOP:
+        if(!radio_active() && !strcmp(radio_state(), "off")){ *why = "The radio is not playing"; return -1; }
+        radio_stop();
         return 0;
     default: *why = "Unknown command"; return -1;
     }
@@ -299,6 +312,19 @@ static char *browse(const rmt_cmd_t *c, const char **why){
         free(rows);
         return page_end(&pg); }
     case RMT_L_FOLDER: return list_folder(c, why);
+    case RMT_L_RADIO: {                                    /* the Radio app's favourites; pos counts from 1 */
+        static rc_station_t fav[RC_MAX_FAV];
+        int n = radio_favorites(fav, RC_MAX_FAV);
+        page_begin(&pg, c);
+        for(int i = 0; i < n; i++){
+            if(!(rmt_match(fav[i].name, c->q) || rmt_match(fav[i].country, c->q)) || !page_take(&pg)) continue;
+            rmt_buf_printf(&pg.b, "{\"pos\":%d,\"name\":", i + 1); rmt_buf_str(&pg.b, fav[i].name);
+            rmt_buf_put(&pg.b, ",\"url\":"); rmt_buf_str(&pg.b, fav[i].url);
+            rmt_buf_put(&pg.b, ",\"codec\":"); rmt_buf_str(&pg.b, fav[i].codec);
+            rmt_buf_printf(&pg.b, ",\"bitrate\":%d,\"country\":", fav[i].bitrate); rmt_buf_str(&pg.b, fav[i].country);
+            rmt_buf_put(&pg.b, "}");
+        }
+        return page_end(&pg); }
     default: *why = "Unknown list"; return out;
     }
 }
@@ -306,8 +332,18 @@ static int play_song_id(int id){                       /* in the all-songs scope
     int pos = mdb_play_pos(id, 1, "");
     return pos >= 1 && ui_play_list(1, "", pos);
 }
+static int play_radio(const rmt_cmd_t *c, const char **why){
+    static rc_station_t fav[RC_MAX_FAV];
+    int n = radio_favorites(fav, RC_MAX_FAV);
+    if(c->pos < 1 || c->pos > n || (c->name[0] && strcmp(c->name, fav[c->pos - 1].url))){ *why = "The radio favourites changed - reload"; return -1; }
+    if(radio_play(&fav[c->pos - 1]) == 0) return 0;
+    const char *e = radio_last_error();
+    *why = e && e[0] ? e : "Couldn't start the radio";
+    return -1;
+}
 static int play_item(const rmt_cmd_t *c, const char **why){
     static const char *const REFUSED = "The player refused - see the Disc";
+    if(c->sub == RMT_I_RADIO) return play_radio(c, why);   /* the radio switches the player's mode itself */
     if(!ui_local_playback_allowed()){ *why = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)"; return -1; }
     int ok = 0;
     switch(c->sub){

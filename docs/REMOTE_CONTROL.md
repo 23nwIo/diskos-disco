@@ -2,7 +2,7 @@
 
 Control playback on the Disc from a phone or computer browser on the same Wi-Fi network: play/pause, next/previous,
 seek, volume and play mode, with the current song shown, and browse the library (albums, artists, playlists,
-favourites, songs, card folders) to start something. Off by default.
+favourites, songs, card folders) or the web radio favourites to start something. Off by default.
 
 > **Not yet tested on a Disc.** The control page, the JSON API and the server are tested on a host build
 > (`ui/tests/remote_test.c`, a real HTTP round trip, and the page in Chromium), the library API runs against a test
@@ -42,6 +42,14 @@ folder to open it; tap a song to play it in that context (the album, the artist'
 the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
 card on the Disc after copying new music). Folders never leave the card: `..` and links pointing elsewhere are refused.
 
+### Radio
+
+The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md) (save a station there by holding it). Tap
+one to play it; the Disc needs Wi-Fi, which it has anyway when the page works. While the radio plays, Now playing shows
+the station and a **Stop radio** button; play/pause and volume work, while the position, Next, Previous and Play mode
+are hidden or refused because a live stream has none of them. Starting anything from the library ends the radio, as on
+the Disc. Searching for new stations is only on the Disc.
+
 ## Security
 
 - **Off by default.** Nothing listens until Control Page is switched on.
@@ -65,15 +73,16 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 
 | Request | Effect |
 |---|---|
-| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"other","controllable":…}` |
+| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","radio_error":"…"}` |
 | `POST api/play_pause` | Toggle. |
 | `POST api/play`, `POST api/pause` | Only acts if needed. |
 | `POST api/next`, `POST api/previous` | Skip. |
 | `POST api/volume` with `value=0..120` or `step=-120..120` | Absolute or relative volume. |
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
-| `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`; `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
-| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=all`. `pos` counts from 1. |
+| `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
+| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed). `pos` counts from 1. |
+| `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
 (`message` says why), 503 another command is still running, 504 the UI did not answer in time.
@@ -91,6 +100,6 @@ curl "http://192.168.1.50:8088/<link code>/api/state"
 |---|---|
 | `ui/remote_core.c` | Request parsing, routing, link code, JSON, the control page (pure, host-tested). |
 | `ui/remote_srv.c` | The server thread and the one-slot command mailbox to the UI (no LVGL). |
-| `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to`, `ui_set_workmode`, the `mdb_*` library queries and the `ui_play_*` entry points. |
+| `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to`, `ui_set_workmode`, the `mdb_*` library queries, the `ui_play_*` entry points and the Radio app's `radio.h`. |
 | `ui/tests/remote_test.c` | Unit tests and the HTTP round trip (`make -C ui/tests remote_test`); `./remote_test --serve PORT` serves the page with a stand-in player for browser checks. |
 | `ui/tests/remote_library_test.py` | The library API against a test `song.db` and card through `host-render` (build it first). |

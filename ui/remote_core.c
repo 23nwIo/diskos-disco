@@ -181,11 +181,11 @@ int rmt_match(const char *hay, const char *needle){
 static const struct { const char *name; rmt_list_t l; } LISTS[] = {
     { "albums", RMT_L_ALBUMS }, { "album", RMT_L_ALBUM }, { "artists", RMT_L_ARTISTS }, { "artist", RMT_L_ARTIST },
     { "playlists", RMT_L_PLAYLISTS }, { "playlist", RMT_L_PLAYLIST }, { "favorites", RMT_L_FAVORITES },
-    { "songs", RMT_L_SONGS }, { "folder", RMT_L_FOLDER },
+    { "songs", RMT_L_SONGS }, { "folder", RMT_L_FOLDER }, { "radio", RMT_L_RADIO },
 };
 static const struct { const char *name; rmt_item_t i; } ITEMS[] = {
     { "album", RMT_I_ALBUM }, { "artist", RMT_I_ARTIST }, { "playlist", RMT_I_PLAYLIST }, { "favorites", RMT_I_FAVORITES },
-    { "song", RMT_I_SONG }, { "file", RMT_I_FILE }, { "all", RMT_I_ALL },
+    { "song", RMT_I_SONG }, { "file", RMT_I_FILE }, { "all", RMT_I_ALL }, { "radio", RMT_I_RADIO },
 };
 /* optional number: absent = def; out of [lo, hi] or malformed = -1 */
 static int opt_num(const rmt_req_t *r, const char *name, long lo, long hi, long def, long *out){
@@ -227,6 +227,12 @@ static int route_item(const rmt_req_t *r, rmt_cmd_t *c){
     case RMT_I_FILE:
         if(param_str(r, "path", c->name, sizeof c->name) || !c->name[0] || !rmt_relpath_ok(c->name)) return -1;
         break;
+    case RMT_I_RADIO: {
+        if(c->pos <= 0) return -1;
+        int u = param_str(r, "url", c->name, sizeof c->name);
+        if(u == -2) return -1;
+        if(u == -1) c->name[0] = 0;
+        break; }
     default: break;
     }
     return 1;
@@ -236,6 +242,7 @@ static const struct { const char *name; rmt_cmd_kind_t kind; } CMDS[] = {
     { "play_pause", RMT_CMD_PLAY_PAUSE }, { "play", RMT_CMD_PLAY }, { "pause", RMT_CMD_PAUSE },
     { "next", RMT_CMD_NEXT }, { "previous", RMT_CMD_PREV },
     { "volume", RMT_CMD_VOLUME }, { "seek", RMT_CMD_SEEK }, { "play_mode", RMT_CMD_PLAY_MODE },
+    { "radio_stop", RMT_CMD_RADIO_STOP },
 };
 const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_VOLUME_STEP) return "volume";
@@ -323,15 +330,18 @@ int rmt_json_escape(char *dst, size_t cap, const char *src){
 }
 int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
     char t[sizeof s->title * 6], a[sizeof s->artist * 6], al[sizeof s->album * 6];   /* worst case: every byte \u00XX */
+    char st[sizeof s->station * 6], re[sizeof s->radio_error * 6];
     if(rmt_json_escape(t, sizeof t, s->title) < 0 || rmt_json_escape(a, sizeof a, s->artist) < 0 ||
-       rmt_json_escape(al, sizeof al, s->album) < 0){ if(cap) dst[0] = 0; return -1; }
+       rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 ||
+       rmt_json_escape(re, sizeof re, s->radio_error) < 0){ if(cap) dst[0] = 0; return -1; }
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,"
-        "\"source\":\"%s\",\"controllable\":%s}",
+        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"radio_error\":\"%s\"}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
-        s->volume, s->volume_max, s->play_mode, s->source ? s->source : "other", s->controllable ? "true" : "false");
+        s->volume, s->volume_max, s->play_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
+        s->radio_state ? s->radio_state : "off", st, re);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
     return n;
 }
@@ -400,6 +410,7 @@ const char RMT_PAGE_HTML[] =
 ".row{display:flex;justify-content:space-between;color:var(--mut);font-size:.85em}\n"
 ".tr{display:flex;gap:.6em;margin:0 0 1em}\n"
 ".tr button{flex:1;border:0;border-radius:12px;padding:.8em 0;font-size:1.3em;background:var(--card);color:var(--fg)}\n"
+".tr button:disabled,input:disabled{opacity:.35}\n"
 ".tr button.pp{background:var(--acc);color:#fff}\n"
 "select,input[type=search]{width:100%;padding:.6em;border-radius:10px;font-size:1em;background:var(--card);color:var(--fg);border:1px solid var(--line)}\n"
 "#msg{position:fixed;left:50%;bottom:1em;transform:translateX(-50%);max-width:90%;background:var(--card);border:1px solid var(--line);padding:.5em 1em;border-radius:99px;font-size:.9em;box-shadow:0 2px 12px #0004}#msg:empty{display:none}#msg.err{color:#e66}label{font-size:.85em;color:var(--mut)}\n"
@@ -413,14 +424,15 @@ const char RMT_PAGE_HTML[] =
 ".hide{display:none}\n"
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
 "<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>\n"
-"<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button></div>\n"
+"<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button></div>\n"
 "<div id=np><div class=card><div id=t>-</div><div id=a></div><div id=al></div>\n"
 "<input id=pos type=range min=0 max=1 value=0 aria-label=Position><div class=row><span id=pc>0:00</span><span id=du>0:00</span></div></div>\n"
+"<button id=rs class='more hide'>Stop radio</button>\n"
 "<div class=tr><button id=pv aria-label=Previous>&#9198;</button><button id=pp class=pp aria-label='Play or pause'>&#9199;</button>\n"
 "<button id=nx aria-label=Next>&#9197;</button></div>\n"
 "<div class=card><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=120 value=0>\n"
-"<label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one\n"
-"<option value=3>Repeat all<option value=4>Single</select></div></div>\n"
+"<div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one\n"
+"<option value=3>Repeat all<option value=4>Single</select></div></div></div>\n"
 "<div id=lib class=hide><input id=q type=search placeholder=Search aria-label=Search>\n"
 "<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=pa class=pa>Play all</button></div>\n"
 "<div id=list></div><button id=mo class='more hide'>Load more</button></div>\n"
@@ -436,6 +448,8 @@ const char RMT_PAGE_HTML[] =
 "function play(o){cmd('play_item',enc(o)).then(function(ok){if(ok)say('Playing',1)})}\n"
 "function poll(){if(document.hidden||busy||V!=='np')return;busy=1;fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){busy=0;\n"
 "$('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;\n"
+"var ra=s.source==='radio';if(ra){$('t').textContent=s.station||'Web radio';$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):'Web radio';$('al').textContent=''}\n"
+"$('rs').classList.toggle('hide',!ra);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||s.play_mode<0);\n"
 "$('pp').innerHTML=s.playing?'&#9208;':'&#9654;';\n"
 "if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}\n"
 "$('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);\n"
@@ -446,14 +460,15 @@ const char RMT_PAGE_HTML[] =
 "$('pp').onclick=function(){cmd('play_pause')};$('nx').onclick=function(){cmd('next')};$('pv').onclick=function(){cmd('previous')};\n"
 "['pos','vol'].forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value};\n"
 "e.onchange=function(){drag[i]=0;cmd(i==='pos'?'seek':'volume',(i==='pos'?'position_ms=':'value=')+e.value)}});\n"
-"$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};\n"
+"$('rs').onclick=function(){cmd('radio_stop')};$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};\n"
 "/* library: st = stack of views {l:list, p:params, t:title, play:item for Play all, row:function(item)->[title,sub,action]} */\n"
 "var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,{kind:'album',name:x.name},function(s){return song(s,{kind:'album',name:x.name,song_id:s.id})})}]}],\n"
 "artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,{kind:'artist',name:x.name},function(s){return song(s,{kind:'artist',name:x.name,song_id:s.id})})}]}],\n"
 "playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,{kind:'playlist',id:x.id},function(s){return song(s,{kind:'playlist',id:x.id,pos:s.pos})})}]}],\n"
 "favorites:['Favourites',function(s){return song(s,{kind:'favorites',pos:s.pos})},{kind:'favorites'}],\n"
 "songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all'}],\n"
-"folder:['Folders',null]};\n"
+"folder:['Folders',null],\n"
+"radio:['Radio favourites',function(x){return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play({kind:'radio',pos:x.pos,url:x.url})}]}]};\n"
 "function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)}]}\n"
 "function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[(x.dir?'📁 ':'')+x.name,'',x.dir?function(){open('folder',{path:p},x.name,null,frow(p))}:function(){play({kind:'file',path:p})}]}}\n"
 "function open(l,p,t,pl,row){st.push({l:l,p:p,t:t,play:pl,row:row});$('q').value='';load(0)}\n"
@@ -466,7 +481,7 @@ const char RMT_PAGE_HTML[] =
 "if(!off)$('list').textContent='';tot=j.total;j.items.forEach(function(x){items.push(x);var r=v.row(x),b=document.createElement('button');b.className='r';\n"
 "var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);if(r[1]){var s=document.createElement('small');s.textContent=r[1];b.appendChild(s)}\n"
 "b.onclick=r[2];$('list').appendChild(b)});\n"
-"if(!tot)$('list').textContent=$('q').value?'No matches':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}).catch(function(){say('Player not reachable')})}\n"
+"if(!tot)$('list').textContent=$('q').value?'No matches':v.l==='radio'?'No favourites yet - hold a station in the Radio app on the Disc to save it':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}).catch(function(){say('Player not reachable')})}\n"
 "function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});\n"
 "$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np');say('');\n"
 "if(v==='np'){poll();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1])}\n"

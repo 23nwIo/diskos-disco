@@ -30,6 +30,8 @@ con.execute("INSERT INTO CUSTOM_PLAYLIST_INDEX VALUES(1,'Road trip','')")
 con.execute('INSERT INTO CUSTOM_PLAYLIST SELECT *,1 FROM SONG WHERE ID IN (6,1)')
 con.commit(); con.close()
 (sd/'Music/notes.txt').write_text('x'); (sd/'Music/unindexed.mp3').write_bytes(b'x')
+favs = Path('/usr/data/radio_favorites.txt'); favs.write_text('Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n'
+                                                            'Talk\thttps://s.example/talk\tAAC\t64\tFrance\n')
 
 reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/library/album?name=Blue+Album',
         'GET /api/library/artists', 'GET /api/library/artist?name=C%C3%A9line', 'GET /api/library/playlists',
@@ -39,7 +41,9 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/play_item kind=album&name=Blue+Album&song_id=2', 'POST /api/play_item kind=album&name=Blue+Album&song_id=4',
         'POST /api/play_item kind=favorites&pos=2', 'POST /api/play_item kind=song&song_id=6',
         'POST /api/play_item kind=file&path=Music%2Funindexed.mp3', 'POST /api/play_item kind=file&path=Music%2Fescape%2Fpasswd',
-        'POST /api/play_item kind=all']
+        'POST /api/play_item kind=all', 'GET /api/library/radio', 'GET /api/library/radio?q=fran',
+        'POST /api/play_item kind=radio&pos=1&url=http%3A%2F%2Fs.example%2Fjazz', 'POST /api/play_item kind=radio&pos=2&url=http%3A%2F%2Fs.example%2Fjazz',
+        'POST /api/play_item kind=radio&pos=3', 'POST /api/radio_stop', 'POST /api/next']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -77,4 +81,12 @@ assert res[17]['rc'] == 0 and res[17]['plays'] == ["type=1 name='' pos=4"]   # S
 assert res[18]['rc'] == -1 and 'rescan' in res[18]['why']
 assert res[19]['rc'] == -1 and res[19]['why'] == 'No such file'
 assert res[20]['rc'] == 0 and res[20]['plays'] == ["type=1 name='' pos=1"]
-print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays')
+assert items(21) == [{'pos': 1, 'name': 'Jazz <FM>', 'url': 'http://s.example/jazz', 'codec': 'MP3', 'bitrate': 128, 'country': 'Germany'},
+                     {'pos': 2, 'name': 'Talk', 'url': 'https://s.example/talk', 'codec': 'AAC', 'bitrate': 64, 'country': 'France'}], items(21)
+assert [x['pos'] for x in items(22)] == [2]
+assert res[23]['rc'] == -1 and res[23]['why'] == 'Connect to Wi-Fi to play radio', res[23]   # the radio's own refusal (no Wi-Fi on a host)
+assert res[24]['why'] == res[25]['why'] == 'The radio favourites changed - reload'
+assert res[26]['rc'] == -1 and res[26]['why'] == 'The radio is not playing'
+assert res[27]['rc'] == 0                                                   # not radio: next goes to the player as before
+favs.unlink()
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites')

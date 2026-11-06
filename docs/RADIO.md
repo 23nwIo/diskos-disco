@@ -43,4 +43,5 @@ accepted.
 - Playlists (`.pls`, `.m3u`) are resolved by the directory; a bare playlist URL in the favourites file may not play.
 
 For a front end such as Remote Control, `ui/radio.h` offers `radio_favorites`, `radio_play`, `radio_play_url`,
-`radio_stop`, `radio_state` and `radio_station_name` (main thread only).
+`radio_stop`, `radio_state` and `radio_station_name` (main thread only). [Remote Control](REMOTE_CONTROL.md) uses them for
+its Radio tab.

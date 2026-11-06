@@ -22,16 +22,18 @@ typedef enum {
     RMT_CMD_PLAY_PAUSE, RMT_CMD_PLAY, RMT_CMD_PAUSE, RMT_CMD_NEXT, RMT_CMD_PREV,
     RMT_CMD_VOLUME, RMT_CMD_VOLUME_STEP, RMT_CMD_SEEK, RMT_CMD_PLAY_MODE,
     RMT_CMD_BROWSE,          /* list part of the library: sub = rmt_list_t; the answer is a JSON body */
-    RMT_CMD_PLAY_ITEM        /* start something from the library: sub = rmt_item_t */
+    RMT_CMD_PLAY_ITEM,       /* start something from the library: sub = rmt_item_t */
+    RMT_CMD_RADIO_STOP       /* stop the web radio, back to local playback */
 } rmt_cmd_kind_t;
 
 /* GET api/library/<list>: albums | album (name) | artists | artist (name) | playlists | playlist (id) | favorites |
  * songs (q: search) | folder (path, relative to the SD card). Lists take q (filter), offset, limit. */
 typedef enum { RMT_L_ALBUMS = 1, RMT_L_ALBUM, RMT_L_ARTISTS, RMT_L_ARTIST, RMT_L_PLAYLISTS, RMT_L_PLAYLIST,
-               RMT_L_FAVORITES, RMT_L_SONGS, RMT_L_FOLDER } rmt_list_t;
+               RMT_L_FAVORITES, RMT_L_SONGS, RMT_L_FOLDER, RMT_L_RADIO } rmt_list_t;
 /* POST api/play_item with kind=album (name, song_id) | artist (name, song_id) | playlist (id, pos) | favorites (pos)
- * | song (song_id) | file (path) | all. song_id / pos are optional: the list starts at its first song. */
-typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL } rmt_item_t;
+ * | song (song_id) | file (path) | all | radio (pos, optional url: refused if that favourite is no longer there).
+ * song_id / pos are optional: the list starts at its first song. */
+typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL, RMT_I_RADIO } rmt_item_t;
 
 #define RMT_LIMIT_DEF 200
 #define RMT_LIMIT_MAX 500
@@ -41,7 +43,7 @@ typedef struct {
     int  sub;                /* rmt_list_t or rmt_item_t */
     long id, song_id, pos;   /* playlist id, SONG.ID, 1-based position (0 = absent) */
     long offset, limit;
-    char name[512];          /* album / artist name, or a folder/file path relative to the SD card */
+    char name[512];          /* album / artist name, a folder/file path relative to the SD card, or a station URL */
     char q[96];              /* filter text */
 } rmt_cmd_t;
 
@@ -85,7 +87,9 @@ typedef struct {
     int  volume, volume_max;
     int  play_mode;          /* 0..4, -1 unknown */
     int  controllable;       /* 1 if transport commands can reach a player now */
-    const char *source;      /* "local" | "music_assistant" | "other" (static string) */
+    const char *source;      /* "local" | "music_assistant" | "radio" | "other" (static string) */
+    const char *radio_state; /* "off" | "starting" | "playing" | "error" (static string; NULL = "off") */
+    char station[96], radio_error[96];
 } rmt_state_t;
 
 /* JSON helpers. Both return the length written (truncation-safe, always NUL-terminated), or -1 if it didn't fit. */

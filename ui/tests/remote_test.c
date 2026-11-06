@@ -121,6 +121,14 @@ static void test_core(void){
     r = req("POST", p("/api/play_item"), "kind=file&path=Music%2Fa.flac"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_FILE && !strcmp(r.cmd.name, "Music/a.flac"));
     r = req("POST", p("/api/play_item"), "kind=all"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_ALL);
     CHECK(req("POST", p("/api/play_item"), "kind=file&path=..%2Fx").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/play_item"), "kind=radio&pos=2&url=http%3A%2F%2Fs.example%2Fa");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_RADIO && r.cmd.pos == 2 && !strcmp(r.cmd.name, "http://s.example/a"));
+    r = req("POST", p("/api/play_item"), "kind=radio&pos=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_RADIO && !r.cmd.name[0]);
+    CHECK(req("POST", p("/api/play_item"), "kind=radio").kind == RMT_R_BAD_PARAM);          /* which favourite */
+    CHECK(req("POST", p("/api/play_item"), "kind=radio&pos=1&url=a%00b").kind == RMT_R_BAD_PARAM);
+    r = req("GET", p("/api/library/radio?q=jazz"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_L_RADIO && !strcmp(r.cmd.q, "jazz"));
+    r = req("POST", p("/api/radio_stop"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_STOP);
+    CHECK(req("GET", p("/api/radio_stop"), NULL).kind == RMT_R_BAD_METHOD);
     CHECK(req("POST", p("/api/play_item"), "kind=song").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/play_item"), "kind=album").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/play_item"), "kind=playlist&id=-1").kind == RMT_R_BAD_PARAM);
@@ -142,10 +150,15 @@ static void test_core(void){
     snprintf(s.title, sizeof s.title, "Song \"1\""); snprintf(s.artist, sizeof s.artist, "Art");
     s.has_track = 1; s.playing = 1; s.position_ms = 1000; s.duration_ms = 2000; s.volume = 40; s.volume_max = 120;
     s.play_mode = 1; s.controllable = 1; s.source = "local";
-    char js[3400]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
+    char js[5200]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
+    CHECK(strstr(js, "\"radio_state\":\"off\"") && strstr(js, "\"station\":\"\""));
     CHECK(strstr(js, "\"title\":\"Song \\\"1\\\"\"") != NULL);
     CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"source\":\"local\""));
+    s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Radio <%s>", "X");
+    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"source\":\"radio\"") && strstr(js, "\"station\":\"Radio \\u003cX>\""));
     memset(s.title, 1, sizeof s.title - 1); s.title[sizeof s.title - 1] = 0;   /* worst-case escaping still fits */
+    memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
+    memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strlen(RMT_PAGE_HTML) < 16384);
 }
@@ -168,6 +181,11 @@ static char *fake_browse(const rmt_cmd_t *c){
     case RMT_L_ARTISTS: case RMT_L_PLAYLISTS:
         for(int i = 0; i < 7; i++){ snprintf(nm, sizeof nm, c->sub == RMT_L_ARTISTS ? "Artist %d" : "Playlist %d", i); ITEM_BEGIN();
             rmt_buf_printf(&b, "{\"id\":%d,\"name\":", i + 1); rmt_buf_str(&b, nm); rmt_buf_put(&b, "}"); }
+        break;
+    case RMT_L_RADIO:
+        for(int i = 1; i <= 3; i++){ snprintf(nm, sizeof nm, "Station %d", i); if(!rmt_match(nm, c->q)) continue; ITEM_BEGIN();
+            rmt_buf_printf(&b, "{\"pos\":%d,\"name\":", i); rmt_buf_str(&b, nm);
+            rmt_buf_printf(&b, ",\"url\":\"http://s.example/%d\",\"codec\":\"MP3\",\"bitrate\":128,\"country\":\"Germany\"}", i); }
         break;
     case RMT_L_FOLDER:
         if(!c->name[0]) do{ ITEM_BEGIN(); rmt_buf_put(&b, "{\"name\":\"Music\",\"dir\":true}"); }while(0);
@@ -195,6 +213,12 @@ static void *emu(void *a){
                 g_last = c; g_ncmd++;
                 if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));
+                else if(c.kind == RMT_CMD_PLAY_ITEM && c.sub == RMT_I_RADIO){        /* stand-in radio: it plays at once */
+                    s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Station %ld", c.pos);
+                    snprintf(s.title, sizeof s.title, "Station %ld", c.pos); rsrv_done(1, NULL);
+                } else if(c.kind == RMT_CMD_RADIO_STOP){
+                    s.source = "local"; s.radio_state = "off"; s.station[0] = 0; snprintf(s.title, sizeof s.title, "Track <one>"); rsrv_done(1, NULL);
+                }
                 else rsrv_done(1, NULL);
             }
         }
