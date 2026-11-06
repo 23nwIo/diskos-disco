@@ -3776,8 +3776,13 @@ int main(int argc, char **argv){
              * second re-invalidated the whole screen and defeated partial rendering. Track identity is
              * "" when nothing is playing (so stopping clears the art). */
             const char *idnow = st.have_track ? st.path : "";
-            if(strcmp(idnow, np_last_path) != 0){
+            /* the words can change on one path too (web radio's song titles, tracks of one CUE file): the screen saver
+             * and Quick Settings only hear about it here */
+            static char np_last_words[330];
+            char words[330]; snprintf(words, sizeof words, "%s\x1f%s", st.have_track ? st.title : "", st.have_track ? st.artist : "");
+            if(strcmp(idnow, np_last_path) != 0 || strcmp(words, np_last_words) != 0){
                 snprintf(np_last_path, sizeof np_last_path, "%s", idnow);
+                snprintf(np_last_words, sizeof np_last_words, "%s", words);
                 ui_publish_art_surfaces(&st,playing);
             }
             quicksettings_refresh(playing);
