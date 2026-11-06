@@ -30,6 +30,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory). |
 | Position slider | Seeks the current song. |
 | Volume | 0-120, the player's own scale (the same as the hardware keys). |
+| EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
 | Play mode | Sequential, Shuffle, Repeat one, Repeat all, Single. Saved like the Disc's own setting. Not available while Music Assistant plays. |
 
 Commands that need local playback are refused while the Disc is in another working mode (USB DAC, Bluetooth DAC,
@@ -42,6 +43,15 @@ audio files only). Each list has a search field and loads 100 entries at a time.
 folder to open it; tap a song to play it in that context (the album, the artist's songs, the playlist, favourites or
 the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
 card on the Disc after copying new music). Folders never leave the card: `..` and links pointing elsewhere are refused.
+
+### Status
+
+The **Status** tab shows, refreshed every 3 s while it is open: working mode, output, volume, EQ and library size;
+Bluetooth (on/off, connected headphones, the codec they run); Wi-Fi (network, address, channel, security, signal, data
+received and sent since start-up); SD card and internal storage; battery (charge, charging, voltage, temperature,
+health, cycles, as the battery gauge reports them); and diskOS and firmware versions, uptime, load, CPU use (since the
+previous refresh), free memory and the UI's own memory. The Disc has no CPU temperature sensor
+([HARDWARE](HARDWARE.md)).
 
 ### Radio
 
@@ -78,6 +88,8 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | Request | Effect |
 |---|---|
 | `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
+| `GET api/status` | `{"ok":true,"groups":[{"name":"Wi-Fi","rows":[["Signal","-60 dBm (good)"],…]},…]}` (display text) |
+| `GET api/eq`, `POST api/eq` with `preset=0..20` | The presets (`{"current":N,"presets":[{"id":0,"name":"Off"},…]}`) / select one. |
 | `GET api/cover` | The playing song's cover as the Disc decoded it (148 px BMP); `art` in the state changes with it, so `api/cover?v=<art>` can be cached by the page. 409 when there is none. |
 | `POST api/play_pause` | Toggle. |
 | `POST api/play`, `POST api/pause` | Only acts if needed. |

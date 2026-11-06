@@ -344,6 +344,7 @@ int  dhome_owns_point(int x, int y);     /* Disco Music: the progress line / arc
 int  eqcustom_owns_point(int x, int y);   /* the round EQ's dial: no back-swipe starts there */
 void eqpreset_create(lv_obj_t *root);
 void eqpreset_refresh(void);
+void eqpreset_name(int preset, char *buf, size_t n);   /* "Off", "Jazz", a user profile's name ... (0..20) */
 void eqcustom_refresh(void);   /* re-resolve the edited USER slot on SCR_EQ_EDITOR entry (display-only) */
 void settings_open_detail(int idx);
 void settings_open_key(const char *key);   /* open a setting detail by cfg key (drawer tiles) */

@@ -24,6 +24,19 @@
 #include "sdio.h"
 #include "folderbrowser.h"
 #include "radio.h"
+#include "system.h"
+#include "modes.h"
+#include <sys/statvfs.h>
+#include <stdarg.h>
+#include "version.h"
+#include "simple_theme.h"
+/* defined elsewhere without a shared header */
+int  bt_state(void);
+int  bt_peer_name(char *out, int cap);
+int  ui_bt_live_codec(char *out, int cap);
+int  wifi_radio_live(void);
+int  ui_battery(int *charging);
+void settings_diskos_id(char *buf, int n);
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <pthread.h>
@@ -188,6 +201,8 @@ static void snapshot(rmt_state_t *s){
     snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
     s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
     s->favorite = -1;
+    s->eq = simple_cfg_get_int("eq_preset", 0); if(s->eq < 0 || s->eq > 20) s->eq = 0;
+    eqpreset_name(s->eq, s->eq_name, sizeof s->eq_name);
     rc_station_t rs;
     if(radio_active() && radio_station(&rs)){             /* the station's own codec and rate (the directory's word) */
         snprintf(s->format, sizeof s->format, "%s", rs.codec); s->kbps = rs.bitrate;
@@ -474,6 +489,190 @@ static int play_item(const rmt_cmd_t *c, const char **why){
     if(!ok && !*why) *why = REFUSED;
     return ok ? 0 : -1;
 }
+/* ---------------------------------------------------------------- the Status tab (main thread; files under /proc and
+ * /sys, statvfs, cached Bluetooth/Wi-Fi facts - nothing that spawns or waits, except the Wi-Fi status thread below) */
+static pthread_mutex_t g_wst_mu = PTHREAD_MUTEX_INITIALIZER;
+static char g_wst_ssid[64], g_wst_freq[16], g_wst_sec[32], g_wst_bssid[24];
+static uint32_t g_wst_at; static int g_wst_busy;
+static void *wst_worker(void *arg){                       /* wpa_cli status, as Settings > Wi-Fi reads it */
+    (void)arg;
+    char ssid[64] = "", freq[16] = "", sec[32] = "", bssid[24] = "", line[160];
+    FILE *p = popen("/usr/sbin/wpa_cli -i wlan0 status 2>/dev/null", "r");
+    if(p){
+        while(fgets(line, sizeof line, p)){
+            line[strcspn(line, "\r\n")] = 0;
+            if(!strncmp(line, "ssid=", 5)) snprintf(ssid, sizeof ssid, "%.63s", line + 5);
+            else if(!strncmp(line, "freq=", 5)) snprintf(freq, sizeof freq, "%.15s", line + 5);
+            else if(!strncmp(line, "key_mgmt=", 9)) snprintf(sec, sizeof sec, "%.31s", line + 9);
+            else if(!strncmp(line, "bssid=", 6)) snprintf(bssid, sizeof bssid, "%.23s", line + 6);
+        }
+        pclose(p);
+    }
+    pthread_mutex_lock(&g_wst_mu);
+    memcpy(g_wst_ssid, ssid, sizeof ssid); memcpy(g_wst_freq, freq, sizeof freq); memcpy(g_wst_sec, sec, sizeof sec); memcpy(g_wst_bssid, bssid, sizeof bssid);
+    g_wst_busy = 0;
+    pthread_mutex_unlock(&g_wst_mu);
+    return NULL;
+}
+static int read_line(const char *path, char *out, size_t n){
+    FILE *f = fopen(path, "r"); if(!f){ if(n) out[0] = 0; return -1; }
+    if(!fgets(out, (int)n, f)) out[0] = 0;
+    fclose(f); out[strcspn(out, "\r\n")] = 0;
+    return out[0] ? 0 : -1;
+}
+static long long read_ll(const char *path){ char b[32]; return read_line(path, b, sizeof b) ? -1 : atoll(b); }
+static int uevent(const char *text, const char *key, char *out, size_t n){   /* KEY=value from a uevent file */
+    size_t kl = strlen(key);
+    for(const char *p = text; p && *p; p = strchr(p, '\n') ? strchr(p, '\n') + 1 : NULL){
+        if(!strncmp(p, key, kl) && p[kl] == '='){ size_t l = strcspn(p + kl + 1, "\n"); if(l >= n) l = n - 1; memcpy(out, p + kl + 1, l); out[l] = 0; return 0; }
+    }
+    if(n) out[0] = 0;
+    return -1;
+}
+typedef struct { rmt_buf_t b; int groups, rows; } st_t;
+static void st_group(st_t *s, const char *name){
+    rmt_buf_put(&s->b, s->groups++ ? "]},{\"name\":" : "{\"ok\":true,\"groups\":[{\"name\":");
+    rmt_buf_str(&s->b, name); rmt_buf_put(&s->b, ",\"rows\":["); s->rows = 0;
+}
+static void st_row(st_t *s, const char *label, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+static void st_row(st_t *s, const char *label, const char *fmt, ...){
+    char v[160]; va_list ap; va_start(ap, fmt); vsnprintf(v, sizeof v, fmt, ap); va_end(ap);
+    if(!v[0]) return;
+    rmt_buf_put(&s->b, s->rows++ ? ",[" : "["); rmt_buf_str(&s->b, label); rmt_buf_put(&s->b, ","); rmt_buf_str(&s->b, v); rmt_buf_put(&s->b, "]");
+}
+static const char *bytes(unsigned long long b, char *buf, size_t n){ sys_fmt_bytes(b, buf, n); return buf; }
+static char *status_json(void){
+    st_t s; memset(&s, 0, sizeof s);
+    char a[64], b2[64], c[64];
+    track_state_t st; ipc_get_state(&st);
+    /* playback */
+    static const char *const MODE[] = { "Playback", "USB DAC", "Bluetooth DAC", "USB storage", "BT streaming", "AirPlay", "Web radio" };
+    int sm = ui_get_source_mode();
+    st_group(&s, "Playback");
+    st_row(&s, "Working mode", "%s", music_assistant() ? "Music Assistant" : sm >= 0 && sm < 7 ? MODE[sm] : "Other");
+    int route = modes_output_route();
+    st_row(&s, "Output", "%s", ui_route_mac()[0] ? "Bluetooth" : route == OUT_USB ? "USB-C audio" : route == OUT_SPDIF ? "S/PDIF" : "Headphone jack");
+    st_row(&s, "Volume", "%d / %d", st.volume, VOL_MAX);
+    char eqn[48]; int eq = simple_cfg_get_int("eq_preset", 0); eqpreset_name(eq, eqn, sizeof eqn);
+    st_row(&s, "EQ", "%s", eqn);
+    if(sd_io_begin()){
+        st_row(&s, "Library", "%d songs, %d albums, %d artists", mdb_song_count(), mdb_album_count(), mdb_artist_count());
+        st_row(&s, "Favourites", "%d", mdb_favorite_count());
+        sd_io_end();
+    }
+    /* Bluetooth */
+    st_group(&s, "Bluetooth");
+    int bs = bt_state();
+    st_row(&s, "Bluetooth", "%s", bs == BT_ON ? "On" : bs == BT_TURNING_ON ? "Turning on" : "Off");
+    if(bs == BT_ON){
+        char peer[64]; int conn = bt_peer_name(peer, sizeof peer);
+        st_row(&s, "Connected", "%s", conn ? (peer[0] ? peer : "Yes") : "Nothing");
+        char codec[16];
+        if(ui_route_mac()[0] && ui_bt_live_codec(codec, sizeof codec) && codec[0]) st_row(&s, "Codec", "%s", codec);
+    }
+    if(read_line("/sys/class/bluetooth/hci0/address", a, sizeof a) == 0) st_row(&s, "Address", "%s", a);
+    /* Wi-Fi */
+    st_group(&s, "Wi-Fi");
+    char ip[32] = "";
+    int up = wlan_ip(ip, sizeof ip);
+    st_row(&s, "Wi-Fi", "%s", wifi_radio_live() ? (up ? "Connected" : "On, not connected") : "Off");
+    if(up){
+        pthread_mutex_lock(&g_wst_mu);
+        if(!g_wst_busy && (!g_wst_at || lv_tick_elaps(g_wst_at) >= 10000)){
+            pthread_t th;
+            if(pthread_create(&th, NULL, wst_worker, NULL) == 0){ pthread_detach(th); g_wst_busy = 1; g_wst_at = lv_tick_get() | 1; }
+        }
+        char ssid[64], freq[16], sec[32], bssid[24];
+        memcpy(ssid, g_wst_ssid, sizeof ssid); memcpy(freq, g_wst_freq, sizeof freq); memcpy(sec, g_wst_sec, sizeof sec); memcpy(bssid, g_wst_bssid, sizeof bssid);
+        pthread_mutex_unlock(&g_wst_mu);
+        st_row(&s, "Network", "%s", ssid);
+        st_row(&s, "Address", "%s", ip);
+        int mhz = atoi(freq);
+        if(mhz >= 2412 && mhz <= 2484) st_row(&s, "Channel", "%d (%d MHz)", mhz == 2484 ? 14 : (mhz - 2407) / 5, mhz);
+        st_row(&s, "Security", "%s", sec);
+        FILE *w = fopen("/proc/net/wireless", "r");
+        if(w){
+            char line[200]; int lvl = 0, got = 0;
+            while(fgets(line, sizeof line, w)){
+                char *p = strstr(line, "wlan0:"); float q, l;
+                if(p && sscanf(p + 6, "%*s %f %f", &q, &l) == 2){ lvl = (int)l; got = 1; }
+            }
+            fclose(w);
+            if(got && lvl < 0) st_row(&s, "Signal", "%d dBm (%s)", lvl, lvl >= -55 ? "excellent" : lvl >= -67 ? "good" : lvl >= -75 ? "fair" : "weak");
+        }
+        st_row(&s, "Access point", "%s", bssid);
+    }
+    long long rx = read_ll("/sys/class/net/wlan0/statistics/rx_bytes"), tx = read_ll("/sys/class/net/wlan0/statistics/tx_bytes");
+    if(rx >= 0 && tx >= 0) st_row(&s, "Data since start", "%s received, %s sent", bytes((unsigned long long)rx, a, sizeof a), bytes((unsigned long long)tx, b2, sizeof b2));
+    if(read_line("/sys/class/net/wlan0/address", a, sizeof a) == 0) st_row(&s, "MAC", "%s", a);
+    /* storage */
+    st_group(&s, "Storage");
+    struct statvfs sv;
+    if(sd_io_begin()){
+        if(statvfs(FOLDERBROWSER_ROOT, &sv) == 0 && sv.f_blocks){
+            unsigned long long tot = (unsigned long long)sv.f_blocks * sv.f_frsize, fr = (unsigned long long)sv.f_bavail * sv.f_frsize;
+            st_row(&s, "SD card", "%s free of %s (%d%% used)", bytes(fr, a, sizeof a), bytes(tot, b2, sizeof b2), (int)((tot - fr) * 100 / tot));
+        }
+        sd_io_end();
+    } else st_row(&s, "SD card", "Not available");
+    if(statvfs("/usr/data", &sv) == 0 && sv.f_blocks)
+        st_row(&s, "Internal", "%s free of %s", bytes((unsigned long long)sv.f_bavail * sv.f_frsize, a, sizeof a), bytes((unsigned long long)sv.f_blocks * sv.f_frsize, b2, sizeof b2));
+    /* battery */
+    st_group(&s, "Battery");
+    char ue[1024] = "";
+    FILE *u = fopen("/sys/class/power_supply/cw221X-bat/uevent", "r");
+    if(u){ size_t n = fread(ue, 1, sizeof ue - 1, u); ue[n] = 0; fclose(u); }
+    int chg = 0, pct = ui_battery(&chg);
+    if(pct >= 0) st_row(&s, "Charge", "%d%%%s", pct, chg ? ", charging" : "");
+    if(!uevent(ue, "POWER_SUPPLY_VOLTAGE_NOW", a, sizeof a)) st_row(&s, "Voltage", "%.2f V", atof(a) / 1e6);
+    if(!uevent(ue, "POWER_SUPPLY_TEMP", a, sizeof a)) st_row(&s, "Temperature", "%.1f \xC2\xB0" "C", atof(a) / 10.0);
+    if(!uevent(ue, "POWER_SUPPLY_HEALTH", a, sizeof a)) st_row(&s, "Health", "%s", a);
+    if(!uevent(ue, "POWER_SUPPLY_CYCLE_COUNT", a, sizeof a)) st_row(&s, "Cycles", "%s", a);
+    /* system */
+    st_group(&s, "System");
+    char id[40] = ""; settings_diskos_id(id, sizeof id);
+    st_row(&s, "diskOS", "%s", id[0] ? id : DISCO_VERSION);
+    sys_about_row_t ar[12]; int na = sys_about_collect(NULL, id, ar, 12);
+    for(int i = 0; i < na; i++) if(!strcmp(ar[i].label, "Firmware") || !strcmp(ar[i].label, "Model")) st_row(&s, ar[i].label, "%s", ar[i].value);
+    double upt = 0; if(read_line("/proc/uptime", a, sizeof a) == 0) upt = atof(a);
+    long us = (long)upt;
+    if(us >= 86400) st_row(&s, "Uptime", "%ldd %ldh %ldm", us / 86400, (us % 86400) / 3600, (us % 3600) / 60);
+    else if(us > 0) st_row(&s, "Uptime", "%ldh %ldm", us / 3600, (us % 3600) / 60);
+    if(read_line("/proc/loadavg", a, sizeof a) == 0){ float l1, l5, l15; if(sscanf(a, "%f %f %f", &l1, &l5, &l15) == 3) st_row(&s, "Load", "%.2f, %.2f, %.2f (1, 5, 15 min)", l1, l5, l15); }
+    static unsigned long long pbusy, ptot;                  /* CPU use since the last look */
+    if(read_line("/proc/stat", c, sizeof c) == 0){
+        unsigned long long v[8] = {0};
+        if(sscanf(c, "cpu %llu %llu %llu %llu %llu %llu %llu %llu", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]) >= 4){
+            unsigned long long tot = 0; for(int i = 0; i < 8; i++) tot += v[i];
+            unsigned long long busy = tot - v[3] - v[4];
+            if(ptot && tot > ptot) st_row(&s, "CPU", "%d%%", (int)((busy - pbusy) * 100 / (tot - ptot)));
+            pbusy = busy; ptot = tot;
+        }
+    }
+    FILE *m = fopen("/proc/meminfo", "r");
+    if(m){
+        char line[96]; long tot = -1, av = -1;
+        while(fgets(line, sizeof line, m)){ sscanf(line, "MemTotal: %ld", &tot); sscanf(line, "MemAvailable: %ld", &av); }
+        fclose(m);
+        if(tot > 0 && av >= 0) st_row(&s, "Memory", "%ld MB free of %ld MB", av / 1024, tot / 1024);
+    }
+    FILE *ps = fopen("/proc/self/status", "r");
+    if(ps){ char line[96]; long rss = -1; while(fgets(line, sizeof line, ps)) sscanf(line, "VmRSS: %ld", &rss); fclose(ps);
+            if(rss > 0) st_row(&s, "diskOS UI memory", "%ld MB", (rss + 512) / 1024); }
+    rmt_buf_put(&s.b, s.groups ? "]}]}" : "{\"ok\":true,\"groups\":[]}");
+    return rmt_buf_take(&s.b);
+}
+static char *eq_json(void){
+    rmt_buf_t b; memset(&b, 0, sizeof b);
+    int cur = simple_cfg_get_int("eq_preset", 0);
+    rmt_buf_printf(&b, "{\"ok\":true,\"current\":%d,\"presets\":[", cur);
+    for(int p = 0; p <= 20; p++){
+        char n[48]; eqpreset_name(p, n, sizeof n);
+        rmt_buf_printf(&b, "%s{\"id\":%d,\"name\":", p ? "," : "", p); rmt_buf_str(&b, n); rmt_buf_put(&b, "}");
+    }
+    rmt_buf_put(&b, "]}");
+    return rmt_buf_take(&b);
+}
 static int g_blob_len;                                  /* dispatch's binary answer length (0 = JSON or none) */
 static char *read_cover(const char **why){
     const char *cf = cover_file();
@@ -488,6 +687,16 @@ static char *read_cover(const char **why){
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL; g_blob_len = 0;
     if(c->kind == RMT_CMD_COVER){ *body = read_cover(why); return *body ? 0 : -1; }
+    if(c->kind == RMT_CMD_STATUS || c->kind == RMT_CMD_EQ_LIST){
+        *body = c->kind == RMT_CMD_STATUS ? status_json() : eq_json();
+        if(!*body) *why = "Out of memory";
+        return *body ? 0 : -1;
+    }
+    if(c->kind == RMT_CMD_EQ){
+        if(ui_eq_select((int)c->arg)){ *why = "Couldn't switch EQ"; return -1; }
+        if(screen_current() == SCR_EQ) eqpreset_refresh();
+        return 0;
+    }
     if(c->kind == RMT_CMD_BROWSE){ *body = browse(c, why); if(!*body && !*why) *why = "Out of memory"; return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_PLAY_ITEM) return play_item(c, why);
     return run(c, why);
@@ -517,7 +726,7 @@ void remote_pump(void){
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);
         if(rc == 0 && c.kind == RMT_CMD_PLAY_MODE) g_mode_at = 0;   /* show the new mode at once */
-        if(rc == 0 && c.kind != RMT_CMD_BROWSE && c.kind != RMT_CMD_COVER){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
+        if(rc == 0 && c.kind != RMT_CMD_BROWSE && c.kind != RMT_CMD_COVER && c.kind != RMT_CMD_STATUS && c.kind != RMT_CMD_EQ_LIST){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }
     }
 }
 

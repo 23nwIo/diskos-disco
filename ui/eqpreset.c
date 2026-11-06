@@ -22,6 +22,7 @@ static void name_for(int p,char *b,size_t n){
  char key[24];snprintf(key,sizeof key,"eq_name%d",p);const char *s=simple_cfg_get_str(key,NULL);
  if(s && *s)snprintf(b,n,"%s",s);else snprintf(b,n,"USER%d",p-10);
 }
+void eqpreset_name(int p, char *b, size_t n){ name_for(p < 0 ? 0 : p > 20 ? 20 : p, b, n); }
 static unsigned profile_ticket;
 static lv_timer_t *profile_timer;
 static void profile_paint(int p,int read,int graphic,const int hz[10]){

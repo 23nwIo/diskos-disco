@@ -129,6 +129,11 @@ static void test_core(void){
     r = req("GET", p("/api/library/radio?q=jazz"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_L_RADIO && !strcmp(r.cmd.q, "jazz"));
     r = req("POST", p("/api/radio_stop"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_STOP);
     CHECK(req("GET", p("/api/radio_stop"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("GET", p("/api/status"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_STATUS);
+    r = req("GET", p("/api/eq"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_EQ_LIST);
+    r = req("POST", p("/api/eq"), "preset=20"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_EQ && r.cmd.arg == 20);
+    CHECK(req("POST", p("/api/eq"), "preset=21").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/status"), "").kind == RMT_R_BAD_METHOD);
     r = req("POST", p("/api/radio_search"), "q=jazz+fm"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_SEARCH && !strcmp(r.cmd.q, "jazz fm"));
     r = req("POST", p("/api/radio_search"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_SEARCH && !r.cmd.q[0]);   /* popular */
     CHECK(req("GET", p("/api/radio_search"), NULL).kind == RMT_R_BAD_METHOD);           /* it downloads: POST only */
@@ -225,7 +230,7 @@ static void *emu(void *a){
     rmt_state_t s; memset(&s, 0, sizeof s);
     snprintf(s.title, sizeof s.title, "Track <one>"); s.has_track = 1; s.volume = 33; s.volume_max = 120; s.source = "local"; s.controllable = 1;
     snprintf(s.format, sizeof s.format, "FLAC"); s.bits = 24; s.sample_rate = 96000; s.kbps = 2304; s.channels = 2; s.favorite = 0;
-    snprintf(s.art, sizeof s.art, "a1");
+    snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz");
     while(g_emu_run){
         if(!g_emu_pause){
             rsrv_publish(&s);
@@ -234,6 +239,13 @@ static void *emu(void *a){
                 g_last = c; g_ncmd++;
                 if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));
+                else if(c.kind == RMT_CMD_STATUS)
+                    rsrv_done_body(1, NULL, strdup("{\"ok\":true,\"groups\":[{\"name\":\"Wi-Fi\",\"rows\":[[\"Network\",\"<home>\"],[\"Signal\",\"-60 dBm (good)\"]]},"
+                                                    "{\"name\":\"Battery\",\"rows\":[[\"Charge\",\"89%\"],[\"Temperature\",\"33.0 \xC2\xB0" "C\"]]},{\"name\":\"Empty\",\"rows\":[]}]}"));
+                else if(c.kind == RMT_CMD_EQ_LIST){
+                    char b[400]; snprintf(b, sizeof b, "{\"ok\":true,\"current\":%d,\"presets\":[{\"id\":0,\"name\":\"Off\"},{\"id\":1,\"name\":\"Jazz\"},{\"id\":2,\"name\":\"R&B <x>\"}]}", s.eq);
+                    rsrv_done_body(1, NULL, strdup(b));
+                } else if(c.kind == RMT_CMD_EQ){ s.eq = (int)c.arg; snprintf(s.eq_name, sizeof s.eq_name, "%s", c.arg == 0 ? "Off" : c.arg == 1 ? "Jazz" : "R&B <x>"); rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_COVER){                       /* a 16x16 24-bit BMP, a colour gradient */
                     size_t n = 54 + 16 * 16 * 3; unsigned char *b = calloc(1, n);
                     memcpy(b, "BM", 2); b[2] = (unsigned char)n; b[3] = (unsigned char)(n >> 8); b[10] = 54; b[14] = 40; b[18] = 16; b[22] = 16; b[26] = 1; b[28] = 24;

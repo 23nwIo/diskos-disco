@@ -26,6 +26,9 @@ typedef enum {
     RMT_CMD_RADIO_STOP,      /* stop the web radio, back to local playback */
     RMT_CMD_RADIO_SEARCH,    /* start a station search: q ("" = popular) */
     RMT_CMD_COVER,           /* the current cover image (binary answer) */
+    RMT_CMD_STATUS,          /* the Status tab: device facts (JSON answer) */
+    RMT_CMD_EQ_LIST,         /* the EQ presets and the current one (JSON answer) */
+    RMT_CMD_EQ,              /* select EQ preset arg (0 = off .. 20) */
     RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
 } rmt_cmd_kind_t;
 
@@ -97,6 +100,8 @@ typedef struct {
     char format[16];         /* "FLAC", "MP3", "DSD128", a radio codec; "" unknown */
     int  kbps, bits, sample_rate, channels;   /* 0 = unknown */
     int  favorite;           /* -1 unknown, 0/1 */
+    int  eq;                 /* the EQ preset in use (0 = off), -1 unknown */
+    char eq_name[48];
     char art[32];            /* changes whenever the cover does; "" = none (GET api/cover?v=<art>) */
 } rmt_state_t;
 
