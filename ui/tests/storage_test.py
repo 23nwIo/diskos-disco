@@ -51,8 +51,9 @@ with tempfile.TemporaryDirectory(prefix="diskos-storage-tests-") as tmp:
 typedef void lv_timer_t;
 static uint32_t test_clock;
 static int test_mounted=1, test_exported, test_host, test_guarded=1, test_scan;
-static int test_sends, test_fail, test_export_sends, test_seed, test_ext, test_restarts;
+static int test_sends, test_fail, test_export_sends, test_seed, test_ext, test_restarts, test_ext_starts, test_ext_mounts;
 void settings_restart_now(void){ test_restarts++; }
+static void coldplug_log(const char *msg){ (void)msg; }
 static int g_playing;
 static _Atomic int g_source_mode;
 static uint32_t lv_tick_get(void){ return test_clock; }
@@ -96,13 +97,20 @@ static int storage_media_local(void){
 }
 static int storage_host_confirmed(void){ return test_host; }
 /* Mirrors the real predicate: released by the host, not mounted, ext2/3/4 superblock. */
-static int sd_return_needs_restart(void){ return !test_exported && !test_mounted && test_ext; }
+static int sd_return_needs_mount(void){ return !test_exported && !test_mounted && test_ext; }
+/* The worker, run synchronously at its boundary: it mounts (test_ext_mounts) or reports failure. */
+static void ext_return_start(void){
+    test_ext_starts++;
+    atomic_store(&g_ext_ret_running, 1);
+    if(test_ext_mounts) test_mounted = 1; else atomic_store(&g_ext_ret_failed, 1);
+    atomic_store(&g_ext_ret_running, 0);
+}
 static void reset(void){
     g_launch_verdict = 1;   /* a confirmed launch; the gate itself is covered by launcher_test */
     assert(sd_io_active()==0);
     unlink(SD_EXPORT_MARKER);
     test_clock=0; test_mounted=1; test_exported=0; test_host=0;
-    test_guarded=1; test_scan=0; test_sends=0; test_fail=0; test_export_sends=0; test_seed=0; test_ext=0; test_restarts=0;
+    test_guarded=1; test_scan=0; test_sends=0; test_fail=0; test_export_sends=0; test_seed=0; test_ext=0; test_restarts=0; test_ext_starts=0; test_ext_mounts=0;
     g_sd_hold=0; g_sd_phase=SD_LOCAL; g_source_mode=0; g_sd_reissue=0;
     atomic_store(&g_sd_writable,1); atomic_store(&g_sd_writers,0);
     storage_init(); assert(sd_io_allowed() && ui_local_playback_allowed());
@@ -192,29 +200,58 @@ int main(void){
     test_mounted=1; storage_tick(NULL); assert(sd_io_allowed());
     puts("PASS interrupted drain waits for coldplug without a permanent hold");
 
-    /* An ext4 card: the stock player cannot remount it after USB storage, so once the host has let go the
-     * UI restarts (the boot-time direct mount handles ext4) - never while the LUN still backs the card. */
-    reset(); test_ext=1; enter_host();
+    /* An ext4 card: the stock player cannot remount it after USB storage, so once the host has let go and the
+     * player had 5 s, the UI mounts it itself - never while the LUN still backs the card - and resumes. */
+    reset(); test_ext=1; test_ext_mounts=1; enter_host();
     assert(ui_set_source_mode(0)==0 && g_sd_phase==SD_WAIT_LOCAL);
     test_host=0; test_clock+=6000; storage_tick(NULL);
-    assert(test_restarts==0 && g_sd_phase==SD_WAIT_LOCAL);            /* still exported: no restart */
+    assert(test_ext_starts==0 && g_sd_phase==SD_WAIT_LOCAL);          /* still exported: nothing */
     test_exported=0; test_clock+=1000; storage_tick(NULL);
+    assert(test_ext_starts==1 && atomic_load(&g_ext_ret_allow));
+    storage_tick(NULL);
+    assert(g_sd_phase==SD_LOCAL && sd_io_allowed() && test_restarts==0);
+    test_clock+=30000; storage_tick(NULL); assert(test_ext_starts==1 && test_restarts==0);
+    puts("PASS returned ext4 card is mounted by the UI once the host releases it");
+
+    /* the UI's own mount fails -> restart, once */
+    reset(); test_ext=1; test_ext_mounts=0; enter_host();
+    assert(ui_set_source_mode(0)==0);
+    test_host=0; test_exported=0; test_clock+=6000; storage_tick(NULL);
+    assert(test_ext_starts==1);
+    storage_tick(NULL);
     assert(test_restarts==1 && g_sd_phase==SD_UNKNOWN && !sd_io_allowed());
-    test_clock+=30000; storage_tick(NULL); assert(test_restarts==1);  /* one restart request only */
-    puts("PASS returned ext4 card restarts once the host releases it");
+    test_clock+=30000; storage_tick(NULL); assert(test_restarts==1);
+    puts("PASS a failed ext4 return mount restarts once");
+
+    /* the worker leaves the card unmounted after the UI already resumed: restart from SD_LOCAL */
+    reset(); test_ext=1; test_ext_mounts=1; enter_host();
+    assert(ui_set_source_mode(0)==0);
+    test_host=0; test_exported=0; test_clock+=6000; storage_tick(NULL); storage_tick(NULL);
+    assert(g_sd_phase==SD_LOCAL);
+    test_mounted=0; atomic_store(&g_ext_ret_failed,1); storage_tick(NULL);
+    assert(test_restarts==1 && g_sd_phase==SD_UNKNOWN);
+    puts("PASS card lost again after the return restarts");
+
+    /* a new export request withdraws the worker's permission to mount */
+    reset(); test_ext=1; test_ext_mounts=1; enter_host();
+    assert(ui_set_source_mode(0)==0);
+    test_host=0; test_exported=0; test_clock+=6000; storage_tick(NULL); storage_tick(NULL);
+    assert(g_sd_phase==SD_LOCAL && atomic_load(&g_ext_ret_allow));
+    assert(ui_set_source_mode(3)==0 && !atomic_load(&g_ext_ret_allow));
+    puts("PASS an export request stops the ext4 return mount");
 
     reset(); test_ext=1; enter_host();
     assert(ui_set_source_mode(0)==0);
     test_host=0; test_exported=0; storage_tick(NULL);
-    assert(test_restarts==0 && g_sd_phase==SD_WAIT_LOCAL);            /* the first 5 s belong to the player */
+    assert(test_ext_starts==0 && g_sd_phase==SD_WAIT_LOCAL);          /* the first 5 s belong to the player */
     test_mounted=1; test_clock+=2000; storage_tick(NULL);
-    assert(test_restarts==0 && g_sd_phase==SD_LOCAL);
-    puts("PASS a card the player remounts in time is resumed without a restart");
+    assert(test_ext_starts==0 && test_restarts==0 && g_sd_phase==SD_LOCAL);
+    puts("PASS a card the player remounts in time is resumed as before");
 
     reset(); enter_host();
     assert(ui_set_source_mode(0)==0);
     test_host=0; test_exported=0; test_clock+=25000; storage_tick(NULL);
-    assert(test_restarts==0 && g_sd_phase==SD_UNKNOWN);
+    assert(test_restarts==0 && test_ext_starts==0 && g_sd_phase==SD_UNKNOWN);
     puts("PASS a FAT card that does not come back stays held without a restart");
 
     reset(); enter_host();

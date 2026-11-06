@@ -579,8 +579,14 @@ static lv_timer_t *g_t_storage;
 static void storage_fast(void){ if(g_t_storage) lv_timer_set_period(g_t_storage, 100); }
 static int storage_media_local(void);
 static int storage_host_confirmed(void);
-static int sd_return_needs_restart(void);   /* the returned card is ext2/3/4, which the stock player cannot mount */
+static int sd_return_needs_mount(void);     /* the returned card is ext2/3/4, which the stock player cannot mount */
+static void ext_return_start(void);        /* starts the worker that mounts it (ext_return_thread) */
+static void coldplug_log(const char *msg);
 void settings_restart_now(void);           /* settings.c: the Restart path (drain, sync, reboot) */
+/* Return of an ext2/3/4 card from USB storage, shared with ext_return_thread. allow: the worker may mount (cleared,
+ * under g_sd_mode_mu, by a new export request and by storage_unknown); started: once per return; running: the
+ * worker is up; failed: it could not leave the card mounted -> restart instead. */
+static _Atomic int g_ext_ret_allow, g_ext_ret_started, g_ext_ret_running, g_ext_ret_failed;
 int ui_local_playback_allowed(void){
     return atomic_load(&g_launch_verdict) == 1 && g_sd_phase == SD_LOCAL && !g_sd_hold && sd_io_healthy();
 }
@@ -693,13 +699,16 @@ static int source_send(int mode){
     return -1;
 }
 static void storage_unknown(const char *why){
+    atomic_store(&g_ext_ret_allow, 0);
     sd_io_hold(); atomic_store(&g_sd_writable, 0); g_sd_phase = SD_UNKNOWN;
     fprintf(stderr, "storage: %s; SD access remains held\n", why); fflush(stderr);
     ui_toast("Storage state uncertain - reboot device");
 }
 static void storage_restart_for_card(void){
     sd_io_hold(); atomic_store(&g_sd_writable, 0); g_sd_phase = SD_UNKNOWN;
-    fprintf(stderr, "storage: returned card is ext2/3/4, which the stock player cannot mount; restarting\n"); fflush(stderr);
+    atomic_store(&g_ext_ret_allow, 0);
+    fprintf(stderr, "storage: returned ext2/3/4 card could not be mounted; restarting\n"); fflush(stderr);
+    coldplug_log("storage return: ext card not mounted - restarting");
     settings_restart_now();
 }
 int ui_set_source_mode(int mode){
@@ -725,6 +734,7 @@ int ui_set_source_mode(int mode){
         ts.tv_nsec += 200000000L; if(ts.tv_nsec >= 1000000000L){ ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
         if(pthread_mutex_timedlock(&g_sd_mode_mu, &ts) != 0){ ui_toast("SD card is busy - try again"); return -1; }
         if(!storage_mark('D', 3)){ pthread_mutex_unlock(&g_sd_mode_mu); ui_toast("Couldn't prepare USB storage"); return -1; }
+        atomic_store(&g_ext_ret_allow, 0);              /* a pending ext return mount must not race this export */
         sd_io_hold(); atomic_store(&g_sd_writable, 0); g_source_mode = 3;
         g_sd_phase = SD_DRAIN; g_sd_deadline = lv_tick_get() + 20000; storage_fast();
         art_cancel();
@@ -734,6 +744,7 @@ int ui_set_source_mode(int mode){
     if(g_sd_phase == SD_HOST){
         if(!storage_mark('R', mode)){ ui_toast("Couldn't leave USB storage"); return -1; }
         g_sd_return_mode = mode; g_sd_phase = SD_WAIT_LOCAL;
+        atomic_store(&g_ext_ret_started, 0); atomic_store(&g_ext_ret_failed, 0);
         g_sd_deadline = lv_tick_get() + 20000; storage_fast();
         if(source_send(mode) < 0){ storage_unknown("return request failed"); return -1; }
         return 0;
@@ -765,6 +776,10 @@ static void storage_tick(lv_timer_t *t){
         return;
     }
     if(g_sd_phase == SD_LOCAL){
+        /* the return worker ended with the ext card unmounted (the player took it away again): restart */
+        if(atomic_load(&g_ext_ret_failed) && !atomic_load(&g_ext_ret_running) && !coldplug_mounted()){
+            storage_restart_for_card(); return;
+        }
         if(!sd_io_allowed() && storage_media_local()){
             if(sd_io_resume() && mdb_total_song_count() == 0 && !mdb_load_failed()) scanner_start();
         }
@@ -796,11 +811,16 @@ static void storage_tick(lv_timer_t *t){
     } else if(g_sd_phase == SD_WAIT_LOCAL){
         if(storage_media_local()){ storage_resume_local(); return; }
         /* The stock player remounts the returned card with iocharset=utf8, which ext4 rejects, so an ext2/3/4
-         * card never comes back on its own. Once the host has let go of it (5 s into the return), restart:
-         * the boot-time direct mount handles ext4. */
-        if((int32_t)(lv_tick_get() - (g_sd_deadline - 20000)) >= 5000 && sd_return_needs_restart()){
-            storage_restart_for_card(); return;
+         * card never comes back on its own. Once the host has let go of it and the player had 5 s, mount it
+         * ourselves (ext_return_thread); if that fails, restart (the boot-time mount handles ext4). */
+        if(!atomic_load(&g_ext_ret_started) && (int32_t)(lv_tick_get() - (g_sd_deadline - 20000)) >= 5000 &&
+           sd_return_needs_mount()){
+            atomic_store(&g_ext_ret_started, 1); atomic_store(&g_ext_ret_failed, 0); atomic_store(&g_ext_ret_allow, 1);
+            ext_return_start();
+            return;
         }
+        if(atomic_load(&g_ext_ret_failed) && !atomic_load(&g_ext_ret_running)){ storage_restart_for_card(); return; }
+        if(atomic_load(&g_ext_ret_running)) return;     /* the worker decides: mounted (resume above) or failed */
         if((int32_t)(lv_tick_get() - g_sd_deadline) >= 0) storage_unknown("return mount not confirmed");
         /* same gate as the recovered export above: a recovered R marker must not drive the player before
          * this launch is qualified */
@@ -2558,7 +2578,7 @@ static int sd_card_is_ext(void){
     close(fd);
     return n == 2 && m[0] == 0x53 && m[1] == 0xEF;
 }
-static int sd_return_needs_restart(void){
+static int sd_return_needs_mount(void){
     return !sd_exported_to_host() && !coldplug_mounted() && sd_card_is_ext();
 }
 /* An ext2/3/4 card needs watching after the direct mount. A few seconds later the stock player runs its own SD mount
@@ -2601,6 +2621,58 @@ static void sd_ext_keep_mounted(const char *dev){
         gone = 0;
         if(remounts >= SD_EXT_REMOUNTS){ coldplug_log("ext watch: re-mount limit reached - done"); return; }
     }
+}
+/* Mount an ext2/3/4 card that came back from USB storage (the stock player's own remount fails on ext4). Mounts
+ * at once (the player has had 5 s), then watches for 60 s: if the player's routine unmounts the card again, it is
+ * mounted again once it has stayed unmounted for SD_EXT_SETTLE_S seconds, at most SD_EXT_REMOUNTS times. Every
+ * mount is under g_sd_mode_mu, only while g_ext_ret_allow is set (a new export clears it under the same lock) and
+ * the card is not exported, with the same post-mount export check as the boot mount. Ends with g_ext_ret_failed
+ * set if the card is not mounted, so the UI restarts instead. Each step is logged to coldplug.log. */
+#define SD_EXT_RETURN_S 60
+static void *ext_return_thread(void *arg){
+    (void)arg;
+    const char *dev = sd_fs_device();
+    int gone = SD_EXT_SETTLE_S, mounts = 0, fail = 0;
+    coldplug_log("storage return: ext card not mounted by the player - mounting it");
+    for(int t = 0; t < SD_EXT_RETURN_S && !fail; t++){
+        if(!atomic_load(&g_ext_ret_allow)){ coldplug_log("storage return: stopped (new export or held)"); break; }
+        if(coldplug_mounted()) gone = 0;
+        else if(++gone >= SD_EXT_SETTLE_S){
+            if(mounts > SD_EXT_REMOUNTS){ coldplug_log("storage return: re-mount limit reached"); break; }
+            pthread_mutex_lock(&g_sd_mode_mu);
+            if(atomic_load(&g_ext_ret_allow) && !sd_exported_to_host() && !coldplug_mounted()){
+                mkdir("/tmp/sdcard", 0755);          /* the guard's rmdir may have removed the mountpoint */
+                if(mount(dev, "/tmp/sdcard", "ext4", 0, NULL) == 0){
+                    if(sd_exported_to_host()){
+                        if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)
+                            coldplug_log("WARNING: return mount: export + unmount BOTH failed (card busy) - possible transient dual-access");
+                        else
+                            coldplug_log("storage return: card exported again after mount -> unmounted");
+                        fail = 1;
+                    } else coldplug_log(mounts ? "storage return: SD re-mounted (ext4)" : "storage return: SD mounted (ext4)");
+                } else {
+                    int e = errno; char b[128];
+                    snprintf(b, sizeof b, "storage return: mount failed on %s errno=%d(%s)", dev, e, strerror(e)); coldplug_log(b);
+                    fail = 1;
+                }
+                mounts++;
+            }
+            pthread_mutex_unlock(&g_sd_mode_mu);
+            gone = 0;
+        }
+        struct timespec ts = { 1, 0 }; nanosleep(&ts, NULL);
+    }
+    if(!fail && !coldplug_mounted() && atomic_load(&g_ext_ret_allow)) fail = 1;
+    if(fail) atomic_store(&g_ext_ret_failed, 1);
+    coldplug_log(fail ? "storage return: card not mounted - asking for a restart" : "storage return: done");
+    atomic_store(&g_ext_ret_running, 0);
+    return NULL;
+}
+static void ext_return_start(void){
+    pthread_t th;
+    atomic_store(&g_ext_ret_running, 1);
+    if(pthread_create(&th, NULL, ext_return_thread, NULL) == 0) pthread_detach(th);
+    else { atomic_store(&g_ext_ret_running, 0); atomic_store(&g_ext_ret_failed, 1); }
 }
 static void *coldplug_thread(void *arg){
     (void)arg;
