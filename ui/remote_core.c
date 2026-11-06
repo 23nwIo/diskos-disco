@@ -425,20 +425,20 @@ int rmt_json_escape(char *dst, size_t cap, const char *src){
 }
 int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
     char t[sizeof s->title * 6], a[sizeof s->artist * 6], al[sizeof s->album * 6];   /* worst case: every byte \u00XX */
-    char st[sizeof s->station * 6], re[sizeof s->radio_error * 6], fm[sizeof s->format * 6], ar[sizeof s->art * 6], eqn[sizeof s->eq_name * 6];
+    char su[sizeof s->station_url * 6], st[sizeof s->station * 6], re[sizeof s->radio_error * 6], fm[sizeof s->format * 6], ar[sizeof s->art * 6], eqn[sizeof s->eq_name * 6];
     if(rmt_json_escape(t, sizeof t, s->title) < 0 || rmt_json_escape(a, sizeof a, s->artist) < 0 ||
-       rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 ||
+       rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 || rmt_json_escape(su, sizeof su, s->station_url) < 0 ||
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,"
-        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"radio_error\":\"%s\","
+        "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"radio_error\":\"%s\","
         "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\"}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
         s->volume, s->volume_max, s->play_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
-        s->radio_state ? s->radio_state : "off", st, re,
+        s->radio_state ? s->radio_state : "off", st, su, re,
         fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
     return n;
@@ -519,7 +519,7 @@ const char RMT_PAGE_HTML[] =
 "#list{background:var(--card);border-radius:14px;overflow:hidden}\n"
 ".r{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;color:var(--fg);padding:.65em 1em;font-size:1em}\n"
 ".rw{display:flex;border-bottom:1px solid var(--line)}.rw .r{border-bottom:0;flex:1;min-width:0}.st{flex:none;border:0;background:none;color:var(--acc);font-size:1.3em;padding:0 .8em}\n"
-".r b{font-weight:500}.r small{font-size:.85em}\n"
+".r b{font-weight:500}.r small{font-size:.85em}.r small.u,#al.u{white-space:normal;overflow-wrap:anywhere;font-size:.8em;user-select:all}\n"
 ".more{display:block;margin:.6em auto}\n"
 "#shb{position:fixed;inset:0;background:#0006}#sh{position:fixed;left:0;right:0;bottom:0;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:.6em 1em 1.2em;max-width:30em;margin:0 auto}\n"
 "#sh b{display:block;padding:.6em 0;color:var(--mut);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#sh button{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;color:var(--fg);font-size:1em;padding:.75em 0}\n"
@@ -558,7 +558,7 @@ const char RMT_PAGE_HTML[] =
 "function play(o){cmd('play_item',enc(o)).then(function(ok){if(ok)say('Playing',1)})}\n"
 "function poll(){if(document.hidden||busy||V!=='np')return;busy=1;fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){busy=0;\n"
 "$('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;\n"
-"var ra=s.source==='radio';if(ra){$('t').textContent=s.station||'Web radio';$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):'Web radio';$('al').textContent=''}\n"
+"var ra=s.source==='radio';if(ra){$('t').textContent=s.station||'Web radio';$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):'Web radio';$('al').textContent=s.station_url||''}$('al').classList.toggle('u',ra);\n"
 "$('rs').classList.toggle('hide',!ra);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||s.play_mode<0);\n"
 "var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');$('tx').textContent=s.has_track||ra?tx:'';\n"
 "fav=s.favorite;$('fv').classList.toggle('hide',fav===null||fav===undefined||ra);$('fv').innerHTML=fav?'&#9829;':'&#9825;';\n"
@@ -608,7 +608,7 @@ const char RMT_PAGE_HTML[] =
 "folder:['Folders',null],\n"
 "radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}]]};\n"
 "function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},\n"
-"{g:x.fav?'&#9733;':'&#9734;',fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}}]}\n"
+"{g:x.fav?'&#9733;':'&#9734;',fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}},x.url]}\n"
 "function star(b,on){b.innerHTML=on?'&#9733;':'&#9734;';b.setAttribute('aria-label',on?'Remove from favourites':'Save to favourites')}\n"
 "function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]}\n"
 "/* edits: a bottom sheet of actions; prompt/confirm for names and deletes */\n"
@@ -637,7 +637,7 @@ const char RMT_PAGE_HTML[] =
 "fetch('api/library/'+v.l+'?'+enc(p),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){render(v,j,off)}).catch(function(){say('Player not reachable')})}\n"
 "function render(v,j,off){if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}say('');\n"
 "if(!off)$('list').textContent='';tot=j.total;j.items.forEach(function(x){items.push(x);var r=v.row(x),b=document.createElement('button');b.className='r';\n"
-"var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);if(r[1]){var s=document.createElement('small');s.textContent=r[1];b.appendChild(s)}\n"
+"var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);if(r[1]){var s=document.createElement('small');s.textContent=r[1];b.appendChild(s)}if(r[4]){var u=document.createElement('small');u.className='u';u.textContent=r[4];b.appendChild(u)}\n"
 "b.onclick=r[2];if(r[3]){var w=document.createElement('div'),f=document.createElement('button');w.className='rw';f.className='st';f.innerHTML=r[3].g;f.setAttribute('aria-label',r[3].a||'Favourite');\n"
 "f.onclick=function(){r[3].fn(f)};w.appendChild(b);w.appendChild(f);b=w}$('list').appendChild(b)});\n"
 "if(!tot)$('list').textContent=v.l==='radio_search'?'No stations found':$('q').value?'No matches':v.l==='radio'?'No favourites yet - press Find stations':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}\n"

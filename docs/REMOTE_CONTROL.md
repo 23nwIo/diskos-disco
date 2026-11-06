@@ -78,8 +78,8 @@ The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md). Tap 
 **Find stations** searches the same station directory as the Radio app (radio-browser.info, through the Disc's own
 search): an empty field shows the popular stations, typing searches by name. The Disc downloads the answer, which takes
 a few seconds. Tap a hit to play it, or its star to save it as a favourite. The Disc and the page share one search, so
-a search started on the Disc at the same moment replaces the page's (search again). While the radio plays, Now playing shows
-the station and a **Stop radio** button; play/pause and volume work, while the position, Next, Previous and Play mode
+a search started on the Disc at the same moment replaces the page's (search again). Every station row shows its stream URL. While the radio plays, Now playing shows
+the station, its stream URL and a **Stop radio** button; play/pause and volume work, while the position, Next, Previous and Play mode
 are hidden or refused because a live stream has none of them. Starting anything from the library ends the radio, as on
 the Disc.
 
@@ -106,7 +106,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 
 | Request | Effect |
 |---|---|
-| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
+| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
 | `GET api/status` | `{"ok":true,"groups":[{"name":"Wi-Fi","rows":[["Signal","-60 dBm (good)"],…]},…]}` (display text) |
 | `GET api/eq`, `POST api/eq` with `preset=0..20` | The presets (`{"current":N,"presets":[{"id":0,"name":"Off"},…]}`) / select one. |
 | `POST api/playlist_create` (`name`, 1-64 bytes), `playlist_rename` (`id`, `name`), `playlist_delete` (`id`) | Playlists. Create answers `{"ok":true,"id":N}`. |

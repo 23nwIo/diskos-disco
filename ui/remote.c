@@ -207,6 +207,7 @@ static void snapshot(rmt_state_t *s){
     eqpreset_name(s->eq, s->eq_name, sizeof s->eq_name);
     rc_station_t rs;
     if(radio_active() && radio_station(&rs)){             /* the station's own codec and rate (the directory's word) */
+        snprintf(s->station_url, sizeof s->station_url, "%s", rs.url);
         snprintf(s->format, sizeof s->format, "%s", rs.codec); s->kbps = rs.bitrate;
     } else if(!music_assistant() && st.have_track){
         tech_fill(s, &st);

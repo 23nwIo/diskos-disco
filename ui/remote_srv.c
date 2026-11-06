@@ -155,7 +155,7 @@ static void handle(int c){
         if(g_notify) g_notify();                          /* a fresher snapshot for the next poll */
         pthread_mutex_lock(&g_mu); s = g_state; have = g_have_state; pthread_mutex_unlock(&g_mu);
         if(!have){ reply_json_err(c, "503 Service Unavailable", "starting", "Starting up"); break; }
-        static char js[6000];   /* rmt_state_json's worst case (every string fully escaped) */
+        static char js[10000];   /* rmt_state_json's worst case (every string fully escaped) */
         if(rmt_state_json(js, sizeof js, &s) < 0){ reply_json_err(c, "500 Internal Server Error", "internal", "State too large"); break; }
         reply(c, "200 OK", "application/json", js, NULL);
         break; }
