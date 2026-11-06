@@ -109,9 +109,19 @@ static int usb_to_computer(void){   /* read at most every 5 s */
     static uint32_t at; static int have, on;
     if(have && lv_tick_get() - at < 5000u) return on;
     have = 1; at = lv_tick_get();
-    char v[24] = ""; FILE *f = fopen("/sys/class/android_usb/android0/state", "r");
-    if(f){ if(!fgets(v, sizeof v, f)) v[0] = 0; fclose(f); }
-    on = !strncmp(v, "CONFIGURED", 10);
+    /* the USB device controller's own state ("configured" once a host enumerated us), as modes.c reads it: the
+     * android_usb gadget's state file logs "state_show() !gi" to the kernel log on every read on this firmware */
+    on = 0;
+    DIR *d = opendir("/sys/class/udc");
+    struct dirent *e;
+    while(d && !on && (e = readdir(d))){
+        if(e->d_name[0] == '.') continue;
+        char p[128], v[24] = ""; snprintf(p, sizeof p, "/sys/class/udc/%.60s/state", e->d_name);
+        FILE *f = fopen(p, "r"); if(!f) continue;
+        if(fgets(v, sizeof v, f)) on = !strncmp(v, "configured", 10);
+        fclose(f);
+    }
+    if(d) closedir(d);
     return on;
 }
 static int plugged_listed(void);
