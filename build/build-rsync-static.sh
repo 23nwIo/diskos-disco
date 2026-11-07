@@ -33,8 +33,19 @@ elif command -v mipsel-linux-gnu-gcc >/dev/null; then P=mipsel-linux-gnu-; ARCH=
 else echo "no MIPS cross compiler: install the project toolchain to /opt/mipsel-n2008-musl-cross, set CROSS=..., or install gcc-mipsel-linux-gnu" >&2; exit 1; fi
 echo ">> compiler: ${P}gcc"
 
+# A git checkout (unlike the release tarball) has no generated configure.sh / config.h.in: rsync's
+# ./configure builds them with autotools, and the build itself runs awk.
+missing=""
+for t in git make awk autoconf autoheader aclocal; do command -v "$t" >/dev/null || missing="$missing $t"; done
+if [ -n "$missing" ]; then
+    echo "missing host tools:$missing" >&2
+    echo "  Debian/Ubuntu: sudo apt install git make gawk autoconf automake" >&2
+    echo "  macOS (Homebrew): brew install autoconf automake" >&2
+    exit 1
+fi
+
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
-git clone -q --depth 1 -b "$TAG" https://github.com/RsyncProject/rsync.git "$WORK/rsync"
+git -c advice.detachedHead=false clone -q --depth 1 -b "$TAG" https://github.com/RsyncProject/rsync.git "$WORK/rsync"
 [ "$(git -C "$WORK/rsync" rev-parse HEAD)" = "$COMMIT" ] || { echo "tag $TAG is not commit $COMMIT - refusing" >&2; exit 1; }
 git -C "$WORK/rsync" archive --prefix=rsync-3.4.1/ -o "$OUT/rsync-3.4.1-source.tar.gz" HEAD
 

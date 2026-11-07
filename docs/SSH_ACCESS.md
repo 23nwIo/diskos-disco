@@ -21,7 +21,8 @@ so `scp`, `sftp` and SFTP apps (Cyberduck, FileZilla, WinSCP) do not work. Use `
 2. Optional, for rsync: `build/build-rsync-static.sh`. It uses the project toolchain (the one `mq_ui` is
    built with, `ui/Dockerfile`) from `/opt/mipsel-n2008-musl-cross` or `CROSS=<prefix>`, and falls back
    to `gcc-mipsel-linux-gnu`. Output: `build/out/rsync-mipsel` (static, about 0.8 MB with musl) and the
-   source tarball. It needs `git`, `make` and network access to github.com.
+   source tarball. It needs `git`, `make`, `awk`, `autoconf` and `automake` (for `aclocal`; a git checkout of rsync has no
+   generated `configure.sh`) and network access to github.com.
 3. On your computer:
 
    ```
