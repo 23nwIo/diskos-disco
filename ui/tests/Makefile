@@ -24,6 +24,9 @@ apps_shortcut_test: apps_shortcut_test.c ../apps.c ../config.c ../md5.c
 remote_test: remote_test.c ../remote_core.c ../remote_srv.c ../remote_core.h ../remote_srv.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_srv.c -pthread -o $@
 
+wifi_reco_test: wifi_reco_test.c ../wifi_reco.h
+	$(CC) $(CFLAGS) -I.. wifi_reco_test.c -o $@
+
 radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. radio_test.c ../radio_core.c -o $@
 
@@ -33,7 +36,7 @@ review: fileops_test apps_shortcut_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: config_test playstate_test remote_test radio_test
+run: config_test playstate_test remote_test radio_test wifi_reco_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -41,6 +44,8 @@ run: config_test playstate_test remote_test radio_test
 	./remote_test
 	@echo "--- radio ---"
 	./radio_test
+	@echo "--- wifi boot hold ---"
+	./wifi_reco_test
 
 clean:
-	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test radio_test
+	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test radio_test wifi_reco_test

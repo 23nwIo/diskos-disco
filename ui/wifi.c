@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include "wifi_reco.h"
 
 /* Wi-Fi settings (SCR_WIFI) + a details screen (SCR_WIFI_INFO).
  * Radio on/off reuses the stock /usr/bin/wifi_up.sh / wifi_down.sh (rfkill +
@@ -273,14 +274,16 @@ void wifi_init_intent(void){
  * deliberate OFF against a late in-flight wifi_up. Self-rate-limited: safe to call each loop. */
 /* ---- V2.57 radio reconciliation ---------------------------------------------------------------------
  * V2.57's player turns Wi-Fi off at boot when both radios were saved on (keeps Bluetooth, saves WIFI_STATUS=0).
- * diskOS keeps its own "wifi_on" intent, and the keepalive below would restart Wi-Fi at once, undoing stock's
- * decision and leaving both radios fighting. So on firmware with that arbitration, each player generation (boot or
- * player restart) holds the keepalive until the player has answered and settled, then accepts stock's decision
- * ONLY for its exact signature. An explicit user choice at any point ends the hold and always wins; a player that
- * never answers releases the hold unchanged after RECO_GIVEUP_MS, so Wi-Fi cannot get stuck off. */
+ * diskOS keeps the user's own "wifi_on" choice across reboots: on before the reboot = on after, off = off. So on
+ * firmware with that arbitration, each player generation (boot or player restart) only HOLDS the keepalive until the
+ * player's boot decision is over (wifi_reco.h), then the keepalive restores the saved choice. It used to adopt the
+ * player's "Wi-Fi off" into "wifi_on" instead, but diskOS never writes the player's WIFI_STATUS back, so once saved
+ * off it stayed off in the player's database and Wi-Fi came back off after every reboot while Bluetooth was on.
+ * An explicit user choice ends the hold at once; a player that never answers (RECO_GIVEUP_MS) or a decision that
+ * never settles (RECO_WINDOW_MS) releases it too, so Wi-Fi cannot get stuck off. */
 #define RECO_SETTLE_MS 9000      /* same settle as the local-init handshake (past the ~7 s mode-control window) */
-#define RECO_GIVEUP_MS 30000     /* silent player: release unchanged this long after arming */
-#define RECO_WINDOW_MS 30000     /* answered player: keep re-checking this long after its first frame, since stock's
+#define RECO_GIVEUP_MS 30000     /* silent player: release this long after arming */
+#define RECO_WINDOW_MS 30000     /* answered player: wait at most this long after its first frame, since stock's
                                   * radio work can finish well after the settle (our own BT restore allows 28 s) */
 #define RECO_PROBE_MS  1000      /* every probe (sqlite read, pidof) is killed at this bound: never blocks the UI */
 static int      g_reco_hold = 0;           /* 1 = keepalive passive while this generation is being reconciled */
@@ -288,12 +291,6 @@ static unsigned g_reco_gen  = 0xFFFFFFFFu; /* generation armed */
 static unsigned g_reco_rx0, g_reco_epoch0;
 static uint32_t g_reco_armed_at, g_reco_first_rx_at, g_reco_probe_at, g_reco_eval_at;
 static int      g_reco_seen_rx;
-
-/* The decision, pure: 1 = adopt stock's "Wi-Fi off" into diskOS's intent. Every input must be a clean 0/1 read
- * (callers pass -1 for anything unknown, which never adopts). */
-static int wifi_reco_decide(int db_wifi, int db_bt, int eff_wifi, int eff_bt, int want_wifi, int user_changed){
-    return db_wifi == 0 && db_bt == 1 && eff_wifi == 0 && eff_bt == 1 && want_wifi == 1 && !user_changed;
-}
 
 /* Saved radio state from stock SYSCONFIG: 1 and fills both on a clean "d|d" read, else 0. Bounded. */
 static int read_saved_radios(int *wifi, int *bt){
@@ -341,10 +338,10 @@ static void wifi_reconcile_poll(void){
     }
     if(!g_reco_hold) return;
     if(g_intent_epoch != g_reco_epoch0){ g_reco_hold = 0; return; }        /* the user chose: their choice wins */
-    if(cfg_get_int("wifi_on", 1) == 0){ g_reco_hold = 0; return; }         /* Wi-Fi intent already off: nothing to undo */
+    if(cfg_get_int("wifi_on", 1) == 0){ g_reco_hold = 0; return; }         /* saved off: the keepalive keeps it off */
     if(!g_reco_seen_rx){
         if(rx == g_reco_rx0){
-            if(now - g_reco_armed_at >= RECO_GIVEUP_MS){ g_reco_hold = 0; return; }   /* silent player: unchanged */
+            if(now - g_reco_armed_at >= RECO_GIVEUP_MS){ g_reco_hold = 0; return; }   /* silent player: release */
             if(now - g_reco_probe_at >= 1000){ g_reco_probe_at = now; ipc_send_probe("02020008"); }   /* solicit, 1/s */
             return;
         }
@@ -354,20 +351,13 @@ static void wifi_reconcile_poll(void){
     if(now - g_reco_eval_at < 1000) return;         /* re-check about once a second */
     g_reco_eval_at = now;
     int dbw = -1, dbb = -1;
-    if(!read_saved_radios(&dbw, &dbb)) dbw = dbb = -1;                       /* unknown: never adopts */
-    int effw = wifi_effective(), effb = bt_radio_on();
-    /* the probes themselves take time (each is bounded, not instant): judge the window on the clock AFTER them, so a
-     * check that started just inside it can never adopt once it has closed */
-    if(lv_tick_get() - g_reco_first_rx_at >= RECO_WINDOW_MS){ g_reco_hold = 0; return; }
-    if(g_intent_epoch != g_reco_epoch0){ g_reco_hold = 0; return; }        /* the user chose while we probed */
-    if(wifi_reco_decide(dbw, dbb, effw, effb, cfg_get_int("wifi_on", 1), 0)){
-        cfg_set_int("wifi_on", 0);
-        ui_toast("Wi-Fi off: Bluetooth was on");
-        fprintf(stderr, "radio reconcile (gen %u): accepted stock's Bluetooth-priority boot, wifi_on=0\n", gen);
+    if(!read_saved_radios(&dbw, &dbb)) dbw = dbb = -1;
+    int effw = wifi_effective();
+    if(wifi_reco_release(dbw, dbb, effw) || lv_tick_get() - g_reco_first_rx_at >= RECO_WINDOW_MS){
+        fprintf(stderr, "radio reconcile (gen %u): restoring saved Wi-Fi on (player saved wifi=%d bt=%d, wifi now %d)\n",
+                gen, dbw, dbb, effw);
         g_reco_hold = 0;
-        return;
     }
-    if(now - g_reco_first_rx_at >= RECO_WINDOW_MS) g_reco_hold = 0;       /* no conflict appeared: release unchanged */
 }
 
 void wifi_supervise(void){
