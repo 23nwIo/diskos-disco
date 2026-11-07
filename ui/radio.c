@@ -174,15 +174,17 @@ static int find_renderer(void){
     }
     return -1;
 }
+static char g_soap_reply[8192];                         /* the last reply (worker thread only) */
 static int soap(const char *action, const char *args){  /* 0 = HTTP 200 */
     char ctl[RC_URL_LEN];
     pthread_mutex_lock(&g_mu); snprintf(ctl, sizeof ctl, "%s", g_ctl); pthread_mutex_unlock(&g_mu);
     if(!ctl[0]) return -1;
-    static char body[20480], reply[8192];
+    static char body[20480];
+    char *reply = g_soap_reply;
     char hdr[192];
     if(rc_soap_body(action, args, body, sizeof body)) return -1;
     snprintf(hdr, sizeof hdr, "Content-Type: text/xml; charset=\"utf-8\"\r\nSOAPACTION: \"urn:schemas-upnp-org:service:AVTransport:1#%s\"\r\n", action);
-    int st = http_req("POST", ctl, hdr, body, reply, sizeof reply);
+    int st = http_req("POST", ctl, hdr, body, reply, sizeof g_soap_reply);
     if(st != 200) fprintf(stderr, "radio: %s -> HTTP %d\n", action, st);
     return st == 200 ? 0 : -1;
 }
@@ -195,6 +197,18 @@ static void set_play(unsigned gen, int st, const char *err){
     pthread_mutex_unlock(&g_mu);
     ui_loop_wake();
 }
+/* The renderer can start the stream yet answer an action late or with an error (seen on the device: the station plays,
+ * the start was reported as failed). Ask it what it is doing before calling a start failed. */
+static int renderer_playing(const char *url, int set_ok){   /* 1: it plays this station */
+    if(soap("GetTransportInfo", "") != 0) return 0;
+    char st[32];
+    if(rc_xml_value(g_soap_reply, "CurrentTransportState", st, sizeof st)) return 0;
+    fprintf(stderr, "radio: transport state %s\n", st);
+    if(strcmp(st, "PLAYING") && strcmp(st, "TRANSITIONING")) return 0;
+    static char uri[RC_URL_LEN];                         /* not the previous station still playing */
+    if(soap("GetMediaInfo", "") == 0 && rc_xml_value(g_soap_reply, "CurrentURI", uri, sizeof uri) == 0 && uri[0]) return !strcmp(uri, url);
+    return set_ok;                                       /* no URI to compare: only after our SetAVTransportURI was taken */
+}
 static void job_play(const rc_station_t *s, unsigned gen){
     static char args[16384];
     if(rc_set_uri_args(s, args, sizeof args)){ set_play(gen, RS_ERROR, "Station address is too long"); return; }
@@ -204,7 +218,8 @@ static void job_play(const rc_station_t *s, unsigned gen){
         pthread_mutex_lock(&g_mu); int stale = gen != g_play_gen, have = g_ctl[0] != 0; pthread_mutex_unlock(&g_mu);
         if(stale) return;
         if(!have && find_renderer() != 0){ usleep(1000 * 1000); continue; }
-        if(soap("SetAVTransportURI", args) == 0 && soap("Play", "<Speed>1</Speed>") == 0){
+        int set = soap("SetAVTransportURI", args) == 0;
+        if((set && soap("Play", "<Speed>1</Speed>") == 0) || renderer_playing(s->url, set)){
             fprintf(stderr, "radio: playing \"%s\" %s\n", s->name, s->url);
             set_play(gen, RS_PLAYING, NULL); return;
         }

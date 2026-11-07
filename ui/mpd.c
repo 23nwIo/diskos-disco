@@ -246,10 +246,14 @@ static void view_build(const rmt_state_t *s){
     if(!local){                                          /* web radio, Music Assistant, another mode: the one thing playing */
         if(!s->has_track && strcmp(s->source, "radio")) return;
         ventry_t *v = vadd(V_OTHER);
-        v->id = ID_OTHER; v->dur_ms = (int)s->duration_ms;
+        int radio = !strcmp(s->source, "radio");
+        v->id = ID_OTHER; v->ord = radio;                /* V_OTHER: ord 1 = a station (artist holds its name) */
+        v->dur_ms = radio ? 0 : (int)s->duration_ms;     /* a stream has no length (the player reports a made-up one) */
         snprintf(v->path, sizeof v->path, "%s", s->station_url[0] ? s->station_url : "");
-        snprintf(v->title, sizeof v->title, "%.*s", (int)sizeof v->title - 1, s->stream_title[0] ? s->stream_title : s->title);
-        snprintf(v->artist, sizeof v->artist, "%s", s->station[0] ? s->station : s->artist);
+        /* a station: the song the stream names ("Artist - Title") or nothing; the player's own tags are only our
+         * station name again (radio.c sets them for the Disc's screens) */
+        snprintf(v->title, sizeof v->title, "%.*s", (int)sizeof v->title - 1, radio ? s->stream_title : s->title);
+        snprintf(v->artist, sizeof v->artist, "%s", radio ? s->station : s->artist);
         return;
     }
     track_state_t st; ipc_get_state(&st);
@@ -322,8 +326,9 @@ static void print_entry(rmt_buf_t *o, int pos){
         if(v->kind == V_OTHER) snprintf(uri, sizeof uri, "%s", v->path[0] ? v->path : "stream");
         else if(to_uri(v->path, 0, 0, uri, sizeof uri)) snprintf(uri, sizeof uri, "%s", v->path);
         mpd_kv(o, "file", uri);
-        kv_if(o, "Title", v->title); kv_if(o, "Artist", v->artist);
-        if(v->kind == V_OTHER) kv_if(o, "Name", v->artist);
+        kv_if(o, "Title", v->title);
+        if(v->kind == V_OTHER && v->ord) kv_if(o, "Name", v->artist);   /* a station: mpc shows "Name: Title" */
+        else kv_if(o, "Artist", v->artist);
         print_time(o, v->dur_ms);
     }
     rmt_buf_printf(o, "Pos: %d\nId: %d\n", pos, v->id);
@@ -636,6 +641,7 @@ static int cmd_status(rmt_buf_t *o, const rmt_state_t *s){
     rmt_buf_printf(o, "state: %s\n", state);
     if(cp >= 0){
         long el = s->position_ms < 0 ? 0 : s->position_ms, du = s->duration_ms > 0 ? s->duration_ms : g_view[cp].dur_ms;
+        if(g_view[cp].kind == V_OTHER && g_view[cp].ord) du = 0;   /* a stream: no length */
         rmt_buf_printf(o, "song: %d\nsongid: %d\n", cp, g_view[cp].id);
         rmt_buf_printf(o, "time: %ld:%ld\nelapsed: %ld.%03ld\n", (el + 500) / 1000, (du + 500) / 1000, el / 1000, el % 1000);
         if(du > 0) rmt_buf_printf(o, "duration: %ld.%03ld\n", du / 1000, du % 1000);
