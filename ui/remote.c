@@ -13,6 +13,7 @@
  * routing, "local playback only", output switches in progress, audiobook skip-as-seek, the skip pacing. */
 #include "remote.h"
 #include "remote_srv.h"
+#include "remote_screen.h"
 #include "mpd.h"
 #include "screens.h"
 #include "theme.h"
@@ -928,6 +929,12 @@ static char *read_cover(const char **why){
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL; g_blob_len = 0;
     if(c->kind == RMT_CMD_COVER){ *body = read_cover(why); return *body ? 0 : -1; }
+    if(c->kind == RMT_CMD_SCREEN){
+        size_t n = 0; *body = rscr_bmp(&n, why);
+        g_blob_len = (int)n;
+        return *body ? 0 : -1;
+    }
+    if(c->kind == RMT_CMD_TOUCH) return rscr_touch((int)c->pos, (int)c->id, (int)c->offset, (int)c->limit, (int)c->arg, why);
     if(c->kind == RMT_CMD_STATUS || c->kind == RMT_CMD_EQ_LIST){
         *body = c->kind == RMT_CMD_STATUS ? status_json() : eq_json();
         if(!*body) *why = "Out of memory";
@@ -993,7 +1000,7 @@ void remote_pump(void){
     if(rsrv_take(&c)){
         const char *why = NULL; char *body = NULL;
         int rc = dispatch(&c, &why, &body);
-        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST;
+        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_SCREEN || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST;
         if(!ro || rc != 0){ fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr); }   /* pages poll the reads: log only changes and failures */
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);

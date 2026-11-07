@@ -35,8 +35,13 @@ typedef enum {
     RMT_CMD_BT,              /* sub = rmt_bt_t; q = device address, name = a local name */
     RMT_CMD_WORK_MODE,       /* arg 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay */
     RMT_CMD_REBOOT,          /* restart the Disc (as Settings > Restart) */
-    RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
+    RMT_CMD_RADIO_FAV,       /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
+    RMT_CMD_SCREEN,          /* the screen as it looks now (binary answer: BMP) */
+    RMT_CMD_TOUCH            /* a finger on the screen: pos,id = x,y down; offset,limit = x,y up; arg = ms down */
 } rmt_cmd_kind_t;
+/* POST api/touch x, y (0..359), optional x2, y2 (where it lifts; default x, y) and ms (0..3000, default 100). */
+#define RMT_SCREEN_PX 360
+#define RMT_TOUCH_MS_MAX 3000
 
 /* GET api/library/<list>: albums | album (name) | artists | artist (name) | playlists | playlist (id) | favorites |
  * songs (q: search) | folder (path, relative to the SD card). Lists take q (filter), offset, limit. */

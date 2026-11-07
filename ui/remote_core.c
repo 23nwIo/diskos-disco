@@ -296,6 +296,8 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_BT_LIST || k == RMT_CMD_BT) return "bluetooth";
     if(k == RMT_CMD_EQ_LIST || k == RMT_CMD_EQ) return "eq";
     if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
+    if(k == RMT_CMD_SCREEN) return "screen";
+    if(k == RMT_CMD_TOUCH) return "touch";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -357,6 +359,23 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         long v; rt.kind = param(r, "preset", &v) || v < 0 || v > 20 ? RMT_R_BAD_PARAM : RMT_R_CMD;
         if(rt.kind == RMT_R_CMD){ rt.cmd.kind = RMT_CMD_EQ; rt.cmd.arg = v; }
+        return rt;
+    }
+    if(!strcmp(ep, "screen")){ rt.kind = get ? RMT_R_CMD : RMT_R_BAD_METHOD; if(get) rt.cmd.kind = RMT_CMD_SCREEN; return rt; }
+    if(!strcmp(ep, "touch")){
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        long x, y, x2, y2, ms = 100; int bad = param(r, "x", &x) || param(r, "y", &y);
+        if(!bad){
+            int p2 = param(r, "x2", &x2), p3 = param(r, "y2", &y2), p4 = param(r, "ms", &ms);
+            if(p2 == -1) x2 = x;
+            if(p3 == -1) y2 = y;
+            if(p4 == -1) ms = 100;
+            bad = p2 == -2 || p3 == -2 || p4 == -2;
+        }
+        if(!bad) bad = x < 0 || y < 0 || x2 < 0 || y2 < 0 || x >= RMT_SCREEN_PX || y >= RMT_SCREEN_PX ||
+                       x2 >= RMT_SCREEN_PX || y2 >= RMT_SCREEN_PX || ms < 0 || ms > RMT_TOUCH_MS_MAX;
+        rt.kind = bad ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        if(!bad){ rt.cmd.kind = RMT_CMD_TOUCH; rt.cmd.pos = x; rt.cmd.id = y; rt.cmd.offset = x2; rt.cmd.limit = y2; rt.cmd.arg = ms; }
         return rt;
     }
     if(!strcmp(ep, "cover")){ rt.kind = get ? RMT_R_CMD : RMT_R_BAD_METHOD; if(get) rt.cmd.kind = RMT_CMD_COVER; return rt; }
@@ -544,11 +563,12 @@ const char RMT_PAGE_HTML[] =
 "#shb{position:fixed;inset:0;background:#0006}#sh{position:fixed;left:0;right:0;bottom:0;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:.6em 1em 1.2em;max-width:30em;margin:0 auto}\n"
 "#sh b{display:block;padding:.6em 0;color:var(--mut);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#sh button{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;color:var(--fg);font-size:1em;padding:.75em 0}\n"
 "#fv{position:absolute;right:.6em;top:.6em;border:0;background:none;color:var(--acc);font-size:1.5em}.card{position:relative}\n"
+"#si{display:block;width:100%;max-width:360px;aspect-ratio:1;margin:0 auto .6em;border-radius:10px;background:#000;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}#sau{accent-color:var(--acc)}\n"
 "#rbt{border:1px solid var(--line);margin-bottom:0}.hide{display:none}.hint{font-size:.8em;color:var(--mut)}\n"
 "select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .4em}\n"
 ".kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}\n"
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
-"<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>\n"
+"<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=scr>Screen</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>\n"
 "<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button><button data-v=bt>Bluetooth</button><button data-v=status>Status</button></div>\n"
 "<div id=np><div class=card><img id=cv class=hide alt=''><button id=fv class=hide aria-label=Favourite></button><div id=t>-</div><div id=a></div><div id=al></div><div id=tx></div>\n"
 "<input id=pos type=range min=0 max=1 value=0 aria-label=Position><div class=row><span id=pc>0:00</span><span id=du>0:00</span></div></div>\n"
@@ -566,6 +586,8 @@ const char RMT_PAGE_HTML[] =
 "<div id=sys class='card hide'><label for=wm>Working mode</label><select id=wm><option value=0>Playback<option value=1>USB DAC<option value=2>Bluetooth DAC\n"
 "<option value=4>Bluetooth streaming<option value=5>AirPlay<option value=3>USB storage</select><button id=rbt class=more>Restart the Disc</button></div>\n"
 "<div id=stv class=hide></div>\n"
+"<div id=scv class=hide><div class=card><img id=si alt='The Disc screen'><div class=hd><button id=srf class=pa>Refresh</button><b></b><label><input type=checkbox id=sau> Live</label></div>\n"
+"<div class=hint>Tap or drag on the picture to touch the Disc; hold for a long press.</div></div></div>\n"
 "<div id=shb class=hide></div><div id=sh class=hide></div>\n"
 "<div id=msg></div></main>\n"
 "<script>\n"
@@ -675,13 +697,23 @@ const char RMT_PAGE_HTML[] =
 "function rpoll(v,g,n){if(v!==cur()||g!==v.gen)return;fetch('api/library/radio_search?limit=100',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){\n"
 "if(v!==cur()||g!==v.gen)return;if(j.ok&&j.search==='busy'){if(n<40)setTimeout(function(){rpoll(v,g,n+1)},750);else $('list').textContent='The station directory did not answer - try again';return}\n"
 "if(j.ok&&j.search==='failed'){$('list').textContent='The station directory did not answer - try again';return}render(v,j,0)}).catch(function(){say('Player not reachable')})}\n"
+"/* Screen: a picture of the Disc's screen on request (Live: again a moment after each one arrives); touches on it are sent */\n"
+"var sbusy=0,sdn=null;function shot(){if(V!=='scr'||document.hidden||sbusy)return;sbusy=1;$('si').src='api/screen?t='+Date.now()}\n"
+"$('si').onload=function(){sbusy=0;if($('sau').checked)setTimeout(shot,700)};$('si').onerror=function(){sbusy=0;say('The screen could not be read');if($('sau').checked)setTimeout(shot,3000)};\n"
+"$('srf').onclick=shot;$('sau').onchange=shot;\n"
+"function spt(e){var r=$('si').getBoundingClientRect(),f=function(v){return Math.max(0,Math.min(359,Math.round(v*360)))};return{x:f((e.clientX-r.left)/r.width),y:f((e.clientY-r.top)/r.height)}}\n"
+"$('si').onpointerdown=function(e){e.preventDefault();sdn=spt(e);sdn.t=Date.now();try{$('si').setPointerCapture(e.pointerId)}catch(x){}};\n"
+"$('si').onpointercancel=function(){sdn=null};$('si').ondragstart=function(){return false};\n"
+"$('si').onpointerup=function(e){if(!sdn)return;var a=sdn,b=spt(e),ms=Math.min(3000,Date.now()-a.t);sdn=null;\n"
+"if(Math.abs(b.x-a.x)<5&&Math.abs(b.y-a.y)<5){b=a;if(ms<350)ms=100}\n"
+"cmd('touch',enc({x:a.x,y:a.y,x2:b.x,y2:b.y,ms:ms})).then(function(ok){setTimeout(shot,(ok?ms:0)+450);if(ok&&!$('sau').checked)setTimeout(shot,ms+1500)})};\n"
 "function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});\n"
-"$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np'||v==='status'||v==='bt');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');\n"
-"if(v==='np'){poll();return}if(v==='status'){$('stv').textContent='Loading…';status();return}if(v==='bt'){$('btl').textContent='Loading…';bt();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
+"$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np'||v==='status'||v==='bt'||v==='scr');$('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');\n"
+"if(v==='np'){poll();return}if(v==='scr'){shot();return}if(v==='status'){$('stv').textContent='Loading…';status();return}if(v==='bt'){$('btl').textContent='Loading…';bt();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
 "[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});\n"
 "$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};\n"
 "$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('shb').onclick=shut;\n"
 "$('pa').onclick=function(){var a=act(cur());if(a)a[1]()};$('mo').onclick=function(){load(items.length)};\n"
 "var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},cur().l==='radio_search'?600:300)};\n"
-"setInterval(poll,1000);document.addEventListener('visibilitychange',poll);poll();\n"
+"setInterval(poll,1000);document.addEventListener('visibilitychange',function(){poll();shot()});poll();\n"
 "</script></html>";

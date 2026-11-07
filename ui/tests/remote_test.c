@@ -75,6 +75,20 @@ static void test_core(void){
     CHECK(req("POST", p("/../api/next"), "").kind == RMT_R_NOT_FOUND);
     rmt_route_t r = req("POST", p("/api/next"), "");
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_NEXT);
+    /* the Screen tab: a picture (GET) and a finger (POST: x,y down; x2,y2 up, default x,y; ms down, default 100) */
+    r = req("GET", p("/api/screen?t=1"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_SCREEN);
+    CHECK(req("POST", p("/api/screen"), "").kind == RMT_R_BAD_METHOD);
+    CHECK(req("GET", p("/api/touch?x=1&y=2"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/touch"), "x=10&y=359");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_TOUCH && r.cmd.pos == 10 && r.cmd.id == 359 && r.cmd.offset == 10 && r.cmd.limit == 359 && r.cmd.arg == 100);
+    r = req("POST", p("/api/touch"), "x=0&y=180&x2=300&y2=170&ms=250");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.pos == 0 && r.cmd.id == 180 && r.cmd.offset == 300 && r.cmd.limit == 170 && r.cmd.arg == 250);
+    CHECK(req("POST", p("/api/touch"), "x=10").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/touch"), "x=360&y=0").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/touch"), "x=-1&y=0").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/touch"), "x=1&y=1&x2=400").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/touch"), "x=1&y=1&ms=3001").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/touch"), "x=1&y=1&ms=abc").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/previous"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PREV);
     r = req("POST", p("/api/play_pause"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PLAY_PAUSE);
     r = req("POST", p("/api/play"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PLAY);
@@ -320,6 +334,7 @@ static void fake_bt_cmd(const rmt_cmd_t *c){
     }
     rsrv_done(1, NULL);
 }
+static int g_touch_n, g_touch_x, g_touch_y;   /* the stand-in screen marks where the last touch lifted */
 static void *emu(void *a){
     (void)a;
     rmt_state_t s; memset(&s, 0, sizeof s);
@@ -353,6 +368,18 @@ static void *emu(void *a){
                     else if(c.sub == RMT_E_FAV && !c.song_id){ s.favorite = (int)c.arg; rsrv_done(1, NULL); }
                     else rsrv_done(1, NULL);
                 } else if(c.kind == RMT_CMD_EQ){ s.eq = (int)c.arg; snprintf(s.eq_name, sizeof s.eq_name, "%s", c.arg == 0 ? "Off" : c.arg == 1 ? "Jazz" : "R&B <x>"); rsrv_done(1, NULL); }
+                else if(c.kind == RMT_CMD_SCREEN){                      /* a 360x360 24-bit BMP: a disc on dark grey */
+                    size_t row = 360 * 3, n = 54 + row * 360; unsigned char *b = calloc(1, n);
+                    memcpy(b, "BM", 2); b[2] = (unsigned char)n; b[3] = (unsigned char)(n >> 8); b[4] = (unsigned char)(n >> 16); b[10] = 54; b[14] = 40;
+                    b[18] = 360 & 255; b[19] = 360 >> 8; b[22] = 360 & 255; b[23] = 360 >> 8; b[26] = 1; b[28] = 24;
+                    for(int y = 0; y < 360; y++) for(int x = 0; x < 360; x++){
+                        unsigned char *q = b + 54 + (size_t)(359 - y) * row + (size_t)x * 3; int dx = x - 180, dy = y - 180, in = dx * dx + dy * dy < 150 * 150;
+                        int hit = g_touch_n && abs(x - g_touch_x) < 8 && abs(y - g_touch_y) < 8;
+                        q[0] = hit ? 0 : in ? (unsigned char)(x * 255 / 359) : 40; q[1] = hit ? 0 : in ? 120 : 40; q[2] = hit ? 255 : in ? (unsigned char)(y * 255 / 359) : 40;
+                    }
+                    rsrv_done_blob((char *)b, n, "image/bmp");
+                }
+                else if(c.kind == RMT_CMD_TOUCH){ g_touch_n++; g_touch_x = (int)c.offset; g_touch_y = (int)c.limit; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_COVER){                       /* a 16x16 24-bit BMP, a colour gradient */
                     size_t n = 54 + 16 * 16 * 3; unsigned char *b = calloc(1, n);
                     memcpy(b, "BM", 2); b[2] = (unsigned char)n; b[3] = (unsigned char)(n >> 8); b[10] = 54; b[14] = 40; b[18] = 16; b[22] = 16; b[26] = 1; b[28] = 24;
@@ -419,6 +446,8 @@ static void test_server(void){
     CHECK(g_last.kind == RMT_CMD_NEXT);
     CHECK(call("GET", p("/api/cover?v=a1"), NULL, out, sizeof out) == 200 && strstr(out, "Content-Type: image/bmp") && strstr(out, "Content-Length: 822"));
     CHECK(call("POST", p("/api/cover"), "", out, sizeof out) == 405);
+    CHECK(call("GET", p("/api/screen?t=5"), NULL, out, sizeof out) == 200 && strstr(out, "Content-Type: image/bmp") && strstr(out, "Content-Length: 388854"));
+    CHECK(call("POST", p("/api/touch"), "x=20&y=30", out, sizeof out) == 200 && g_touch_n == 1 && g_touch_x == 20 && g_touch_y == 30);
     CHECK(call("GET", p("/api/state"), NULL, out, sizeof out) == 200 && strstr(out, "\"format\":\"FLAC\",\"kbps\":2304,\"bits\":24,\"sample_rate\":96000") && strstr(out, "\"art\":\"a1\""));
     CHECK(call("POST", p("/api/volume"), "value=77", out, sizeof out) == 200);
     CHECK(g_last.kind == RMT_CMD_VOLUME && g_last.arg == 77);
