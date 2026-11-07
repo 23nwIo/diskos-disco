@@ -25,6 +25,7 @@ mq_ui.manifest
 tests/config_test
 tests/playstate_test
 tests/remote_test
+tests/mpd_test
 tests/radio_test
 
 # On-device helper builds

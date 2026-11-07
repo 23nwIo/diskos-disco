@@ -54,6 +54,7 @@
 #include "art.h"
 #include "command_spawn.h"
 #include "remote.h"
+#include "mpd.h"
 #include "radio.h"
 #include "ui_instance.h"
 #include "power.h"
@@ -3490,6 +3491,7 @@ int main(int argc, char **argv){
     wifi_init_intent();         /* seed wifi_on intent from stock WIFI_STATUS (first run only) */
     fprintf(stderr,"step:screens_init\n");fflush(stderr); screens_init(); ma_boot();   /* MA Sendspin comes back if it was on */
     remote_boot();                               /* Remote Control: the web page comes up with Wi-Fi if it was on */
+    mpd_boot();                                  /* MPD Server: likewise */
     home_set_settings_click_cb(go_settings);
     library_set_song_click_cb(on_song_play);   /* tap a song -> play it */
     search_set_song_click_cb(on_search_play);   /* search result -> play in all-songs scope (no stale drill ctx) */
@@ -4167,7 +4169,8 @@ int main(int argc, char **argv){
             } else if(touch_gate_wake && lifted) touch_gate_wake = 0;
         }
         remote_pump();                                     /* Remote Control: publish the state, run a waiting command */
-        if(kbinput_active() || ma_pairing_shown() || remote_link_shown()) last_activity = lv_tick_get();   /* typing / a pairing code on screen: stay lit */
+        mpd_pump();                                        /* MPD Server: run a waiting command, tell idle clients */
+        if(kbinput_active() || ma_pairing_shown() || remote_link_shown() || mpd_access_shown()) last_activity = lv_tick_get();   /* typing / a pairing code on screen: stay lit */
         if(g_wake_req){                                   /* something needs to be seen now (MA Sendspin pairing code) */
             g_wake_req = 0; last_activity = lv_tick_get();
             if(bl_state){ ui_backlight(ui_effective_brightness()); bl_state = 0; player_blanked = 0; }

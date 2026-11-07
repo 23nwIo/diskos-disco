@@ -14,5 +14,9 @@ void remote_show_link(void);     /* QR + address overlay */
 void remote_new_link(void);      /* confirm, then a new token (old links stop working) */
 int  remote_link_shown(void);    /* the overlay is up (keeps the screen lit) */
 void remote_test_link(const char *url);   /* host renders only */
+#include "remote_core.h"
+int  remote_exec(const rmt_cmd_t *c, const char **why, char **body);   /* MPD server: run a command as the page would (0 ok) */
+void remote_state(rmt_state_t *s);   /* MPD server: the playback snapshot */
+const char *remote_token(void);      /* the saved token (made now if missing); NULL if none can be made */
 int  remote_test_request(const char *method, const char *path_query, const char *body, char **out, const char **why);   /* host tests only */
 #endif

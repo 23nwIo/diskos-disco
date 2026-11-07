@@ -54,6 +54,16 @@ the internet. Important properties:
 - It is bound to the Wi-Fi interface only and answers nothing without the link code. The link code is stored in
   `/usr/data/diskos.conf`; Remote Control > New Link replaces it. See [Remote Control](REMOTE_CONTROL.md).
 
+### The MPD Server answers MPD clients on your LOCAL network in plaintext
+
+With Settings > Connectivity > Remote Control > MPD Server on (off by default), diskOS listens for MPD clients (mpc,
+ncmpcpp) on `<device-wifi-ip>:6600` for as long as the setting is on. It sends nothing to the internet.
+- The MPD protocol is **plain text on your Wi-Fi LAN**: the password (the Remote Control link code), song titles,
+  library paths and your commands cross your local network unencrypted. Anyone who has the password can control
+  playback, browse the library and edit the Disc's playlists. Use it on networks you trust.
+- It is bound to the Wi-Fi interface only and refuses everything but `ping`, `password`, `commands` and `close` until
+  the password is given. Remote Control > New Link changes it. See [MPD Server](MPD.md).
+
 ### The stock FiiO player still runs alongside diskOS
 
 diskOS replaces only the UI; FiiO's original player process still runs underneath it. That stock

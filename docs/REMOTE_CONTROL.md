@@ -17,7 +17,7 @@ favourites, songs, card folders) or the web radio favourites to start something.
    (`http://<Disc address>:8088/<link code>/`). Bookmark the page to come back later.
 
 **New Link** replaces the link code: every old link and bookmark stops working at once. Use it if the link reached
-someone it should not have.
+someone it should not have. The link code is also the [MPD Server](MPD.md)'s password, so it changes there too.
 
 The page and the link survive restarts. If the Disc gets a new Wi-Fi address (another network, a new DHCP lease), the
 server follows it within a second or two; scan Show Link again for the new address.

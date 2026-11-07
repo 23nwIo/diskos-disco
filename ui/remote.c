@@ -13,6 +13,7 @@
  * routing, "local playback only", output switches in progress, audiobook skip-as-seek, the skip pacing. */
 #include "remote.h"
 #include "remote_srv.h"
+#include "mpd.h"
 #include "screens.h"
 #include "theme.h"
 #include "theme_kit.h"
@@ -961,6 +962,10 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     if(c->kind == RMT_CMD_PLAY_ITEM) return play_item(c, why);
     return run(c, why);
 }
+/* For the MPD server (mpd.c): the same commands with the same guards, and the same snapshot. */
+int remote_exec(const rmt_cmd_t *c, const char **why, char **body){ return dispatch(c, why, body); }
+void remote_state(rmt_state_t *s){ snapshot(s); }
+const char *remote_token(void){ return token(); }
 /* Host tests: one request through the real routing and the main-thread half, without sockets. Returns the command's
  * result (0 ok, -1 refused with *why), or -100 - route kind when it never became a command. *out: a JSON answer. */
 int remote_test_request(const char *method, const char *path_query, const char *body, char **out, const char **why){
@@ -1061,6 +1066,7 @@ static void new_link_yes(void){
     if(new_token(nt) || cfg_set_str(REMOTE_CFG_TOKEN, nt)){ ui_toast("Couldn't make a new link"); return; }
     memset(nt, 0, sizeof nt);
     server_stop(); g_retry_at = 0; server_sync();              /* old link stops working now */
+    mpd_token_changed();                                       /* the MPD password is the same token */
     ui_toast("New link made - old links no longer work");
 }
 void remote_new_link(void){

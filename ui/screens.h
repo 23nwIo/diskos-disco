@@ -27,6 +27,9 @@ void ui_power_off(void);         /* shutdown screen, save, sync, poweroff */
 void usage_save(void);                              /* before a power-off */
 long queue_pid(int create);          /* the "Queue" playlist */
 int  queue_count(void);
+int  queue_item(int i, char *path, int pcap, char *title, int tcap, char *artist, int acap, long *dur_ms);   /* MPD server: queued song i */
+int  queue_active(void);                     /* the player plays the queue's copy now */
+unsigned queue_generation(void);             /* bumps whenever the queue changes */
 int  queue_add_ids(const int *ids, int n);   /* exact songs, saved once; -1 if they don't fit, -2 database busy (nothing added), else added */
 int  queue_add_path(const char *path);   /* 1 added, 0 already there, -1 failed */
 int  queue_add_group(const char *col, const char *val);

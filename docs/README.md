@@ -11,6 +11,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [Immersive](IMMERSIVE_CONTROLS.md), [Disc Shelf](DISC_SHELF_INSTALL.md), [privacy](PRIVACY.md).
 - [Bluetooth audio, codecs and aptX](BLUETOOTH.md) (experimental).
 - [Remote Control over Wi-Fi](REMOTE_CONTROL.md) (not yet device-tested).
+- [MPD Server for mpc / ncmpcpp](MPD.md) (not yet device-tested).
 - [Web radio](RADIO.md) (not yet device-tested as a build; the playback path was tested by hand).
 - [Signed SD updates](UPDATING.md), [Windows](WINDOWS.md), [Linux](LINUX.md), [macOS](MACOS.md), [switching and recovery](SWITCHING.md).
 - Themes: [Disco](DISCO_TOUR.md), [Null](themes/null.md), [Squash](themes/squash.md), [Zune](themes/zune.md), [Braun 2.0](themes/BRAUN2.md). Ring, Braun and Stone remain available.

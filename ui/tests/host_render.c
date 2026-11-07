@@ -150,7 +150,7 @@ static void count_style_event(lv_event_t *e){(void)e;test_style_events++;}
 static void watch_styles(lv_obj_t *o){lv_obj_add_event_cb(o,count_style_event,LV_EVENT_STYLE_CHANGED,NULL);for(uint32_t i=0;i<lv_obj_get_child_count(o);i++)watch_styles(lv_obj_get_child(o,i));}
 static int fixture, send_result, send_count;static char last_sent[32];
 int __real_ui_local_playback_allowed(void);
-int __wrap_ui_local_playback_allowed(void){return (getenv("REMOTE_REQS")||getenv("REVIEW_BRAUN2")||getenv("REVIEW_ZUNE")||getenv("REVIEW_ZUNE_BACK"))?1:__real_ui_local_playback_allowed();}
+int __wrap_ui_local_playback_allowed(void){return (getenv("REMOTE_REQS")||getenv("MPD_REQS")||getenv("REVIEW_BRAUN2")||getenv("REVIEW_ZUNE")||getenv("REVIEW_ZUNE_BACK"))?1:__real_ui_local_playback_allowed();}
 static int null_transport_calls;static char null_last_command[24];
 int __real_ui_transport_command(const char*);
 int __wrap_ui_transport_command(const char*cmd){if(getenv("REVIEW_BRAUN2")||getenv("REVIEW_ZQS_BANNER")||getenv("REVIEW_ZUNE")||getenv("REVIEW_ZUNE_BACK")||getenv("REVIEW_SHELF_PLAYER")||getenv("REVIEW_NULL")||getenv("REVIEW_NULL_GESTURES")||getenv("REVIEW_SQUASH_HOLD")||getenv("REVIEW_SIMPLE_PERF")||getenv("REVIEW_SIMPLE")){null_transport_calls++;snprintf(null_last_command,sizeof null_last_command,"%s",cmd);return 0;}return __real_ui_transport_command(cmd);}
@@ -2425,7 +2425,34 @@ int main(int argc, char **argv){
             }
             fclose(rf); fflush(stdout); return 0;
         }
+        if(getenv("MPD_REQS")){   /* MPD server: one request per line (a literal \\n splits a command list) through the real handler */
+            char *mpd_test_request(const char *);
+            if(getenv("MPD_TRACK")){   /* "path<TAB>title<TAB>pos_id": the song the player reports */
+                char t[600]; snprintf(t, sizeof t, "%s", getenv("MPD_TRACK"));
+                char *pa = strtok(t, "\t"), *ti = strtok(NULL, "\t"), *pi = strtok(NULL, "\t");
+                memset(&test_track_state, 0, sizeof test_track_state);
+                test_track_state.have_track = pa && *pa; test_track_state.path_seq = 1; test_track_state.seq = 1;   /* "" = nothing loaded */
+                snprintf(test_track_state.path, sizeof test_track_state.path, "%s", pa ? pa : "");
+                snprintf(test_track_state.title, sizeof test_track_state.title, "%s", ti ? ti : "");
+                test_track_state.pos_id = pi ? atoi(pi) : 0; test_track_state.duration_ms = 200000; test_track_state.position_ms = 5000;
+                test_track_state.volume = 60; test_track_state.volume_seq = 1;
+                test_track_override = 1;
+            }
+            FILE *rf = fopen(getenv("MPD_REQS"), "r"); assert(rf); char line[4096];
+            while(fgets(line, sizeof line, rf)){
+                line[strcspn(line, "\n")] = 0; if(!line[0]) continue;
+                char req[4096]; size_t k = 0;
+                for(char *c = line; *c && k + 1 < sizeof req; c++){ if(c[0] == '\\' && c[1] == 'n'){ req[k++] = '\n'; c++; } else req[k++] = *c; }
+                req[k] = 0;
+                send_count = 0; last_sent[0] = 0;
+                char *out = mpd_test_request(req);
+                printf("REQ %s\nSENT %d %s\n%sEND\n", line, send_count, last_sent, out ? out : "(null)\n");
+                free(out);
+            }
+            fclose(rf); fflush(stdout); return 0;
+        }
         if(getenv("REMOTE_SET")){ void settings_open_remote(void); setlist_open("Network"); scr=SCR_SETLIST; screen_show(scr); settings_open_remote(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
+        if(getenv("MPD_ACCESS")){ void mpd_test_access(void); mpd_test_access(); for(int i=0;i<80;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("REMOTE_LINK")){ void remote_test_link(const char *); remote_test_link(getenv("REMOTE_LINK")); for(int i=0;i<80;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MA_SET")){ void settings_open_ma(void); setlist_open("Network"); scr=SCR_SETLIST; screen_show(scr); settings_open_ma(); for(int i=0;i<40;i++){lv_tick_inc(10);lv_timer_handler();} }
         if(getenv("MODES_INFO")){ void modes_test_info(int); scr=SCR_MODEINFO; screen_show(scr); modes_test_info(atoi(getenv("MODES_INFO"))); for(int i=0;i<30;i++){lv_tick_inc(10);lv_timer_handler();} }

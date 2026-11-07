@@ -238,6 +238,10 @@ int  mdb_playlist_add_folder(long pid, const char *dir);
 int  mdb_folder_ids(const char *dir, int **out);   /* songs under dir as exact IDs, file/track order; -1 on failure; caller frees */
 int  mdb_folder_rows(const char *dir, void (*cb)(void *ud, const char *path, const char *title, const char *artist, const char *album, long dur), void *ud);
 int  mdb_song_by_path(const char *path, mdb_song_t *out);
+/* MPD server: SONG rows with all their tags (strings valid during the callback only). */
+typedef struct { int id, track, disc, dur_ms, is_cue, is_iso; const char *path, *title, *name, *artist, *album, *album_artist, *genre, *date; } mdb_row_t;
+enum { MDB_ROWS_ALL = 0, MDB_ROWS_UNDER, MDB_ROWS_PATH, MDB_ROWS_ID };
+int  mdb_rows(int kind, const char *s, int id, int (*cb)(void *ud, const mdb_row_t *r), void *ud);
 int  mdb_song_rates(const char *path, int *bitrate, int *srate);
 int  mdb_is_favorite_path(const char *path);
 int  mdb_set_favorite_path(const char *path, int on);

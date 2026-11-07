@@ -153,13 +153,26 @@ static void load(void){
     if(ok) g_loaded = 1; else g_qn = 0;
 }
 /* ---------------------------------------------------------------- changes */
+static unsigned g_gen;                              /* bumps on every change of what is queued (MPD playlist version) */
+unsigned queue_generation(void){ return g_gen; }
 static void changed(void){                         /* the queue's content changed */
+    g_gen++;
     save();
     ui_queue_changed();                            /* the Now Playing badge */
     /* nothing else: the song that's playing is left alone; the queue is applied when it ends */
     if(screen_current() == SCR_QUEUE) view_reload();
 }
 int queue_count(void){ load(); return g_qn; }
+/* MPD server (mpd.c): read one queued song. 1 = filled. */
+int queue_item(int i, char *path, int pcap, char *title, int tcap, char *artist, int acap, long *dur_ms){
+    load(); if(i < 0 || i >= g_qn) return 0;
+    if(path) snprintf(path, (size_t)pcap, "%s", g_q[i].path);
+    if(title) snprintf(title, (size_t)tcap, "%s", g_q[i].title);
+    if(artist) snprintf(artist, (size_t)acap, "%s", g_q[i].artist);
+    if(dur_ms) *dur_ms = g_q[i].dur;
+    return 1;
+}
+int queue_active(void){ return g_active; }          /* the player plays our copy (queued songs follow the current one in it) */
 static int add_one(int id, const char *path, const char *title, const char *artist, long dur){
     if(g_qn >= QMAX || !path || !path[0]) return 0;
     size_t pl = strlen(path); if(pl > 4 && !strcasecmp(path + pl - 4, ".m4b")) return 0;   /* never an audiobook */
@@ -311,7 +324,7 @@ static void hand_back(int song){                   /* the queue is done: back to
     else sent=ui_play_restore(-1, "", 0, 0);
     if(sent) g_active=0;                       /* nothing to return to: just the play mode back */
 }
-static void pop_through(int k){ memmove(&g_q[0], &g_q[k+1], (size_t)(g_qn - k - 1) * sizeof g_q[0]); g_qn -= k + 1; save(); ui_queue_changed();
+static void pop_through(int k){ memmove(&g_q[0], &g_q[k+1], (size_t)(g_qn - k - 1) * sizeof g_q[0]); g_qn -= k + 1; g_gen++; save(); ui_queue_changed();
                                 if(screen_current() == SCR_QUEUE) view_reload(); }
 /* Nothing to come back to (nothing loaded, or nothing playing whose song we can identify): the queue is the whole
  * list. Song `first` starts now and the rest follow in order; in the Shuffle play mode the queue is shuffled first.

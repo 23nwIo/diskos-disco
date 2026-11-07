@@ -8,6 +8,7 @@
 #include "screens.h"
 #include "ma.h"
 #include "remote.h"
+#include "mpd.h"
 #include "fork_build.h"
 #include "braun.h"
 #include "theme.h"
@@ -358,6 +359,8 @@ static void apply_remote_group(int v);                    /* Settings > Connecti
 static void apply_remote_on(int v){ remote_set_on(v); }
 static void apply_remote_show(int v){ (void)v; remote_show_link(); }
 static void apply_remote_new(int v){ (void)v; remote_new_link(); }
+static void apply_mpd_on(int v){ mpd_set_on(v); }
+static void apply_mpd_show(int v){ (void)v; mpd_show_access(); }
 static void apply_ma_forget(int v){ (void)v; ma_forget_servers(); }
 
 static void apply_workmode(int v){ (void)v; modes_open(); }
@@ -1071,7 +1074,11 @@ static const setting_t TABLE[] = {
     { "Remote Control", "Show Link", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_remote_show, 0,
       "The control page's QR code and address. Anyone with the link can control the player, so keep it private.", NULL },
     { "Remote Control", "New Link", ST_ACTION, NULL, 0,0,0, NULL,0, "New", apply_remote_new, 0,
-      "Make a new link. Old links and bookmarks stop working.", NULL },
+      "Make a new link. Old links and bookmarks stop working. The MPD password changes with it.", NULL },
+    { "Remote Control", "MPD Server", ST_TOGGLE, "mpd_on", 0,1,1, NULL,0, NULL, apply_mpd_on, 0,
+      "On: MPD clients such as mpc or ncmpcpp control the Disc over Wi-Fi (port 6600). The password is the link's code. Unencrypted: use trusted networks only.", NULL },
+    { "Remote Control", "MPD Access", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_mpd_show, 0,
+      "The address and password MPD clients need. Anyone with the password can control the player.", NULL },
     { "Connectivity",  "Bluetooth", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_bluetooth_settings, 0,
       "Pair Bluetooth devices. Audio routes to connected headphones or speakers (SBC, beta).", NULL },
     { "Connectivity",  "Bluetooth Codec", ST_CHOICE, "bt_codec", 0,0,0, BT_CODEC_LABEL, BT_CODEC_N, NULL, apply_bt_codec, 0,

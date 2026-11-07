@@ -3818,6 +3818,52 @@ static int mdb_song_by_path_leased(const char *path, mdb_song_t *out){
     sqlite3_finalize(st);
     return found;
 }
+/* MPD server: walk SONG rows (no audiobooks) with every tag MPD answers with, in PATH (then TRACK) order. kind: MDB_ROWS_ALL,
+ * MDB_ROWS_UNDER (paths below the directory s, given without its trailing '/'), MDB_ROWS_PATH (exactly s), MDB_ROWS_ID.
+ * cb returns 0 to go on, 1 to stop. Returns the rows given to cb, or -1 on a database error. */
+int mdb_rows(int kind, const char *s, int id, int (*cb)(void *ud, const mdb_row_t *r), void *ud){
+    if(!cb || !sd_io_begin()) return -1;
+    sqlite3 *d = db_read(); if(!d){ sd_io_end(); return -1; }
+    static int known, has[5];                           /* the schema does not change while we run: ask once */
+    if(!known){
+        static const char *const C[5] = { "ALBUM_ARTIST", "SONG_PRODUCTION_YEAR", "IS_CUE", "IS_ISO", "DISC" };
+        for(int i = 0; i < 5; i++) has[i] = table_has_col(d, "SONG", C[i]);
+        known = 1;
+    }
+    const char *aa = has[0] ? "IFNULL(ALBUM_ARTIST,'')" : "''";
+    const char *yr = has[1] ? "IFNULL(SONG_PRODUCTION_YEAR,'')" : "''";
+    const char *cue = has[2] ? "IFNULL(IS_CUE,0)" : "0";
+    const char *iso = has[3] ? "IFNULL(IS_ISO,0)" : "0";
+    const char *disc = has[4] ? "IFNULL(DISC,0)" : "0";
+    const char *where = kind == MDB_ROWS_UNDER ? "AND PATH>?1 AND PATH<?2 " : kind == MDB_ROWS_PATH ? "AND PATH=?1 "
+                      : kind == MDB_ROWS_ID ? "AND ID=?3 " : "";
+    char sql[900];
+    snprintf(sql, sizeof sql, "SELECT ID,IFNULL(PATH,''),IFNULL(TITLE,''),IFNULL(NAME,''),IFNULL(ARTIST,''),IFNULL(ALBUM,''),%s,"
+             "IFNULL(GENRE,''),IFNULL(TRACK,0),%s,IFNULL(DURATION,0),%s,%s,%s FROM SONG WHERE lower(PATH) NOT LIKE '%%.m4b' %s"
+             "ORDER BY PATH,IFNULL(TRACK,0),ID;", aa, disc, cue, iso, yr, where);
+    sqlite3_stmt *st;
+    if(sqlite3_prepare_v2(d, sql, -1, &st, NULL) != SQLITE_OK){ sd_io_end(); return -1; }
+    char lo[600], hi[600];
+    if(kind == MDB_ROWS_UNDER){                         /* "dir/" <= PATH < "dir0": '0' follows '/' */
+        snprintf(lo, sizeof lo, "%s/", s ? s : ""); snprintf(hi, sizeof hi, "%s0", s ? s : "");
+        sqlite3_bind_text(st, 1, lo, -1, SQLITE_TRANSIENT); sqlite3_bind_text(st, 2, hi, -1, SQLITE_TRANSIENT);
+    } else if(kind == MDB_ROWS_PATH) sqlite3_bind_text(st, 1, s ? s : "", -1, SQLITE_TRANSIENT);
+    else if(kind == MDB_ROWS_ID) sqlite3_bind_int(st, 3, id);
+    int n = 0, rc;
+    while((rc = sqlite3_step(st)) == SQLITE_ROW){
+        mdb_row_t r;
+        r.id = sqlite3_column_int(st, 0); r.path = colt(st, 1); r.title = colt(st, 2); r.name = colt(st, 3);
+        r.artist = colt(st, 4); r.album = colt(st, 5); r.album_artist = colt(st, 6); r.genre = colt(st, 7);
+        r.track = sqlite3_column_int(st, 8); r.disc = sqlite3_column_int(st, 9); r.dur_ms = sqlite3_column_int(st, 10);
+        r.is_cue = sqlite3_column_int(st, 11); r.is_iso = sqlite3_column_int(st, 12); r.date = colt(st, 13);
+        n++;
+        if(cb(ud, &r)) break;
+    }
+    if(rc != SQLITE_ROW && rc != SQLITE_DONE) n = -1;
+    sqlite3_finalize(st);
+    sd_io_end();
+    return n;
+}
 int mdb_song_by_path(const char *path, mdb_song_t *out){
     if(!sd_io_begin()) return 0;
     int result = mdb_song_by_path_leased(path, out);
