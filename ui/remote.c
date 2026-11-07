@@ -794,6 +794,11 @@ static char *eq_json(void){
 static char *bt_json(void){
     static bt_remote_dev_t d[40];
     int st = bt_state(), busy = 0, n = st == BT_ON ? bt_remote_devices(d, 40, &busy) : 0;
+    /* the list is the last listing's: only a visit to the Bluetooth screen or a search makes one, so headphones the Disc
+     * reconnected on its own were missing. List the known devices again (off-thread, no search) when it is empty or
+     * older than 20 s (5 s while empty) while a page asks */
+    static uint32_t kick;
+    if(st == BT_ON && !busy && (!kick || lv_tick_elaps(kick) >= (n ? 20000u : 5000u))){ bt_remote_refresh(0); busy = 1; kick = lv_tick_get() | 1; }
     rmt_buf_t b; memset(&b, 0, sizeof b);
     rmt_buf_printf(&b, "{\"ok\":true,\"state\":\"%s\",\"busy\":%s,\"devices\":[",
                    st == BT_ON ? "on" : st == BT_TURNING_ON ? "turning_on" : "off", busy ? "true" : "false");
