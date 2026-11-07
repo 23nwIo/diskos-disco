@@ -138,6 +138,8 @@ static void test_core(void){
     r = req("POST", p("/api/play_item"), "kind=folder"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_FOLDER && !r.cmd.name[0]);   /* the whole card */
     CHECK(req("POST", p("/api/play_item"), "kind=folder&path=Music%2F..%2F..").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/play_item"), "kind=folder&path=%2Fetc").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/radio_fav_add"), "kind=radio_now"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_FAV && r.cmd.sub == RMT_I_RADIO_NOW && r.cmd.arg == 1);
+    r = req("POST", p("/api/radio_fav_remove"), "kind=radio_now"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_RADIO_NOW && r.cmd.arg == 0);
     r = req("POST", p("/api/play_item"), "kind=all"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_ALL);
     CHECK(req("POST", p("/api/play_item"), "kind=file&path=..%2Fx").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/play_item"), "kind=radio&pos=2&url=http%3A%2F%2Fs.example%2Fa");
@@ -229,7 +231,7 @@ static void test_core(void){
     snprintf(s.title, sizeof s.title, "Song \"1\""); snprintf(s.artist, sizeof s.artist, "Art");
     s.has_track = 1; s.playing = 1; s.position_ms = 1000; s.duration_ms = 2000; s.volume = 40; s.volume_max = 120;
     s.play_mode = 1; s.controllable = 1; s.source = "local";
-    char js[12000]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
+    char js[14000]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strstr(js, "\"radio_state\":\"off\"") && strstr(js, "\"station\":\"\""));
     CHECK(strstr(js, "\"title\":\"Song \\\"1\\\"\"") != NULL);
     CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"source\":\"local\""));
@@ -239,7 +241,7 @@ static void test_core(void){
     CHECK(strstr(js, "\"station_url\":\"https://radio.example/stream?a=1\\u0026b=\\\"2\\\"\"") || strstr(js, "\"station_url\":\"https://radio.example/stream?a=1&b=\\\"2\\\"\""));
     memset(s.title, 1, sizeof s.title - 1); s.title[sizeof s.title - 1] = 0;   /* worst-case escaping still fits */
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
-    memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0;
+    memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0; memset(s.bt_device, 1, sizeof s.bt_device - 1); s.bt_device[sizeof s.bt_device - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strlen(RMT_PAGE_HTML) < 32768);
 }
@@ -340,7 +342,7 @@ static void *emu(void *a){
     rmt_state_t s; memset(&s, 0, sizeof s);
     snprintf(s.title, sizeof s.title, "Track <one>"); s.has_track = 1; s.volume = 33; s.volume_max = 120; s.source = "local"; s.controllable = 1;
     snprintf(s.format, sizeof s.format, "FLAC"); s.bits = 24; s.sample_rate = 96000; s.kbps = 2304; s.channels = 2; s.favorite = 0;
-    snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz"); snprintf(s.bt_codec, sizeof s.bt_codec, "LDAC");
+    snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz"); snprintf(s.bt_codec, sizeof s.bt_codec, "LDAC"); snprintf(s.bt_device, sizeof s.bt_device, "XQ-50 <PRO2>"); s.station_fav = -1;
     while(g_emu_run){
         if(!g_emu_pause){
             rsrv_publish(&s);
@@ -387,17 +389,19 @@ static void *emu(void *a){
                     rsrv_done_blob((char *)b, n, "image/bmp");
                 }
                 else if(c.kind == RMT_CMD_PLAY_ITEM && c.sub == RMT_I_RADIO){        /* stand-in radio: it plays at once */
-                    s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Station %ld", c.pos);
+                    s.source = "radio"; s.radio_state = "playing"; s.station_fav = 0; snprintf(s.station, sizeof s.station, "Station %ld", c.pos);
                     snprintf(s.title, sizeof s.title, "Station %ld", c.pos);
                     snprintf(s.stream_title, sizeof s.stream_title, "Rude Norton - Tits On The Beach (1980) <x>");
                     snprintf(s.station_url, sizeof s.station_url, "%s", c.name[0] ? c.name : "https://radio.example/a-rather-long/path/to/the/stream.mp3?listener=remote"); rsrv_done(1, NULL);
                 } else if(c.kind == RMT_CMD_RADIO_SEARCH){              /* "answers" two seconds later */
                     snprintf(g_search_q, sizeof g_search_q, "%s", c.q[0] ? c.q : "*"); g_search_until = time(NULL) + 2; rsrv_done(1, NULL);
+                } else if(c.kind == RMT_CMD_RADIO_FAV && c.sub == RMT_I_RADIO_NOW){
+                    if(s.station_fav < 0) rsrv_done(0, "No station is playing"); else { s.station_fav = (int)c.arg; rsrv_done(1, NULL); }
                 } else if(c.kind == RMT_CMD_RADIO_FAV){
                     if(!c.arg && c.sub == RMT_I_RADIO && g_nfav > 0) g_nfav--;
                     rsrv_done(1, NULL);
                 } else if(c.kind == RMT_CMD_RADIO_STOP){
-                    s.source = "local"; s.radio_state = "off"; s.station[0] = 0; s.station_url[0] = 0; s.stream_title[0] = 0; snprintf(s.title, sizeof s.title, "Track <one>"); rsrv_done(1, NULL);
+                    s.source = "local"; s.radio_state = "off"; s.station[0] = 0; s.station_url[0] = 0; s.stream_title[0] = 0; s.station_fav = -1; snprintf(s.title, sizeof s.title, "Track <one>"); rsrv_done(1, NULL);
                 }
                 else rsrv_done(1, NULL);
             }

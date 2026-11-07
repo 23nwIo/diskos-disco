@@ -190,6 +190,14 @@ static const char *cover_file(void){                     /* the decoded cover of
 }
 /* The player reports its volume only when it changes (a714), so after a boot the Disc had 0 until the first change while
  * the player played at the level it restored from SYSCONFIG.VOLUME. Until that first report, use that saved level. */
+/* Is url a radio favourite? The favourites file is read at most every 2 s (and at once after a change from here). */
+static uint32_t g_favs_at;
+static int station_is_fav(const char *url){
+    static rc_station_t f[RC_MAX_FAV]; static int n = -1;
+    if(n < 0 || !g_favs_at || lv_tick_elaps(g_favs_at) >= 2000){ n = radio_favorites(f, RC_MAX_FAV); g_favs_at = lv_tick_get() | 1; }
+    for(int i = 0; i < n; i++) if(!strcmp(f[i].url, url)) return 1;
+    return 0;
+}
 static int vol_now(const track_state_t *st){
     static int boot = -2; static uint32_t at;
     if(st->volume_seq) return st->volume;
@@ -214,13 +222,14 @@ static void snapshot(rmt_state_t *s){
     snprintf(s->station, sizeof s->station, "%s", radio_station_name());
     snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
     s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
-    s->favorite = -1;
-    if(ui_route_mac()[0]) ui_bt_live_codec(s->bt_codec, sizeof s->bt_codec);   /* cached; a thread refreshes it */
+    s->favorite = -1; s->station_fav = -1;
+    if(ui_route_mac()[0]){ ui_bt_live_codec(s->bt_codec, sizeof s->bt_codec); if(!bt_peer_name(s->bt_device, sizeof s->bt_device)) s->bt_device[0] = 0; }   /* cached; a thread refreshes it */
     s->eq = simple_cfg_get_int("eq_preset", 0); if(s->eq < 0 || s->eq > 20) s->eq = 0;
     eqpreset_name(s->eq, s->eq_name, sizeof s->eq_name);
     rc_station_t rs;
     if(radio_active() && radio_station(&rs)){             /* the station's own codec and rate (the directory's word) */
         snprintf(s->station_url, sizeof s->station_url, "%s", rs.url);
+        s->station_fav = station_is_fav(rs.url);
         snprintf(s->stream_title, sizeof s->stream_title, "%s", radio_stream_title());
         snprintf(s->format, sizeof s->format, "%s", rs.codec); s->kbps = rs.bitrate;
     } else if(!music_assistant() && st.have_track){
@@ -474,6 +483,10 @@ static int play_song_id(int id){                       /* in the all-songs scope
 /* The station a request names: favourite or search hit number pos, checked against its url when one is given. */
 static const rc_station_t *radio_pick(const rmt_cmd_t *c, const char **why){
     static rc_station_t l[RC_MAX_FAV > RC_MAX_HITS ? RC_MAX_FAV : RC_MAX_HITS];
+    if(c->sub == RMT_I_RADIO_NOW){                         /* the station playing now (Now playing's star) */
+        if(!radio_active() || !radio_station(&l[0]) || !l[0].url[0]){ *why = "No station is playing"; return NULL; }
+        return &l[0];
+    }
     int hit = c->sub == RMT_I_RADIO_HIT, st = 0;
     int n = hit ? radio_search_result(l, RC_MAX_HITS, &st) : radio_favorites(l, RC_MAX_FAV);
     if(c->pos < 1 || c->pos > n || (c->name[0] && strcmp(c->name, l[c->pos - 1].url))){
@@ -484,7 +497,9 @@ static const rc_station_t *radio_pick(const rmt_cmd_t *c, const char **why){
 static int radio_fav_cmd(const rmt_cmd_t *c, const char **why){
     const rc_station_t *s = radio_pick(c, why);
     if(!s) return -1;
-    if((c->arg ? radio_fav_add(s) : radio_fav_remove(s->url)) == 0) return 0;
+    g_favs_at = 0;                                         /* Now playing's star follows at once */
+    rc_station_t copy = *s;
+    if((c->arg ? radio_fav_add(&copy) : radio_fav_remove(copy.url)) == 0) return 0;
     const char *e = radio_last_error();
     *why = e && e[0] ? e : "Couldn't save favourites";
     return -1;
@@ -500,7 +515,7 @@ static int play_radio(const rmt_cmd_t *c, const char **why){
 }
 static int play_item(const rmt_cmd_t *c, const char **why){
     static const char *const REFUSED = "The player refused - see the Disc";
-    if(c->sub == RMT_I_RADIO || c->sub == RMT_I_RADIO_HIT) return play_radio(c, why);   /* the radio switches the player's mode itself */
+    if(c->sub == RMT_I_RADIO || c->sub == RMT_I_RADIO_HIT || c->sub == RMT_I_RADIO_NOW) return play_radio(c, why);   /* the radio switches the player's mode itself */
     if(!ui_local_playback_allowed()){ *why = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)"; return -1; }
     int ok = 0; unsigned tseq, tseq2; ui_toast_last(&tseq);   /* a refusal the Disc toasted: the page says the same */
     switch(c->sub){

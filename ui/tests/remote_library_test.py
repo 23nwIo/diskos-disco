@@ -54,7 +54,7 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/playlist_rename id=2&name=Late+drive', 'GET /api/library/playlists',
         'POST /api/favorite on=1&song_id=6', 'GET /api/library/album?name=Other', 'POST /api/favorite on=0&song_id=2', 'GET /api/library/favorites',
         'POST /api/playlist_delete id=2', 'GET /api/library/playlists', 'POST /api/rescan action=stop', 'POST /api/eq preset=3', 'GET /api/status',
-        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55', 'POST /api/work_mode mode=3', 'GET /api/status']
+        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55', 'POST /api/work_mode mode=3', 'GET /api/status', 'POST /api/radio_fav_add kind=radio_now']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -134,4 +134,5 @@ assert res[56]['rc'] == -1 and res[56]['why'] == 'Bluetooth is off' and res[57][
 # Working mode goes through the Working mode screen's own switch: on a host it refuses, and the page gets the Disc's own reason
 assert res[58]['rc'] == -1 and res[58]['why'] and res[58]['why'] != "Couldn't switch mode", res[58]
 assert res[59]['body']['work_mode'] == 0, res[59]['body'].get('work_mode')
+assert res[60]['rc'] == -1 and res[60]['why'] == 'No station is playing', res[60]
 print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth, working mode, folder play')

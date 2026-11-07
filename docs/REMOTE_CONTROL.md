@@ -27,7 +27,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Control | Notes |
 |---|---|
 | Play/Pause, Next, Previous | Exactly what the Music screen's buttons do: audiobooks skip 30 s / back 15 s, fast repeated skips are paced, Music Assistant (MA Sendspin) is controlled when it plays. |
-| Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory), and the Bluetooth codec when headphones play. |
+| Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory), and the Bluetooth codec and headphones when they play. A star saves the song, or the station while the radio plays, to the favourites (song lists have the same star on every row). |
 | Position slider | Seeks the current song. |
 | Volume | 0-120, the player's own scale (the same as the hardware keys). After a start-up, until the volume first changes, the level the player restored at boot (its saved SYSCONFIG.VOLUME). |
 | EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
@@ -106,7 +106,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 
 | Request | Effect |
 |---|---|
-| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","stream_title":"Artist - Title" or "","bt_codec":"LDAC" or "" (the codec the Bluetooth headphones run),"radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
+| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","stream_title":"Artist - Title" or "","bt_codec":"LDAC" or "" (the codec the Bluetooth headphones run),"bt_device":"…" (their name),"station_fav":true|false|null,"radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
 | `GET api/status` | `{"ok":true,"groups":[{"name":"Wi-Fi","rows":[["Signal","-60 dBm (good)"],…]},…]}` (display text) |
 | `GET api/eq`, `POST api/eq` with `preset=0..20` | The presets (`{"current":N,"presets":[{"id":0,"name":"Off"},…]}`) / select one. |
 | `POST api/playlist_create` (`name`, 1-64 bytes), `playlist_rename` (`id`, `name`), `playlist_delete` (`id`) | Playlists. Create answers `{"ok":true,"id":N}`. |
@@ -129,7 +129,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`, `fav`), `radio_search` (the last station search: also `"search":"idle"|"busy"|"done"|"failed"`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
 | `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=folder` + `path` (empty: the whole card; subfolders included, path order); `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed); `kind=radio_hit` + `pos` + `url` (a search hit). `pos` counts from 1. |
 | `POST api/radio_search` with `q` | Start a station search (`q` empty: popular stations); then poll `GET api/library/radio_search` until `search` is not `busy`. |
-| `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`. |
+| `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
