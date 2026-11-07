@@ -27,7 +27,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Control | Notes |
 |---|---|
 | Play/Pause, Next, Previous | Exactly what the Music screen's buttons do: audiobooks skip 30 s / back 15 s, fast repeated skips are paced, Music Assistant (MA Sendspin) is controlled when it plays. |
-| Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory), and the Bluetooth codec and headphones when they play. A star saves the song, or the station while the radio plays, to the favourites (song lists have the same star on every row). |
+| Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory), and the Bluetooth codec and headphones when they play. A heart saves the song, or the station while the radio plays, to the favourites (song lists and stations have the same heart on every row). |
 | Position slider | Seeks the current song. |
 | Volume | 0-120, the player's own scale (the same as the hardware keys). After a start-up, until the volume first changes, the level the player restored at boot (its saved SYSCONFIG.VOLUME). |
 | EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
@@ -52,6 +52,12 @@ playlist**; inside a playlist the header **⋯** renames or deletes it (the song
 playing marks the song that is playing, through the player like the Disc's own heart. These are the Disc's own
 playlist and favourite functions; a Library list open on the Disc refreshes. Songs cannot be reordered inside a
 playlist (the Disc has no reorder function either).
+
+### Page look
+
+Below **Restart the Disc** in the Status tab: **Page colour** (orange, the default, blue, green, purple or red: buttons,
+tabs, sliders and scroll bars) and **Favourites** (red hearts, the default, or yellow stars). Both are kept in the
+browser, so each phone or computer has its own; light and dark mode follow the device.
 
 ### Status
 
