@@ -583,7 +583,7 @@ const char RMT_PAGE_HTML[] =
 "$('pp').innerHTML=s.playing?'&#9208;':'&#9654;';\n"
 "if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}\n"
 "$('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);\n"
-"if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=s.volume}$('vv').textContent=s.volume;\n"
+"if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=Math.max(0,s.volume)}$('vv').textContent=s.volume<0?'(not known yet)':s.volume;\n"
 "if(s.play_mode>=0&&document.activeElement!==$('pm'))$('pm').value=s.play_mode;\n"
 "if(document.activeElement!==$('eqs')){if(!$('eqs').options.length||$('eqs').dataset.n!==s.eq_name)eqload(s.eq);else $('eqs').value=s.eq}\n"
 "if(!s.controllable)say(s.source==='other'?'The player is in another mode (e.g. USB or Bluetooth)':'')\n"

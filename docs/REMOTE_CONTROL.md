@@ -29,7 +29,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Play/Pause, Next, Previous | Exactly what the Music screen's buttons do: audiobooks skip 30 s / back 15 s, fast repeated skips are paced, Music Assistant (MA Sendspin) is controlled when it plays. |
 | Song details | Cover (the Disc's 148 px decode, so a bit soft on a large screen), format, bit depth, sample rate and bit rate (Song Info's values: the scanner's rate, else the file's average; for the radio, the station's codec and rate from the directory), and the Bluetooth codec when headphones play. |
 | Position slider | Seeks the current song. |
-| Volume | 0-120, the player's own scale (the same as the hardware keys). |
+| Volume | 0-120, the player's own scale (the same as the hardware keys). After a start-up, until the volume first changes, the level the player restored at boot (its saved SYSCONFIG.VOLUME). |
 | EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
 | Play mode | Sequential, Shuffle, Repeat one, Repeat all, Single. Saved like the Disc's own setting. Not available while Music Assistant plays. |
 

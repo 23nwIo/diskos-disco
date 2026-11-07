@@ -229,6 +229,7 @@ int  mdb_get_peq(int style_preset, int *master_out, int *gains_out);   /* 1=foun
 int  mdb_peq_is_graphic(int style_preset);   /* 1=graphic-editable (or empty), 0=parametric (don't overwrite), -1=read failed */
 
 int  mdb_sysconfig_folder_jump(void);
+int  mdb_sysconfig_volume(void);   /* SYSCONFIG.VOLUME 0..120 (restored at boot), -1 unknown */
 int  mdb_sysconfig_language(void);          /* SYSCONFIG.LANGUAGE (0..), -1 unreadable */        /* SYSCONFIG.FOLDER_JUMP (0687): 0/1, -1 unreadable */
 int  mdb_sysconfig_auto_time(void);          /* SYSCONFIG.AUTO_TIME: 0/1, -1 unreadable (player reads it at start) */
 int  mdb_sysconfig_set_auto_time(int on);    /* 0 = written + read back, -1 = not */

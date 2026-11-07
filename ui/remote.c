@@ -186,6 +186,14 @@ static const char *cover_file(void){                     /* the decoded cover of
     if(!c) return NULL;
     return !strncmp(c, "A:", 2) ? c + 2 : c;
 }
+/* The player reports its volume only when it changes (a714), so after a boot the Disc had 0 until the first change while
+ * the player played at the level it restored from SYSCONFIG.VOLUME. Until that first report, use that saved level. */
+static int vol_now(const track_state_t *st){
+    static int boot = -2; static uint32_t at;
+    if(st->volume_seq) return st->volume;
+    if(boot == -2 || (boot < 0 && lv_tick_elaps(at) >= 10000)){ boot = mdb_sysconfig_volume(); at = lv_tick_get(); }
+    return boot;
+}
 static void snapshot(rmt_state_t *s){
     track_state_t st; ipc_get_state(&st);
     memset(s, 0, sizeof *s);
@@ -195,7 +203,7 @@ static void snapshot(rmt_state_t *s){
     s->has_track = st.have_track;
     s->playing = music_assistant() ? ma_playing() : ui_is_playing();
     s->position_ms = st.position_ms; s->duration_ms = st.duration_ms;
-    s->volume = st.volume; s->volume_max = VOL_MAX;
+    s->volume = vol_now(&st); s->volume_max = VOL_MAX;
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
     s->work_mode = ui_get_source_mode();
@@ -241,7 +249,9 @@ static int run(const rmt_cmd_t *c, const char **why){
     case RMT_CMD_PREV:  return ui_transport_command(PREV);
     case RMT_CMD_SEEK:  return ui_seek_to(c->arg);
     case RMT_CMD_VOLUME: return ui_set_volume((int)c->arg);
-    case RMT_CMD_VOLUME_STEP: { track_state_t st; ipc_get_state(&st); return ui_set_volume(st.volume + (int)c->arg); }
+    case RMT_CMD_VOLUME_STEP: { track_state_t st; ipc_get_state(&st); int v = vol_now(&st);
+        if(v < 0){ *why = "The volume is not known yet - set it once"; return -1; }
+        return ui_set_volume(v + (int)c->arg); }
     case RMT_CMD_PLAY_MODE:
         if(ma){ *why = "Music Assistant sets the play mode while it plays"; return -1; }
         if(!ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }
@@ -606,7 +616,7 @@ static char *status_json(void){
     char oc[16] = ""; if(ui_route_mac()[0]) ui_bt_live_codec(oc, sizeof oc);
     st_row(&s, "Output", "%s%s%s%s", ui_route_mac()[0] ? "Bluetooth" : route == OUT_USB ? "USB-C audio" : route == OUT_SPDIF ? "S/PDIF" : "Headphone jack",
            oc[0] ? " (" : "", oc, oc[0] ? ")" : "");
-    st_row(&s, "Volume", "%d / %d", st.volume, VOL_MAX);
+    { int v = vol_now(&st); if(v >= 0) st_row(&s, "Volume", "%d / %d", v, VOL_MAX); else st_row(&s, "Volume", "Not known yet"); }
     char eqn[48]; int eq = simple_cfg_get_int("eq_preset", 0); eqpreset_name(eq, eqn, sizeof eqn);
     st_row(&s, "EQ", "%s", eqn);
     int sdone = 0, stot = 0, sact = scanner_active();

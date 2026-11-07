@@ -3548,6 +3548,24 @@ static int sysconfig_flag(const char *sql){
     if(c) sqlite3_close(c);
     return v;
 }
+/* The volume the player saved (SYSCONFIG.VOLUME, docs/RE_CATALOGUE.md): it restores it at boot and saves it on a real
+ * power-off, so until its first volume report it is the level playing. 0..120, -1 unknown. */
+int mdb_sysconfig_volume(void){
+    sqlite3 *c = NULL; int v = -1;
+    if(sqlite3_open_v2(MDB_SYSCONFIG_PATH, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
+        sqlite3_busy_timeout(c, 200);
+        sqlite3_stmt *st;
+        if(sqlite3_prepare_v2(c, "SELECT VOLUME FROM SYSCONFIG WHERE ID=1;", -1, &st, NULL) == SQLITE_OK){
+            if(sqlite3_step(st) == SQLITE_ROW && sqlite3_column_type(st, 0) == SQLITE_INTEGER){
+                int x = sqlite3_column_int(st, 0);
+                if(x >= 0 && x <= 120) v = x;
+            }
+            sqlite3_finalize(st);
+        }
+    }
+    if(c) sqlite3_close(c);
+    return v;
+}
 /* Play Through Folders (0687 -> SYSCONFIG.FOLDER_JUMP, default 0; docs/COMMAND_MAP.md V2.57 preference setters) */
 int mdb_sysconfig_folder_jump(void){ return sysconfig_flag("SELECT FOLDER_JUMP FROM SYSCONFIG WHERE ID=1;"); }
 /* the player's UI language index (stock uses it to pick the iTunes storefront for online covers) */
