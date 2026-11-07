@@ -50,4 +50,4 @@ accepted.
 For a front end such as Remote Control, `ui/radio.h` offers `radio_favorites`, `radio_play`, `radio_play_url`,
 `radio_stop`, `radio_state`, `radio_station_name`, `radio_stream_title` ("Artist - Title", "" none), the directory search (`radio_search`, `radio_search_result`) and
 `radio_fav_add` / `radio_fav_remove` (main thread only). [Remote Control](REMOTE_CONTROL.md) uses them for
-its Radio tab.
+its Radio tab, the [MPD Server](MPD.md#web-radio) for the stored playlist "Radio".

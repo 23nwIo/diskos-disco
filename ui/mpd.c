@@ -15,6 +15,10 @@
  * Queue (or a new list) can be deleted or moved; Up Next belongs to the player.
  * URIs are paths relative to the SD card root; a CUE/ISO sub-track is "<path>/trackNNNN" (as MPD names CUE tracks).
  *
+ * Web radio: the Disc's radio favourites are the stored playlist "Radio" (listplaylist(info), load, playlistadd, playlistdelete;
+ * it hides a library playlist of the same name). A stream URL cannot wait in a queue on the Disc: "add URL" (or "load Radio")
+ * starts the station at once, and while the radio plays the MPD queue is that one stream. "stop" and "clear" end the radio.
+ *
  * Not supported (answered with an ACK): consume, crossfade, MixRamp, replay gain changes, outputs other than the Disc,
  * stickers, partitions, channels, regular-expression filters, album art (stage 2). stop pauses (the player has no stop). */
 #include "mpd.h"
@@ -337,6 +341,11 @@ static int rexec(rmt_cmd_t *c, const char **msg){
 static int rsimple(rmt_cmd_kind_t k, long arg, const char **msg){
     rmt_cmd_t c; memset(&c, 0, sizeof c); c.kind = k; c.arg = arg; return rexec(&c, msg);
 }
+/* play: a station that is starting or playing is left alone (the player may not report playing yet: a toggle would pause it) */
+static int play_cmd(const char **msg){
+    if(radio_active()){ const char *rs = radio_state(); if(!strcmp(rs, "starting") || !strcmp(rs, "playing")) return 0; }
+    return rsimple(RMT_CMD_PLAY, 0, msg);
+}
 static const char *const NOT_LOCAL = "The Disc is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)";
 static int play_staged(int idx, const char **msg){
     if(idx < 0 || idx >= g_st.n){ *msg = "Bad song index"; return MPD_ACK_ARG; }
@@ -357,7 +366,7 @@ static int play_pos(int pos, const char **msg){
     const ventry_t *v = &g_view[pos];
     switch(v->kind){
     case V_STAGED: return play_staged(v->idx, msg);
-    case V_CUR: case V_OTHER: return rsimple(RMT_CMD_PLAY, 0, msg);
+    case V_CUR: case V_OTHER: return play_cmd(msg);
     case V_QUEUE:
         if(!ui_local_playback_allowed()){ *msg = NOT_LOCAL; return MPD_ACK_SYSTEM; }
         queue_jump(v->idx); view_invalidate(); return 0;
@@ -550,6 +559,36 @@ static int plp_cb(void *ud, const mdb_row_t *r){
     return 1;
 }
 
+/* ---------------------------------------------------------------- web radio: the favourites as the playlist "Radio" */
+static const char RADIO_PL[] = "Radio";
+static int is_radio_pl(const char *name){ return !strcmp(name, RADIO_PL); }
+static int is_stream(const char *uri){ return !strncmp(uri, "http://", 7) || !strncmp(uri, "https://", 8); }
+static rc_station_t *radio_favs(int *n){                 /* malloc'd copy (RC_MAX_FAV stations are ~45 KB: not on the stack) */
+    rc_station_t *f = calloc(RC_MAX_FAV, sizeof *f);
+    *n = f ? radio_favorites(f, RC_MAX_FAV) : 0;
+    return f;
+}
+static int radio_err(const char **msg, const char *fallback){
+    const char *e = radio_last_error();
+    snprintf(g_msg, sizeof g_msg, "%s", e && e[0] ? e : fallback); *msg = g_msg; return MPD_ACK_SYSTEM;
+}
+/* a stream URL: the favourite of that URL (its name, codec, rate), else the bare URL */
+static int play_stream(const char *url, const char **msg){
+    if(!rc_url_ok(url)){ *msg = "That station address can't be played"; return MPD_ACK_ARG; }
+    int n; rc_station_t *f = radio_favs(&n);
+    int i = f ? rc_fav_find(f, n, url) : -1;
+    int r = i >= 0 ? radio_play(&f[i]) : radio_play_url(url, url);
+    free(f);
+    stage_clear(0); view_invalidate();
+    return r ? radio_err(msg, "Couldn't start the radio") : 0;
+}
+static void print_station(rmt_buf_t *o, const rc_station_t *s, int full){
+    mpd_kv(o, "file", s->url);
+    if(!full) return;
+    mpd_kv(o, "Name", s->name); mpd_kv(o, "Title", s->name);
+    char d[128]; rc_detail(s, d, sizeof d); kv_if(o, "Comment", d);
+}
+
 /* ---------------------------------------------------------------- adding */
 static int add_ids(idlist_t *l, const char **msg){
     if(l->oom){ *msg = "Out of memory"; return MPD_ACK_SYSTEM; }
@@ -577,7 +616,7 @@ static int add_ids(idlist_t *l, const char **msg){
 static const char *const COMMANDS[] = { "add", "addid", "clear", "commands", "count", "currentsong", "decoders", "delete", "deleteid",
     "disableoutput", "enableoutput", "find", "findadd", "getvol", "list", "listall", "listallinfo", "listplaylist", "listplaylistinfo",
     "listplaylists", "load", "lsinfo", "move", "moveid", "next", "notcommands", "outputs", "pause", "play", "playid", "playlist",
-    "playlistid", "playlistinfo", "plchanges", "plchangesposid", "previous", "random", "repeat", "replay_gain_status", "rescan",
+    "playlistadd", "playlistdelete", "playlistid", "playlistinfo", "plchanges", "plchangesposid", "previous", "random", "repeat", "replay_gain_status", "rescan",
     "rm", "rename", "save", "search", "searchadd", "searchcount", "seek", "seekcur", "seekid", "setvol", "shuffle", "single", "stats",
     "status", "stop", "toggleoutput", "update", "urlhandlers", "volume", "consume", "crossfade", NULL };
 static int argn(int argc, int lo, int hi, const char *cmd, const char **msg){
@@ -693,9 +732,13 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
         ARGS(0, 1);
         if(argc == 1) return rsimple(RMT_CMD_PLAY_PAUSE, 0, msg);
         int v; if(mpd_parse_bool(argv[1], &v)) return bad_arg(msg, "Boolean (0/1) expected");
-        return rsimple(v ? RMT_CMD_PAUSE : RMT_CMD_PLAY, 0, msg);
+        return v ? rsimple(RMT_CMD_PAUSE, 0, msg) : play_cmd(msg);
     }
-    if(!strcmp(c, "stop")){ ARGS(0, 0); if(g_st.on) return 0; return rsimple(RMT_CMD_PAUSE, 0, msg); }   /* no stop on the Disc */
+    if(!strcmp(c, "stop")){
+        ARGS(0, 0); if(g_st.on) return 0;
+        if(radio_active()){ radio_stop(); view_invalidate(); return 0; }   /* a stream ends; local playback comes back paused */
+        return rsimple(RMT_CMD_PAUSE, 0, msg);                             /* no stop on the Disc */
+    }
     if(!strcmp(c, "next")){ ARGS(0, 0); view_invalidate(); return rsimple(RMT_CMD_NEXT, 0, msg); }
     if(!strcmp(c, "previous")){ ARGS(0, 0); view_invalidate(); return rsimple(RMT_CMD_PREV, 0, msg); }
     if(!strcmp(c, "play") || !strcmp(c, "playid")){
@@ -703,7 +746,7 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
         remote_state(&s); view_get(&s, 1);
         if(argc == 1 || !strcmp(argv[1], "-1")){
             if(g_st.on){ if(!g_st.n) return 0; return play_staged(0, msg); }
-            if(cur_pos() >= 0 || queue_count() > 0) return rsimple(RMT_CMD_PLAY, 0, msg);
+            if(cur_pos() >= 0 || queue_count() > 0) return play_cmd(msg);
             return 0;                                        /* nothing to play, as MPD */
         }
         long v; if(mpd_parse_int(argv[1], 0, 1L << 30, &v)) return bad_arg(msg, "Integer expected");
@@ -760,7 +803,12 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
     if(!strcmp(c, "add") || !strcmp(c, "addid")){
         ARGS(1, 2);
         if(argc == 3){ *msg = "Adding at a position is not supported: songs play after the current one"; return MPD_ACK_ARG; }
-        if(strstr(argv[1], "://")){ *msg = "Streams can't be added (use the Radio)"; return MPD_ACK_NO_EXIST; }
+        if(is_stream(argv[1])){                              /* a station: it plays now (a stream can't wait in a queue here) */
+            int r = play_stream(argv[1], msg); if(r) return r;
+            if(c[3]) rmt_buf_printf(o, "Id: %d\n", ID_OTHER);
+            return 0;
+        }
+        if(strstr(argv[1], "://")){ *msg = "Only http:// and https:// streams can be played"; return MPD_ACK_NO_EXIST; }
         idlist_t l;
         if(uri_ids(argv[1], &l) < 0){ free(l.ids); *msg = "Database error"; return MPD_ACK_SYSTEM; }
         int staged_before = g_st.on, qn_before = queue_count(), sn_before = g_st.n;
@@ -776,6 +824,7 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
     if(!strcmp(c, "clear")){
         ARGS(0, 0);
         if(queue_count() > 0) queue_clear();
+        if(radio_active()) radio_stop();                     /* the stream was the whole queue */
         remote_state(&s);
         if(s.playing && !strcmp(s.source, "local")){ int r = rsimple(RMT_CMD_PAUSE, 0, msg); if(r) return r; }
         stage_clear(1); view_invalidate();
@@ -833,7 +882,12 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
     if(!strcmp(c, "lsinfo") || !strcmp(c, "listall") || !strcmp(c, "listallinfo")){
         ARGS(0, 1);
         char empty[1] = "";
-        return list_dir(argc == 2 ? argv[1] : empty, c[1] == 's' ? W_LS : c[7] ? W_LISTALLINFO : W_LISTALL, o, msg);
+        int r = list_dir(argc == 2 ? argv[1] : empty, c[1] == 's' ? W_LS : c[7] ? W_LISTALLINFO : W_LISTALL, o, msg);
+        if(!r && c[1] == 's' && (argc == 1 || !strip_slashes(argv[1])[0])){   /* the root also names the stored playlists, as MPD's */
+            char *la[1] = { (char *)"listplaylists" };
+            return handler(ud, 1, la, o, msg, sess);
+        }
+        return r;
     }
     if(!strcmp(c, "find") || !strcmp(c, "search") || !strcmp(c, "findadd") || !strcmp(c, "searchadd") || !strcmp(c, "count") || !strcmp(c, "searchcount")){
         int fold = c[0] == 's', add = strstr(c, "add") != NULL, count = strstr(c, "count") != NULL;
@@ -866,16 +920,32 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
     /* ---- stored playlists */
     if(!strcmp(c, "listplaylists")){
         ARGS(0, 0);
+        mpd_kv(o, "playlist", RADIO_PL); rmt_buf_put(o, "Last-Modified: 1970-01-01T00:00:00Z\n");
         int n = mdb_playlist_num(); if(n <= 0) return 0;
         char (*names)[MDB_STR] = calloc((size_t)n + 1, MDB_STR); long *ids = calloc((size_t)n + 1, sizeof *ids);
         if(!names || !ids){ free(names); free(ids); *msg = "Out of memory"; return MPD_ACK_SYSTEM; }
         int got = mdb_playlists(names, ids, n);
-        for(int i = 0; i < got && i < n; i++){ mpd_kv(o, "playlist", names[i]); rmt_buf_put(o, "Last-Modified: 1970-01-01T00:00:00Z\n"); }
+        for(int i = 0; i < got && i < n; i++){ if(is_radio_pl(names[i])) continue; mpd_kv(o, "playlist", names[i]); rmt_buf_put(o, "Last-Modified: 1970-01-01T00:00:00Z\n"); }
         free(names); free(ids);
         return 0;
     }
     if(!strcmp(c, "listplaylist") || !strcmp(c, "listplaylistinfo") || !strcmp(c, "load")){
         ARGS(1, 2);
+        if(is_radio_pl(argv[1])){
+            long a = 0, b = -1;
+            if(argc == 3 && mpd_parse_range(argv[2], &a, &b)) return bad_arg(msg, "Bad range");
+            int n; rc_station_t *f = radio_favs(&n);
+            if(!f){ *msg = "Out of memory"; return MPD_ACK_SYSTEM; }
+            if(b < 0 || b > n) b = n;
+            if(a > b) a = b;
+            int r = 0;
+            if(c[0] == 'l' && c[1] == 'o'){                  /* load: the first station of the range plays */
+                if(a >= b){ *msg = n ? "Bad range" : "No radio favourites yet (hold a station on the Disc's Radio screen)"; r = MPD_ACK_NO_EXIST; }
+                else r = play_stream(f[a].url, msg);
+            } else for(long i = a; i < b; i++) print_station(o, &f[i], c[12] == 'i');
+            free(f);
+            return r;
+        }
         long pid = playlist_by_name(argv[1]);
         if(!pid){ *msg = "No such playlist"; return MPD_ACK_NO_EXIST; }
         idlist_t l; if(playlist_ids(pid, &l)){ free(l.ids); *msg = "Couldn't read the playlist"; return MPD_ACK_SYSTEM; }
@@ -897,7 +967,7 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
         ARGS(1, 2);
         if(argc == 3 && strcmp(argv[2], "create")){ *msg = "Only save NAME (create) is supported"; return MPD_ACK_ARG; }
         if(!argv[1][0] || strlen(argv[1]) >= RMT_PL_NAME_MAX){ *msg = "Bad playlist name"; return MPD_ACK_ARG; }
-        if(playlist_by_name(argv[1])){ *msg = "Playlist already exists"; return MPD_ACK_EXIST; }
+        if(is_radio_pl(argv[1]) || playlist_by_name(argv[1])){ *msg = "Playlist already exists"; return MPD_ACK_EXIST; }
         remote_state(&s); view_get(&s, 1);
         idlist_t l; memset(&l, 0, sizeof l);
         for(int i = 0; i < g_nview; i++){
@@ -917,6 +987,8 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
     }
     if(!strcmp(c, "rm") || !strcmp(c, "rename")){
         ARGS(c[1] == 'm' ? 1 : 2, c[1] == 'm' ? 1 : 2);
+        if(is_radio_pl(argv[1])){ *msg = "The radio favourites can't be removed or renamed (playlistdelete removes a station)"; return MPD_ACK_SYSTEM; }
+        if(c[1] != 'm' && is_radio_pl(argv[2])){ *msg = "Playlist already exists"; return MPD_ACK_EXIST; }
         long pid = playlist_by_name(argv[1]);
         if(!pid){ *msg = "No such playlist"; return MPD_ACK_NO_EXIST; }
         int ok;
@@ -930,6 +1002,28 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
         library_refresh();
         msrv_events(MPD_EV_STORED_PLAYLIST);
         return 0;
+    }
+    if(!strcmp(c, "playlistadd") || !strcmp(c, "playlistdelete")){
+        ARGS(2, 3);
+        if(!is_radio_pl(argv[1])){ *msg = "Only the playlist \"Radio\" (the radio favourites) can be edited from an MPD client"; return MPD_ACK_SYSTEM; }
+        int r = 0;
+        if(c[8] == 'a'){                                     /* playlistadd Radio URL: a favourite (named after the station playing it, else the URL) */
+            if(argc == 4){ *msg = "Adding at a position is not supported"; return MPD_ACK_ARG; }
+            if(!is_stream(argv[2]) || !rc_url_ok(argv[2])){ *msg = "Only http:// and https:// stream URLs can be radio favourites"; return MPD_ACK_ARG; }
+            rc_station_t st; memset(&st, 0, sizeof st);
+            if(!radio_station(&st) || strcmp(st.url, argv[2])){ memset(&st, 0, sizeof st); snprintf(st.name, sizeof st.name, "%s", argv[2]); snprintf(st.url, sizeof st.url, "%s", argv[2]); }
+            if(radio_fav_add(&st)) r = radio_err(msg, "Couldn't save the favourite");
+        } else {                                             /* playlistdelete Radio POS */
+            if(argc != 3){ snprintf(g_msg, sizeof g_msg, "wrong number of arguments for \"%s\"", c); *msg = g_msg; return MPD_ACK_ARG; }
+            long pos; if(mpd_parse_int(argv[2], 0, RC_MAX_FAV, &pos)) return bad_arg(msg, "Integer expected");
+            int n; rc_station_t *f = radio_favs(&n);
+            if(!f){ *msg = "Out of memory"; return MPD_ACK_SYSTEM; }
+            if(pos >= n){ *msg = "Bad song index"; r = MPD_ACK_ARG; }
+            else if(radio_fav_remove(f[pos].url)) r = radio_err(msg, "Couldn't save the favourites");
+            free(f);
+        }
+        if(!r) msrv_events(MPD_EV_STORED_PLAYLIST);
+        return r;
     }
     snprintf(g_msg, sizeof g_msg, "unknown command \"%.60s\"", c);
     *msg = g_msg;

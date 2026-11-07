@@ -10,7 +10,7 @@ ui = Path(__file__).resolve().parents[1]
 sd = Path('/tmp/sdcard'); shutil.rmtree(sd, ignore_errors=True)
 (sd/'Music/Blue Album').mkdir(parents=True); (sd/'Music/Other').mkdir(parents=True); (sd/'Music/Other/Deep').mkdir(parents=True)
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
-Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True); (ui/'tests/host_build/queue.tsv').unlink(missing_ok=True)   # host builds keep the Queue here
+Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True); Path('/usr/data/radio_favorites.txt').unlink(missing_ok=True); (ui/'tests/host_build/queue.tsv').unlink(missing_ok=True)   # host builds keep the Queue here
 con = sqlite3.connect(db)
 cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
         'ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE,'
@@ -75,7 +75,7 @@ r = run(['lsinfo', 'lsinfo Music', 'lsinfo "Music/Other"', 'listall Music/Other'
          'lsinfo "Music/Other/live.flac/track0002"', 'listallinfo Music/Other/Deep', 'listplaylists', 'listplaylist "Road trip"',
          'listplaylistinfo "Road trip"', 'listplaylist nope', 'stats', 'status', 'currentsong', 'playlistinfo', 'find "(artist =~ \'x\')"',
          'commands', 'outputs', 'nonsense', 'ping\\nstatus', 'getvol', 'search any blue'])
-assert kv(ok(r[0]), 'directory') == ['Music']
+assert kv(ok(r[0]), 'directory') == ['Music'] and kv(r[0], 'playlist') == ['Radio', 'Road trip'], r[0]   # the root names the playlists
 assert kv(ok(r[1]), 'directory') == ['Music/Blue Album', 'Music/Other']
 assert kv(ok(r[2]), 'directory') == ['Music/Other/Deep'] and kv(r[2], 'file') == ['Music/Other/01 Nuit.flac', 'Music/Other/02 Jour.flac', 'Music/Other/live.flac/track0001', 'Music/Other/live.flac/track0002']
 assert [l for l in ok(r[3])['lines'][:-1]] == ['file: Music/Other/01 Nuit.flac', 'file: Music/Other/02 Jour.flac', 'directory: Music/Other/Deep',
@@ -92,7 +92,7 @@ assert kv(ok(r[13]), 'songs') == ['3'] and kv(r[13], 'playtime') == ['606']
 assert kv(ok(r[14]), 'Title') == ['Live 1'], r[14]
 assert kv(ok(r[15]), 'Title') == ['Live 2'] and kv(r[15], 'Track') == ['2']
 assert kv(ok(r[16]), 'file') == ['Music/Other/Deep/01 Solo.flac'] and kv(r[16], 'directory') == []
-assert kv(ok(r[17]), 'playlist') == ['Road trip']
+assert kv(ok(r[17]), 'playlist') == ['Radio', 'Road trip']
 assert kv(ok(r[18]), 'file') == ['Music/Blue Album/01 Uno.flac', 'Music/Other/Deep/01 Solo.flac'], r[18]
 assert kv(ok(r[19]), 'Title') == ['Uno', 'Solo']
 ack(r[20], 50)
@@ -123,7 +123,7 @@ con = sqlite3.connect(db)
 slot = [t for (t,) in con.execute('SELECT TITLE FROM CUSTOM_PLAYLIST WHERE PLAYLIST_ID=-1000 ORDER BY ROWID')]
 con.close()
 assert slot == ['Solo', 'Live 1', 'Jour', 'Live 2', 'Tres'], slot
-ack(r[9], 50); ack(r[10], 50)
+ack(r[9], 50); assert 'Wi-Fi' in ack(r[10], 52), r[10]   # a stream plays at once: a host has no Wi-Fi
 
 # ---- playing the Blue Album at song 2 (LIST_SONG_0.ID 12): Up Next, the diskOS Queue, delete/move rules, options, volume
 T = f"{sd}/Music/Blue Album/02 Dos.flac\tDos\t12"
@@ -157,4 +157,20 @@ ok(r[25]); assert kv(ok(r[26]), 'state') == ['stop'] and kv(r[26], 'playlistleng
 assert ok(r[27])['lines'] == ['OK']
 ack(r[28], 52); ok(r[29])
 ok(r[30]); ok(r[31]); assert kv(ok(r[32]), 'playlist')[-1] == 'Night drive'; ok(r[33])
+
+# ---- web radio: the favourites are the stored playlist "Radio"
+Path('/usr/data/radio_favorites.txt').write_text('Jazz FM\thttps://jazz.example/live.mp3\tMP3\t128\tGermany\nTalk\thttp://talk.example/a.aac\tAAC\t64\t\n')
+r = run(['listplaylist Radio', 'listplaylistinfo Radio', 'playlistadd Radio http://new.example/s.ogg', 'listplaylist Radio',
+         'playlistdelete Radio 1', 'listplaylist Radio', 'playlistdelete Radio 9', 'playlistadd Radio ftp://x/y', 'playlistadd "Road trip" http://a/b',
+         'rm Radio', 'save Radio', 'load Radio', 'load Radio 1:2', 'addid https://jazz.example/live.mp3', 'add http://bad url'])
+assert kv(ok(r[0]), 'file') == ['https://jazz.example/live.mp3', 'http://talk.example/a.aac'], r[0]
+assert kv(ok(r[1]), 'Name') == ['Jazz FM', 'Talk'] and kv(r[1], 'Comment')[0].startswith('MP3'), r[1]
+ok(r[2]); assert kv(ok(r[3]), 'file') == ['https://jazz.example/live.mp3', 'http://talk.example/a.aac', 'http://new.example/s.ogg'], r[3]
+ok(r[4]); assert kv(ok(r[5]), 'file') == ['https://jazz.example/live.mp3', 'http://new.example/s.ogg'], r[5]
+ack(r[6], 2); ack(r[7], 2); assert 'Radio' in ack(r[8], 52)
+ack(r[9], 52); ack(r[10], 56)
+assert 'Wi-Fi' in ack(r[11], 52) and 'Wi-Fi' in ack(r[12], 52) and 'Wi-Fi' in ack(r[13], 52), r[11:14]   # load / add play the station (no Wi-Fi on a host)
+ack(r[14], 2)
+assert 'new.example' in Path('/usr/data/radio_favorites.txt').read_text() and 'talk.example' not in Path('/usr/data/radio_favorites.txt').read_text()
+Path('/usr/data/radio_favorites.txt').unlink()
 print('mpd_library_test: all passed')

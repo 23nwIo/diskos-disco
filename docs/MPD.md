@@ -68,16 +68,36 @@ Queue (songs that play right after the current one). An MPD client sees:
 Song ids: Up Next songs use the player's list row id; queued songs and new-list songs get ids from 1000000 and
 2000000 up that change when the list changes (the playlist version changes with them, so clients re-read it).
 
+## Web radio
+
+The Disc's radio favourites (the ones held on the Radio screen, `/usr/data/radio_favorites.txt`) are the stored
+playlist **Radio**. It is listed first by `listplaylists` and in the root of `lsinfo`; it hides a Disc playlist of the
+same name.
+
+- `listplaylist Radio` gives the stream URLs; `listplaylistinfo Radio` adds the station name (`Name`, `Title`) and
+  codec, bit rate and country (`Comment`).
+- A stream can't wait in a queue on the Disc, so a station **plays at once**: `add URL` / `addid URL` with an
+  `http://` or `https://` URL, and `load Radio` (the first station) or `load Radio N:N+1` (station N, from 0). A URL
+  that is a favourite plays under its name. While the radio plays, the MPD queue is that one stream (`currentsong`:
+  the URL, the song the stream names as `Title`, the station as `Artist` and `Name`).
+- `stop` and `clear` end the radio and return to local playback (paused). `pause` pauses the stream; `next`,
+  `previous` and seeking are refused.
+- `playlistadd Radio URL` saves a favourite (named after the station if it is the one playing, else the URL);
+  `playlistdelete Radio N` removes station N. `rm` / `rename` / `save` refuse the name Radio.
+
+ncmpcpp: Playlist editor (`5`), choose **Radio** on the left, Enter on a station on the right. mpc:
+`mpc lsplaylists`, `mpc playlist Radio`, `mpc clear; mpc load Radio` (or `mpc add https://...`).
+
 ## Commands
 
 | Group | Commands |
 |---|---|
 | Status | `status`, `currentsong`, `stats`, `idle` / `noidle` (player, mixer, options, playlist, stored_playlist, database, update), `ping`, `commands`, `notcommands`, `tagtypes`, `outputs`, `decoders`, `urlhandlers`, `replay_gain_status` |
-| Playback | `play`, `playid`, `pause`, `stop` (pauses: the player has no stop), `next`, `previous`, `seek`, `seekid`, `seekcur` (only the song playing now) |
+| Playback | `play`, `playid`, `pause`, `stop` (pauses: the player has no stop; ends the radio), `next`, `previous`, `seek`, `seekid`, `seekcur` (only the song playing now) |
 | Options | `random`, `repeat`, `single` (mapped to the Disc's play modes, below), `setvol`, `volume`, `getvol`; `consume 0` and `crossfade 0` are accepted |
 | Queue | `playlistinfo`, `playlistid`, `playlist`, `plchanges`, `plchangesposid`, `add`, `addid` (appends only), `clear`, `delete`, `deleteid`, `move`, `moveid`, `shuffle` |
 | Library | `lsinfo`, `listall`, `listallinfo`, `find`, `search`, `findadd`, `searchadd`, `count`, `searchcount`, `list` (with `group`), `update`, `rescan` |
-| Playlists | `listplaylists`, `listplaylist`, `listplaylistinfo`, `load`, `save`, `rm`, `rename` |
+| Playlists | `listplaylists`, `listplaylist`, `listplaylistinfo`, `load`, `save`, `rm`, `rename`; `playlistadd` / `playlistdelete` on Radio only |
 | Connection | `password`, `close`, `binarylimit`, `command_list_begin` / `command_list_ok_begin` / `command_list_end` |
 
 Filters take both forms: `find artist "Ana"` and `find "((artist == 'Ana') AND (track != '3'))"`, with `==`, `!=`,
@@ -101,8 +121,9 @@ error that says so. The volume is the Disc's 0-120 scale shown as 0-100 %.
 ## Not supported
 
 Album art (`albumart`, `readpicture`), stickers, partitions, client-to-client channels, consume and crossfade, replay
-gain changes, more outputs, streams in the queue (use the Radio), `listfiles`, `prio`, `rangeid`. Web radio, Music
-Assistant and the other working modes show the one thing playing; transport works as on the Remote Control page.
+gain changes, more outputs, streams waiting in the queue (a stream plays at once, see Web radio), editing Disc playlists
+(`playlistadd` and the like work on Radio only), `listfiles`, `prio`, `rangeid`. Music Assistant and the other working
+modes show the one thing playing; transport works as on the Remote Control page.
 
 Commands run on the Disc's UI thread, like the Remote Control page's. A whole-library answer (`listallinfo` of a big
 card) takes a moment and holds the screen while it is built.
