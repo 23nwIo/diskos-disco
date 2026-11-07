@@ -103,7 +103,7 @@ int mpd_parse_time(const char *s, long *ms, int *relative){
     if(*s == '+'){ rel = 1; s++; } else if(*s == '-'){ rel = -1; s++; }
     if(!isdigit((unsigned char)*s) && !(*s == '.' && isdigit((unsigned char)s[1]))) return -1;
     char *end; errno = 0; double v = strtod(s, &end);
-    if(errno || *end || v < 0 || v > 1e7) return -1;
+    if(errno || *end || v < 0 || v > 2e6) return -1;   /* ms must fit a 32-bit long (MIPS) */
     *ms = (long)(v * 1000.0 + 0.5);
     if(relative) *relative = rel; else if(rel) return -1;
     return 0;

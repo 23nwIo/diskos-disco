@@ -32,6 +32,7 @@
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -380,7 +381,7 @@ typedef struct {
     char lastdir[600];             /* the last directory printed, relative to prefix */
     long start, end, k;            /* window */
     idlist_t *ids;                 /* findadd / searchadd */
-    long songs, ms;                /* count */
+    long long songs, ms;           /* count (ms of a whole card overflows a 32-bit long) */
 } walk_t;
 enum { W_FIND = 1, W_IDS, W_COUNT, W_LS, W_LISTALL, W_LISTALLINFO };
 static int walk_cb(void *ud, const mdb_row_t *r){
@@ -734,7 +735,9 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
         long a = 0, b = -1;
         if(!strcmp(c, "plchanges") || !strcmp(c, "plchangesposid")){
             ARGS(1, 2);
-            long ver; if(mpd_parse_int(argv[1], 0, 0xFFFFFFFFL, &ver)) return bad_arg(msg, "Integer expected");
+            /* the version is unsigned 32 bit: 0xFFFFFFFF does not fit a 32-bit long (MIPS), so parse it unsigned */
+            char *end; errno = 0; unsigned long long ver = strtoull(argv[1], &end, 10);
+            if(!argv[1][0] || argv[1][0] == '-' || *end || errno || ver > 0xFFFFFFFFULL) return bad_arg(msg, "Integer expected");
             if(argc == 3 && mpd_parse_range(argv[2], &a, &b)) return bad_arg(msg, "Bad range");
             if((unsigned)ver == g_plver) return 0;           /* nothing changed since */
             if(c[9] == 'p'){ for(int i = (int)a; i < g_nview && (b < 0 || i < b); i++) rmt_buf_printf(o, "cpos: %d\nId: %d\n", i, g_view[i].id); return 0; }
@@ -849,7 +852,7 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
         else if(count) w.mode = W_COUNT;
         else { w.mode = W_FIND; w.start = ws; w.end = we; }
         if(mdb_rows(MDB_ROWS_ALL, NULL, 0, walk_cb, &w) < 0){ free(l.ids); *msg = "Database error"; return MPD_ACK_SYSTEM; }
-        if(count){ rmt_buf_printf(o, "songs: %ld\nplaytime: %ld\n", w.songs, w.ms / 1000); return 0; }
+        if(count){ rmt_buf_printf(o, "songs: %lld\nplaytime: %lld\n", w.songs, w.ms / 1000); return 0; }
         if(add){ int r = l.n ? add_ids(&l, msg) : 0; free(l.ids); return r; }
         return 0;
     }
@@ -1034,4 +1037,12 @@ char *mpd_test_request(const char *lines){
     mpd_run_batch(&s, NULL, handler, NULL, &out);
     mpd_sess_free(&s);
     return rmt_buf_take(&out);
+}
+/* host tests: serve real clients on 127.0.0.1:port (no password) with the real handler for `seconds` */
+void mpd_test_serve(int port, int seconds){
+    msrv_set_handler(handler, NULL);
+    if(msrv_start("127.0.0.1", port, NULL)){ fprintf(stderr, "mpd: can't listen\n"); return; }
+    printf("serving on 127.0.0.1:%d\n", msrv_port()); fflush(stdout);
+    for(long i = 0; i < (long)seconds * 200; i++){ mpd_pump(); lv_tick_inc(5); lv_timer_handler(); usleep(5000); }
+    msrv_stop();
 }

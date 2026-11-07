@@ -10,7 +10,7 @@ ui = Path(__file__).resolve().parents[1]
 sd = Path('/tmp/sdcard'); shutil.rmtree(sd, ignore_errors=True)
 (sd/'Music/Blue Album').mkdir(parents=True); (sd/'Music/Other').mkdir(parents=True); (sd/'Music/Other/Deep').mkdir(parents=True)
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
-Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True)
+Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True); (ui/'tests/host_build/queue.tsv').unlink(missing_ok=True)   # host builds keep the Queue here
 con = sqlite3.connect(db)
 cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
         'ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE,'

@@ -15,5 +15,6 @@ int  mpd_access_shown(void);    /* that overlay is up (keeps the screen lit) */
 void mpd_token_changed(void);   /* Remote Control made a new token: restart with the new password */
 /* host tests only: run one request line (or several, '\n'-separated, as a command list) through the real handler */
 char *mpd_test_request(const char *lines);
-void mpd_test_access(void);     /* host renders: the overlay without Wi-Fi */
+void mpd_test_access(void);
+void mpd_test_serve(int port, int seconds);   /* host tests: real clients against the real handler */     /* host renders: the overlay without Wi-Fi */
 #endif

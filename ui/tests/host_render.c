@@ -2426,7 +2426,7 @@ int main(int argc, char **argv){
             fclose(rf); fflush(stdout); return 0;
         }
         if(getenv("MPD_REQS")){   /* MPD server: one request per line (a literal \\n splits a command list) through the real handler */
-            char *mpd_test_request(const char *);
+            char *mpd_test_request(const char *); void mpd_test_serve(int, int);
             if(getenv("MPD_TRACK")){   /* "path<TAB>title<TAB>pos_id": the song the player reports */
                 char t[600]; snprintf(t, sizeof t, "%s", getenv("MPD_TRACK"));
                 char *pa = strtok(t, "\t"), *ti = strtok(NULL, "\t"), *pi = strtok(NULL, "\t");
@@ -2438,6 +2438,7 @@ int main(int argc, char **argv){
                 test_track_state.volume = 60; test_track_state.volume_seq = 1;
                 test_track_override = 1;
             }
+            if(getenv("MPD_SERVE")){ char *c = strchr(getenv("MPD_SERVE"), ':'); mpd_test_serve(atoi(getenv("MPD_SERVE")), c ? atoi(c + 1) : 30); return 0; }   /* PORT:SECONDS */
             FILE *rf = fopen(getenv("MPD_REQS"), "r"); assert(rf); char line[4096];
             while(fgets(line, sizeof line, rf)){
                 line[strcspn(line, "\n")] = 0; if(!line[0]) continue;
