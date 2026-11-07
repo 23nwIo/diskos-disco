@@ -7,12 +7,15 @@
 # give the binary to must be able to get this source too (GPLv3 s6) - hand the tarball written next to it.
 #
 # Compiler (first match wins):
-#   CROSS=<prefix>   e.g. the project toolchain from ui/Dockerfile: /opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-
-#                    (MIPS32r2, FP64, NaN2008 - the stock ABI; preferred)
-#   otherwise mipsel-linux-gnu-  (Debian/Ubuntu: apt install gcc-mipsel-linux-gnu). Static glibc, MIPS32r2,
-#                    FPXX/legacy NaN: runs on the Disc (rsync does almost no floating point). Link-time
-#                    getpwnam/gethostbyname NSS warnings are expected; with -rt (no owner mapping) and an
-#                    ssh transport they are not used.
+#   CROSS=<prefix>   explicit toolchain prefix
+#   /opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-   the project toolchain (ui/Dockerfile,
+#                    ui/toolchain/mcm-config.mak): MIPS32r2, FP64, NaN2008 - same ABI as mq_ui. Preferred.
+#   mipsel-linux-gnu-  fallback (Debian/Ubuntu gcc-mipsel-linux-gnu): static glibc, FPXX/legacy NaN, ~1.5 MB
+#                    instead of ~0.8 MB; link-time NSS warnings are expected and harmless for -rt over ssh.
+#
+# Static on purpose: the Disc has no musl loader (/lib is the stock glibc, interp ld-linux-mipsn8.so.1,
+# docs/RE_CATALOGUE.md) and /lib is read-only. A dynamic musl rsync (~0.5 MB) would need its own
+# libc.so (~0.8 MB) next to it, so it is larger in total and saves no RAM.
 #
 # Features off: OpenSSL, xxhash, zstd, lz4, iconv, ACLs, xattrs (exFAT SD has none); bundled zlib + popt.
 # Output: build/out/rsync-mipsel (stripped) + build/out/rsync-3.4.1-source.tar.gz
@@ -23,9 +26,12 @@ OUT="$(pwd)/out"; mkdir -p "$OUT"
 TAG=v3.4.1
 COMMIT=3305a7a063ab0167cab5bf7029da53abaa9fdb6e
 
+MCM=/opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-
+[ -z "${CROSS:-}" ] && [ -x "${MCM}gcc" ] && CROSS="$MCM"
 if [ -n "${CROSS:-}" ]; then P="$CROSS"; ARCH="-march=mips32r2 -mnan=2008 -mfp64"
 elif command -v mipsel-linux-gnu-gcc >/dev/null; then P=mipsel-linux-gnu-; ARCH="-march=mips32r2"
-else echo "no MIPS cross compiler: set CROSS=... or install gcc-mipsel-linux-gnu" >&2; exit 1; fi
+else echo "no MIPS cross compiler: install the project toolchain to /opt/mipsel-n2008-musl-cross, set CROSS=..., or install gcc-mipsel-linux-gnu" >&2; exit 1; fi
+echo ">> compiler: ${P}gcc"
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 git clone -q --depth 1 -b "$TAG" https://github.com/RsyncProject/rsync.git "$WORK/rsync"
