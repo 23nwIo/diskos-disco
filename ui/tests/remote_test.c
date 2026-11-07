@@ -149,6 +149,12 @@ static void test_core(void){
     CHECK(req("POST", p("/api/bluetooth"), "action=codec&codec=10").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/bt_device"), "action=codec&codec=1&mac=00:11:22:33:44:55").kind == RMT_R_BAD_PARAM);
     CHECK(req("GET", p("/api/bt_device"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/work_mode"), "mode=3"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_WORK_MODE && r.cmd.arg == 3);
+    CHECK(req("POST", p("/api/work_mode"), "mode=6").kind == RMT_R_BAD_PARAM);         /* web radio starts from a station */
+    CHECK(req("GET", p("/api/work_mode"), NULL).kind == RMT_R_BAD_METHOD);
+    r = req("POST", p("/api/reboot"), "confirm=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_REBOOT);
+    CHECK(req("POST", p("/api/reboot"), "").kind == RMT_R_BAD_PARAM);
+    CHECK(req("GET", p("/api/reboot"), NULL).kind == RMT_R_BAD_METHOD);
     r = req("POST", p("/api/bt_device"), "action=connect&mac=00:11:22:aa:BB:55"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_CONNECT && !strcmp(r.cmd.q, "00:11:22:aa:BB:55"));
     r = req("POST", p("/api/bt_device"), "action=rename&mac=00:11:22:33:44:55&name=Kitchen+%3Cx%3E"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BT_RENAME && !strcmp(r.cmd.name, "Kitchen <x>"));
     r = req("POST", p("/api/bt_device"), "action=rename&mac=00:11:22:33:44:55"); CHECK(r.kind == RMT_R_CMD && !r.cmd.name[0]);      /* clears it */
@@ -222,7 +228,7 @@ static void test_core(void){
 
 /* ---------------------------------------------------------------- server round trip */
 static volatile int g_emu_run = 1, g_emu_pause = 0;
-static int g_scan;
+static int g_scan, g_work, g_reboots;
 static time_t g_search_until; static char g_search_q[96]; static int g_nfav = 3;   /* stand-in radio directory */
 static rmt_cmd_t g_last; static int g_ncmd;
 static void notify(void){}
@@ -327,9 +333,13 @@ static void *emu(void *a){
                 else if(c.kind == RMT_CMD_RESCAN){ g_scan = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_BT_LIST) rsrv_done_body(1, NULL, fake_bt());
                 else if(c.kind == RMT_CMD_BT) fake_bt_cmd(&c);
-                else if(c.kind == RMT_CMD_STATUS)
-                    rsrv_done_body(1, NULL, strdup(g_scan ? "{\"ok\":true,\"scan\":{\"active\":true,\"done\":12},\"groups\":[{\"name\":\"Playback\",\"rows\":[[\"Library scan\",\"Running, 12 files so far\"]]}]}" : "{\"ok\":true,\"groups\":[{\"name\":\"Wi-Fi\",\"rows\":[[\"Network\",\"<home>\"],[\"Signal\",\"-60 dBm (good)\"]]},"
-                                                    "{\"name\":\"Battery\",\"rows\":[[\"Charge\",\"89%\"],[\"Temperature\",\"33.0 \xC2\xB0" "C\"]]},{\"name\":\"Empty\",\"rows\":[]}]}"));
+                else if(c.kind == RMT_CMD_WORK_MODE){ s.work_mode = (int)c.arg; g_work = (int)c.arg; rsrv_done(1, NULL); }
+                else if(c.kind == RMT_CMD_REBOOT){ g_reboots++; rsrv_done(1, NULL); }
+                else if(c.kind == RMT_CMD_STATUS){
+                    const char *sb = g_scan ? "{\"ok\":true,\"scan\":{\"active\":true,\"done\":12},\"groups\":[{\"name\":\"Playback\",\"rows\":[[\"Library scan\",\"Running, 12 files so far\"]]}]}" : "{\"ok\":true,\"groups\":[{\"name\":\"Wi-Fi\",\"rows\":[[\"Network\",\"<home>\"],[\"Signal\",\"-60 dBm (good)\"]]},"
+                                                    "{\"name\":\"Battery\",\"rows\":[[\"Charge\",\"89%\"],[\"Temperature\",\"33.0 \xC2\xB0" "C\"]]},{\"name\":\"Empty\",\"rows\":[]}]}";
+                    char *o = malloc(strlen(sb) + 32); sprintf(o, "{\"work_mode\":%d,%s", g_work, sb + 1); rsrv_done_body(1, NULL, o);
+                }
                 else if(c.kind == RMT_CMD_EQ_LIST){
                     char b[400]; snprintf(b, sizeof b, "{\"ok\":true,\"current\":%d,\"presets\":[{\"id\":0,\"name\":\"Off\"},{\"id\":1,\"name\":\"Jazz\"},{\"id\":2,\"name\":\"R&B <x>\"}]}", s.eq);
                     rsrv_done_body(1, NULL, strdup(b));

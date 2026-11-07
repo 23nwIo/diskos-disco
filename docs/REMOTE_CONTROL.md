@@ -55,7 +55,7 @@ playlist (the Disc has no reorder function either).
 
 ### Status
 
-The **Status** tab shows, refreshed every 3 s while it is open: working mode, output, volume, EQ and library size;
+The **Status** tab starts with **Working mode** (Playback, USB DAC, Bluetooth DAC, Bluetooth streaming, AirPlay, USB storage: the same switch as a tap on the Disc's Working mode screen, with its checks; a refusal shows the Disc's reason; USB storage asks first, since the card then belongs to the computer) and **Restart the Disc** (as Settings > Restart: it waits for card writes and a sync, or says why not; the page reconnects once the Disc is back, the link stays the same). Below it shows, refreshed every 3 s while it is open: working mode, output, volume, EQ and library size;
 Bluetooth (on/off, connected headphones, the codec they run); Wi-Fi (network name and access point MAC, security and cipher, channel, signal and link quality, IP address with prefix and network, gateway, DNS, data
 received and sent since start-up; Bluetooth data since Bluetooth came on, from `hciconfig`); SD card (free space, file system and device) and internal storage; battery (charge, charging, voltage, temperature,
 health, cycles, as the battery gauge reports them); and diskOS and firmware versions (**Update** is the label given to `diskos-sign.sh` for the SD or online update that runs now, or "none" for a flashed build), uptime, load, CPU use (since the
@@ -113,6 +113,8 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/playlist_add` with `id` + `kind=song&song_id=` \| `kind=album&name=` \| `kind=artist&name=` | Add (duplicates are skipped); answers `{"ok":true,"added":N}`. |
 | `POST api/playlist_remove` with `id`, `pos`, `song_id` | Remove one row; refused if that row no longer holds that song. |
 | `POST api/favorite` with `on=0\|1` and `song_id` (none: the song playing now) | Favourite on/off. Song lists carry `"fav":true\|false`. |
+| `POST api/work_mode` with `mode=0..5` | 0 Playback, 1 USB DAC, 2 Bluetooth DAC, 3 USB storage, 4 Bluetooth streaming, 5 AirPlay. `api/state` and `api/status` carry `"work_mode"` (6 = web radio). |
+| `POST api/reboot` with `confirm=1` | Restart the Disc. |
 | `POST api/rescan` with `action=start\|stop` | Library rescan; `GET api/status` has `"scan":{"active":…,"done":N}`. |
 | `GET api/bluetooth` | `{"ok":true,"state":"on"\|"off"\|"turning_on","busy":…,"devices":[{"mac":"AA:BB:…","name":"shown name","own":"device's name","alias":"local name or empty","connected":…,"codec":"LDAC"…}],"codec":{"settable":…,"current":N,"live":"LDAC","choices":[{"id":0,"name":"SBC","hint":"…"},…]}}` (connected first; `busy`: a search or listing is running). |
 | `POST api/bluetooth` with `action=on\|off\|search\|refresh`, or `action=codec&codec=N` | Radio on/off (only acts if needed), a ~15 s search, list the known devices again, or the Bluetooth Codec setting (an id from `choices`). |

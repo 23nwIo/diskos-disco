@@ -54,7 +54,7 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/playlist_rename id=2&name=Late+drive', 'GET /api/library/playlists',
         'POST /api/favorite on=1&song_id=6', 'GET /api/library/album?name=Other', 'POST /api/favorite on=0&song_id=2', 'GET /api/library/favorites',
         'POST /api/playlist_delete id=2', 'GET /api/library/playlists', 'POST /api/rescan action=stop', 'POST /api/eq preset=3', 'GET /api/status',
-        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55']
+        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55', 'POST /api/work_mode mode=3', 'GET /api/status']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -126,4 +126,7 @@ assert {'Bluetooth', 'Wi-Fi', 'Storage', 'System'} <= set(stat) and 'Uptime' in 
 assert res[52]['rc'] == 0 and res[52]['body']['state'] == 'off' and res[52]['body']['devices'] == [], res[52]
 k = res[52]['body']['codec']; assert [c['name'] for c in k['choices']] == ['SBC', 'AAC', 'aptX/LDAC Mobile', 'aptX/LDAC Standard', 'aptX/LDAC High'] and k['live'] == '' and k['current'] == 0, k
 assert res[53]['rc'] == -1 and res[53]['why'] == 'Bluetooth is off' and res[54]['rc'] == -1, res[53:]
-print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth')
+# Working mode goes through the Working mode screen's own switch: on a host it refuses, and the page gets the Disc's own reason
+assert res[55]['rc'] == -1 and res[55]['why'] and res[55]['why'] != "Couldn't switch mode", res[55]
+assert res[56]['body']['work_mode'] == 0, res[56]['body'].get('work_mode')
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth, working mode')

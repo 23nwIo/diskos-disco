@@ -401,13 +401,19 @@ static void settle_cb(lv_timer_t *t){
     if(show != 0 && screen_current() == SCR_WORKMODE) modeinfo_refresh_and_show();   /* the mode's own screen */
 }
 
+static int switch_to(int m);
 static void row_cb(int slot){                 /* a tap inside a slice (the wheel does the hit-testing) */
     if(slot < 0 || slot >= N_MODES) return;
-    int m = MODES[slot].mode;
+    switch_to(MODES[slot].mode);
+}
+/* Remote Control: the same as tapping that mode on the Working mode screen (toasts included). 0 started, -2 a switch is
+ * still applying, -1 refused (the reason was toasted) or not a mode of the picker. */
+int modes_switch(int m){ return slot_of_mode(m) < 0 ? -1 : switch_to(m); }
+static int switch_to(int m){
     /* Serialise: ignore taps while the previous switch is still applying (the player's gadget
      * state-machine is asynchronous). NB we do NOT early-return on "same mode" - re-issuing must
      * always be allowed so Local works as a recover even if our cached mode is stale. */
-    if(g_last_switch && lv_tick_elaps(g_last_switch) < 3000) return;   /* still switching: the arrows are turning */
+    if(g_last_switch && lv_tick_elaps(g_last_switch) < 3000) return -2;   /* still switching: the arrows are turning */
     g_last_switch = lv_tick_get();
     if(m == ROW_USB_AUDIO){   /* USB Audio: an output route of the Local source, not a source mode */
         if(modes_output_mode_switch(OUT_USB) == 0){
@@ -415,8 +421,9 @@ static void row_cb(int slot){                 /* a tap inside a slice (the wheel
             if(g_settle) lv_timer_del(g_settle);
             g_settle = lv_timer_create(settle_cb, 500, NULL);
             ui_toast("Switching to USB audio output");
+            return 0;
         }
-        return;
+        return -1;
     }
     if(ui_set_source_mode(m) == 0){
         g_pending_mode = m;
@@ -429,7 +436,10 @@ static void row_cb(int slot){                 /* a tap inside a slice (the wheel
             "Switching to Bluetooth receiving", "Switching to USB storage",
             "Bluetooth streaming on", "AirPlay on \xE2\x80\x93 pick the Disc on your device" };
         ui_toast(msg[m]);
-    } else g_last_switch = 0;                                  /* refused (the reason was toasted, if any): tappable again */
+        return 0;
+    }
+    g_last_switch = 0;                                          /* refused (the reason was toasted, if any): tappable again */
+    return -1;
 }
 
 void modes_open(void){

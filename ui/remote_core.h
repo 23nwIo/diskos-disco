@@ -33,6 +33,8 @@ typedef enum {
     RMT_CMD_RESCAN,          /* arg 1 start / 0 stop a library rescan */
     RMT_CMD_BT_LIST,         /* Bluetooth state and devices (JSON answer) */
     RMT_CMD_BT,              /* sub = rmt_bt_t; q = device address, name = a local name */
+    RMT_CMD_WORK_MODE,       /* arg 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay */
+    RMT_CMD_REBOOT,          /* restart the Disc (as Settings > Restart) */
     RMT_CMD_RADIO_FAV        /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
 } rmt_cmd_kind_t;
 
@@ -107,6 +109,7 @@ typedef struct {
     long position_ms, duration_ms;
     int  volume, volume_max;
     int  play_mode;          /* 0..4, -1 unknown */
+    int  work_mode;          /* the source mode, 0..6 (6 web radio), -1 unknown */
     int  controllable;       /* 1 if transport commands can reach a player now */
     const char *source;      /* "local" | "music_assistant" | "radio" | "other" (static string) */
     const char *radio_state; /* "off" | "starting" | "playing" | "error" (static string; NULL = "off") */

@@ -286,6 +286,8 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_STATUS) return "status";
     if(k == RMT_CMD_EDIT) return "edit";
     if(k == RMT_CMD_RESCAN) return "rescan";
+    if(k == RMT_CMD_WORK_MODE) return "work_mode";
+    if(k == RMT_CMD_REBOOT) return "reboot";
     if(k == RMT_CMD_BT_LIST || k == RMT_CMD_BT) return "bluetooth";
     if(k == RMT_CMD_EQ_LIST || k == RMT_CMD_EQ) return "eq";
     if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
@@ -323,6 +325,18 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         if(ok && k == RMT_BT_CODEC){ long v = -1; ok = !param(r, "codec", &v) && v >= 0 && v <= 9; rt.cmd.arg = v; }
         if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
         rt.cmd.kind = RMT_CMD_BT; rt.cmd.sub = k; rt.kind = RMT_R_CMD;
+        return rt;
+    }
+    if(!strcmp(ep, "work_mode")){
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        long v; rt.kind = param(r, "mode", &v) || v < 0 || v > 5 ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        if(rt.kind == RMT_R_CMD){ rt.cmd.kind = RMT_CMD_WORK_MODE; rt.cmd.arg = v; }
+        return rt;
+    }
+    if(!strcmp(ep, "reboot")){                                 /* confirm=1: a stray request can't restart the Disc */
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        long v; rt.kind = param(r, "confirm", &v) || v != 1 ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        if(rt.kind == RMT_R_CMD) rt.cmd.kind = RMT_CMD_REBOOT;
         return rt;
     }
     if(!strcmp(ep, "rescan")){
@@ -433,12 +447,12 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
-        "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,"
+        "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,\"work_mode\":%d,"
         "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"bt_codec\":\"%s\",\"radio_error\":\"%s\","
         "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\"}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
-        s->volume, s->volume_max, s->play_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
+        s->volume, s->volume_max, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
         s->radio_state ? s->radio_state : "off", st, su, sti, bc, re,
         fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
@@ -525,7 +539,7 @@ const char RMT_PAGE_HTML[] =
 "#shb{position:fixed;inset:0;background:#0006}#sh{position:fixed;left:0;right:0;bottom:0;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:.6em 1em 1.2em;max-width:30em;margin:0 auto}\n"
 "#sh b{display:block;padding:.6em 0;color:var(--mut);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#sh button{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;color:var(--fg);font-size:1em;padding:.75em 0}\n"
 "#fv{position:absolute;right:.6em;top:.6em;border:0;background:none;color:var(--acc);font-size:1.5em}.card{position:relative}\n"
-".hide{display:none}.hint{font-size:.8em;color:var(--mut)}\n"
+"#rbt{border:1px solid var(--line);margin-bottom:0}.hide{display:none}.hint{font-size:.8em;color:var(--mut)}\n"
 "select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .4em}\n"
 ".kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}\n"
 "</style><main><div class=top><h1>diskOS Remote</h1></div>\n"
@@ -544,6 +558,8 @@ const char RMT_PAGE_HTML[] =
 "<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label='More' class=hide>&#8943;</button><button id=pa class=pa>Play all</button></div>\n"
 "<div id=list></div><button id=mo class='more hide'>Load more</button></div>\n"
 "<div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div><div id=btc class='card hide'><label for=btk>Bluetooth codec <span id=btn></span></label><select id=btk></select><div id=bth class=hint></div></div></div>\n"
+"<div id=sys class='card hide'><label for=wm>Working mode</label><select id=wm><option value=0>Playback<option value=1>USB DAC<option value=2>Bluetooth DAC\n"
+"<option value=4>Bluetooth streaming<option value=5>AirPlay<option value=3>USB storage</select><button id=rbt class=more>Restart the Disc</button></div>\n"
 "<div id=stv class=hide></div>\n"
 "<div id=shb class=hide></div><div id=sh class=hide></div>\n"
 "<div id=msg></div></main>\n"
@@ -581,11 +597,14 @@ const char RMT_PAGE_HTML[] =
 "j.presets.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;e.appendChild(o)});e.value=j.current;e.dataset.n=(j.presets[j.current]||{}).name||''})}\n"
 "$('eqs').onchange=function(){cmd('eq','preset='+$('eqs').value).then(function(){$('eqs').dataset.n=''})};\n"
 "function status(){if(V!=='status'||document.hidden)return;fetch('api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='status'||!j.ok)return;var d=$('stv');d.textContent='';\n"
-"var sc=j.scan&&j.scan.active,rb=document.createElement('button');rb.className='more';rb.textContent=sc?'Stop library scan':'Rescan library';\n"
+"if(document.activeElement!==$('wm')&&j.work_mode>=0&&j.work_mode<6)$('wm').value=j.work_mode;var sc=j.scan&&j.scan.active,rb=document.createElement('button');rb.className='more';rb.textContent=sc?'Stop library scan':'Rescan library';\n"
 "rb.onclick=function(){if(!sc&&!confirm('Rescan the library on the SD card now? Large cards take a while.'))return;cmd('rescan','action='+(sc?'stop':'start')).then(function(ok){if(ok){say(sc?'Stopping the scan':'Scanning the library',1);setTimeout(status,500)}})};d.appendChild(rb);\n"
 "j.groups.forEach(function(g){if(!g.rows.length)return;var h=document.createElement('h2');h.textContent=g.name;d.appendChild(h);var c=document.createElement('div');c.id='';c.className='card';c.style.padding='0';\n"
 "g.rows.forEach(function(r){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');a.textContent=r[0];b.textContent=r[1];k.appendChild(a);k.appendChild(b);c.appendChild(k)});d.appendChild(c)})}).catch(function(){say('Player not reachable')})}\n"
 "setInterval(status,3000);\n"
+"$('wm').onchange=function(){var m=$('wm').value;if(m==='3'&&!confirm('Switch to USB storage? The card goes to the computer: the library, playback and this page\\u2019s lists stop until you switch back.'))return status();\n"
+"cmd('work_mode','mode='+m).then(function(ok){if(ok)say('Switching mode',1);setTimeout(status,3500)})};\n"
+"$('rbt').onclick=function(){if(!confirm('Restart the Disc now? This page reconnects once it is back (about a minute).'))return;cmd('reboot','confirm=1').then(function(ok){if(ok)say('Restarting…',1)})};\n"
 "/* Bluetooth: the Disc's own Bluetooth screen calls; a search takes ~15 s, connecting a few seconds */\n"
 "var bton=0;function bt(){if(V!=='bt'||document.hidden)return;fetch('api/bluetooth',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='bt'||!j.ok)return;\n"
 "var k=j.codec,e=$('btk');$('btc').classList.toggle('hide',!k||!k.settable);if(k&&k.settable&&document.activeElement!==e){if(e.options.length!==k.choices.length){e.textContent='';k.choices.forEach(function(c){var o=document.createElement('option');o.value=c.id;o.textContent=c.name;e.appendChild(o)})}\n"
@@ -652,7 +671,7 @@ const char RMT_PAGE_HTML[] =
 "if(v!==cur()||g!==v.gen)return;if(j.ok&&j.search==='busy'){if(n<40)setTimeout(function(){rpoll(v,g,n+1)},750);else $('list').textContent='The station directory did not answer - try again';return}\n"
 "if(j.ok&&j.search==='failed'){$('list').textContent='The station directory did not answer - try again';return}render(v,j,0)}).catch(function(){say('Player not reachable')})}\n"
 "function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});\n"
-"$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np'||v==='status'||v==='bt');$('stv').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');\n"
+"$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np'||v==='status'||v==='bt');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');\n"
 "if(v==='np'){poll();return}if(v==='status'){$('stv').textContent='Loading…';status();return}if(v==='bt'){$('btl').textContent='Loading…';bt();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}\n"
 "[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});\n"
 "$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};\n"

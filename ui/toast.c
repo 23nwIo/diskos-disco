@@ -25,9 +25,13 @@ static void toast_hide_cb(lv_timer_t *t)
     if(g_toast){ lv_obj_delete_async(g_toast); g_toast = NULL; }
     if(g_toast_timer){ lv_timer_delete(g_toast_timer); g_toast_timer = NULL; }
 }
+static char g_toast_last[160]; static unsigned g_toast_seq;
+/* the last message shown and a counter of messages (Remote Control: why the Disc refused, as the Disc said it) */
+const char *ui_toast_last(unsigned *seq){ if(seq) *seq = g_toast_seq; return g_toast_last; }
 void ui_toast_icon(const char *icon, lv_color_t icol, const char *msg)
 {
     if(!msg) return;
+    snprintf(g_toast_last, sizeof g_toast_last, "%s", msg); g_toast_seq++;
     msg = tr(msg);   /* the interface language; text with no entry (a name, a count) shows as given */
     if(g_toast){ lv_obj_delete_async(g_toast); g_toast = NULL; }
     if(g_toast_timer){ lv_timer_delete(g_toast_timer); g_toast_timer = NULL; }

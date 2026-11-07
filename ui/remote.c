@@ -39,6 +39,7 @@ int  ui_bt_live_codec(char *out, int cap);
 int  wifi_radio_live(void);
 int  ui_battery(int *charging);
 void settings_diskos_id(char *buf, int n);
+void settings_restart_now(void);   /* settings.c */
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <pthread.h>
@@ -197,6 +198,7 @@ static void snapshot(rmt_state_t *s){
     s->volume = st.volume; s->volume_max = VOL_MAX;
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
+    s->work_mode = ui_get_source_mode();
     s->source = source_name();
     s->radio_state = radio_state();
     snprintf(s->station, sizeof s->station, "%s", radio_station_name());
@@ -775,7 +777,7 @@ static char *status_json(void){
     if(ps){ char line[96]; long rss = -1; while(fgets(line, sizeof line, ps)) sscanf(line, "VmRSS: %ld", &rss); fclose(ps);
             if(rss > 0) st_row(&s, "diskOS UI memory", "%ld MB", (rss + 512) / 1024); }
     rmt_buf_put(&s.b, s.groups ? "]}]" : "{\"ok\":true,\"groups\":[]");
-    rmt_buf_printf(&s.b, ",\"scan\":{\"active\":%s,\"done\":%d}}", sact ? "true" : "false", sdone);
+    rmt_buf_printf(&s.b, ",\"scan\":{\"active\":%s,\"done\":%d},\"work_mode\":%d}", sact ? "true" : "false", sdone, ui_get_source_mode());
     return rmt_buf_take(&s.b);
 }
 static char *eq_json(void){
@@ -917,6 +919,17 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     if(c->kind == RMT_CMD_EDIT) return edit(c, why, body);
     if(c->kind == RMT_CMD_BT_LIST){ *body = bt_json(); if(!*body) *why = "Out of memory"; return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_BT) return bt_cmd(c, why);
+    if(c->kind == RMT_CMD_WORK_MODE){                      /* as a tap on the Working mode screen; its refusals are toasts */
+        unsigned seq, seq2; ui_toast_last(&seq);
+        int rc = modes_switch((int)c->arg);
+        if(rc == -2){ *why = "The last mode switch is still applying - try again in a moment"; return -1; }
+        if(rc){ const char *t = ui_toast_last(&seq2); *why = seq2 != seq && t[0] ? t : "Couldn't switch mode"; return -1; }
+        return 0;
+    }
+    if(c->kind == RMT_CMD_REBOOT){                         /* Settings > Restart without its question (the page asked): drains */
+        settings_restart_now();                            /* the card's readers and writers, syncs, then reboots, or toasts why not */
+        return 0;
+    }
     if(c->kind == RMT_CMD_RESCAN){                          /* as Settings > Rescan library (the main loop reports the end) */
         if(!c->arg){
             if(!scanner_active()){ *why = "No scan is running"; return -1; }
