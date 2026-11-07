@@ -30,6 +30,9 @@ mpd_test: mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c ../mpd_core.h .
 wifi_reco_test: wifi_reco_test.c ../wifi_reco.h
 	$(CC) $(CFLAGS) -I.. wifi_reco_test.c -o $@
 
+wifi_override_test: wifi_override_test.c ../wifi_override.h
+	$(CC) $(CFLAGS) -I.. wifi_override_test.c -o $@
+
 radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. radio_test.c ../radio_core.c -o $@
 
@@ -39,7 +42,7 @@ review: fileops_test apps_shortcut_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: config_test playstate_test remote_test mpd_test radio_test wifi_reco_test
+run: config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -51,6 +54,8 @@ run: config_test playstate_test remote_test mpd_test radio_test wifi_reco_test
 	./radio_test
 	@echo "--- wifi boot hold ---"
 	./wifi_reco_test
+	@echo "--- wifi_up.sh override ---"
+	./wifi_override_test
 
 clean:
-	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test
+	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test

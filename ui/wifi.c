@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include "wifi_reco.h"
+#include "wifi_override.h"
 
 /* Wi-Fi settings (SCR_WIFI) + a details screen (SCR_WIFI_INFO).
  * Radio on/off reuses the stock /usr/bin/wifi_up.sh / wifi_down.sh (rfkill +
@@ -250,6 +251,13 @@ static int wifi_sanitize_savenets(void){
     }
     system(WCLI "save_config >/dev/null 2>&1");
     return 1;
+}
+
+/* /usr/data/wifi_up.sh, if present and sane, replaces the read-only stock script (wifi_override.h).
+ * Run once at start, before the keepalive or the stock player can launch wifi_up.sh. */
+void wifi_apply_script_override(void){
+    int r = wov_apply(WOV_SRC, WOV_DST);
+    if(r != WOV_NONE) fprintf(stderr, "wifi: %s override: %s\n", WOV_SRC, wov_reason(r));
 }
 
 /* Seed diskOS's own Wi-Fi on/off intent from stock SYSCONFIG.WIFI_STATUS the FIRST time

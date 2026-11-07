@@ -3446,6 +3446,7 @@ int main(int argc, char **argv){
       al.sa_handler = boot_alarm_handler; sigemptyset(&al.sa_mask); al.sa_flags = 0;
       sigaction(SIGALRM,&al,NULL); alarm(BOOT_DEADLINE_S); }
     fprintf(stderr,"=== diskOS Disco %s main start argc=%d ===\n", DISCO_VERSION, argc); fflush(stderr);
+    wifi_apply_script_override();   /* before the player (started 2 s after us) or the keepalive runs wifi_up.sh */
     /* WiFi bring-up + keep-alive is handled by wifi_supervise() in the main loop (which
      * also restarts the supplicant if it dies, so a known net returning in range auto-
      * joins). Intent is seeded from SYSCONFIG.WIFI_STATUS after cfg_load, below. */

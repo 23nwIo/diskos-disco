@@ -193,6 +193,7 @@ void lastfm_open(void);                   /* Settings -> Last.fm (SCR_LASTFM) */
 void debug_open(void);                     /* Settings -> System -> Debug Mode (SCR_DEBUG) */
 void debug_create(lv_obj_t *root);
 void lastfm_create(lv_obj_t *parent);
+void wifi_apply_script_override(void);   /* bind /usr/data/wifi_up.sh over the stock script (no-op without it) */
 void wifi_init_intent(void);   /* seed wifi_on intent from stock WIFI_STATUS (first run only) */
 void wifi_supervise(void);     /* keepalive: (re)start supplicant if Wi-Fi should be on but isn't */
 void wifi_info_create(lv_obj_t *root);
