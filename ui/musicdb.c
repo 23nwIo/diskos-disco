@@ -833,6 +833,33 @@ int mdb_subtrack_plan(const char *const *paths, int npaths, mdb_plan_t *plan){
     return 1;
 }
 
+/* Every library song under folder `dir` (absolute, no trailing '/'), subfolders included, by path (case-insensitive)
+ * then TRACK: a type-5 plan. A file split by a CUE sheet / an ISO contributes its tracks, not the whole file. */
+int mdb_folder_plan(const char *dir, mdb_plan_t *plan){
+    if(!plan || !dir || !dir[0]) return 0;
+    memset(plan, 0, sizeof *plan);
+    sqlite3 *d = db_read(); if(!d) return 0;
+    char pre[1100]; int pl = snprintf(pre, sizeof pre, "%s/", dir);
+    if(pl <= 1 || pl >= (int)sizeof pre) return 0;
+    sqlite3_stmt *st;
+    if(sqlite3_prepare_v2(d, "SELECT ID FROM SONG s WHERE substr(PATH,1,?2)=?1 AND (COALESCE(IS_CUE,0)=1 OR COALESCE(IS_ISO,0)=1 OR NOT EXISTS("
+                             "SELECT 1 FROM SONG t WHERE t.PATH=s.PATH AND (COALESCE(t.IS_CUE,0)=1 OR COALESCE(t.IS_ISO,0)=1))) "
+                             "ORDER BY PATH COLLATE NOCASE, TRACK, ID;", -1, &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_text(st, 1, pre, -1, SQLITE_STATIC); sqlite3_bind_int(st, 2, pl);
+    int cap = 0, n = 0; int *ids = NULL;
+    while(sqlite3_step(st) == SQLITE_ROW){
+        if(n == cap){
+            int nc = cap ? cap * 2 : 64; int *ni = realloc(ids, (size_t)nc * sizeof *ids);
+            if(!ni){ free(ids); sqlite3_finalize(st); return 0; }
+            ids = ni; cap = nc;
+        }
+        ids[n++] = sqlite3_column_int(st, 0);
+    }
+    sqlite3_finalize(st);
+    if(n <= 0){ free(ids); return 0; }
+    plan->list_type = 5; plan->ids = ids; plan->count = n;
+    return 1;
+}
 
 int mdb_split_artists(const char *raw, char toks[][MDB_STR], int cap){
     int n = 0;

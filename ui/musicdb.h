@@ -97,6 +97,7 @@ int  mdb_plan_materialize(mdb_plan_t *plan);   /* type 5: write the reserved slo
 int  mdb_plan_pos(const mdb_plan_t *plan, int song_id);                           /* 1-based position, 0 = not in it */
 void mdb_plan_free(mdb_plan_t *plan);
 int  mdb_subtrack_count(const char *path, int iso_only);   /* CUE/ISO rows under one PATH (iso_only: IS_ISO rows only) */
+int  mdb_folder_plan(const char *dir, mdb_plan_t *plan);   /* type-5 plan of every song under dir (subfolders too), by path; 1 = built */
 int  mdb_subtrack_plan(const char *const *paths, int npaths, mdb_plan_t *plan);   /* type-5 plan of their tracks, TRACK order; 1 = built (caller frees) */
 
 /* Up Next: the player's live queue from the current song on (read-only; the stock player owns it).

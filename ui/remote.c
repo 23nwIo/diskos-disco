@@ -501,7 +501,7 @@ static int play_item(const rmt_cmd_t *c, const char **why){
     static const char *const REFUSED = "The player refused - see the Disc";
     if(c->sub == RMT_I_RADIO || c->sub == RMT_I_RADIO_HIT) return play_radio(c, why);   /* the radio switches the player's mode itself */
     if(!ui_local_playback_allowed()){ *why = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)"; return -1; }
-    int ok = 0;
+    int ok = 0; unsigned tseq, tseq2; ui_toast_last(&tseq);   /* a refusal the Disc toasted: the page says the same */
     switch(c->sub){
     case RMT_I_ALBUM: {
         int pos = c->song_id ? mdb_play_pos((int)c->song_id, 3, c->name) : 1;
@@ -530,10 +530,16 @@ static int play_item(const rmt_cmd_t *c, const char **why){
         if(r){ *why = "No such file"; return -1; }
         if(!mdb_song_id_by_path(full)){ *why = "Not in the library yet - rescan the card on the Disc"; return -1; }
         ok = ui_play_song_by_path(full); break; }
+    case RMT_I_FOLDER: {                                   /* the folder and its subfolders, in path order */
+        char full[PATH_MAX]; int r = -1; mdb_plan_t plan;
+        if(sd_io_begin()){ r = card_path(c->name, full, sizeof full); sd_io_end(); }
+        if(r){ *why = "No such folder"; return -1; }
+        if(!mdb_folder_plan(full, &plan)){ *why = "No songs of the library in this folder - rescan the card on the Disc if it has new ones"; return -1; }
+        ok = ui_play_plan(&plan, plan.ids[0]); mdb_plan_free(&plan); break; }
     case RMT_I_ALL: ok = mdb_song_count() > 0 && ui_play_list(1, "", 1); break;
     default: *why = "Unknown item"; return -1;
     }
-    if(!ok && !*why) *why = REFUSED;
+    if(!ok && !*why){ const char *t = ui_toast_last(&tseq2); *why = tseq2 != tseq && t[0] ? t : REFUSED; }
     return ok ? 0 : -1;
 }
 /* ---------------------------------------------------------------- the Status tab (main thread; files under /proc and

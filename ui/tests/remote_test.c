@@ -120,6 +120,10 @@ static void test_core(void){
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PLAY_ITEM && r.cmd.sub == RMT_I_ALBUM && !strcmp(r.cmd.name, "Blue") && r.cmd.song_id == 12);
     r = req("POST", p("/api/play_item"), "kind=playlist&id=3&pos=5"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_PLAYLIST && r.cmd.id == 3 && r.cmd.pos == 5);
     r = req("POST", p("/api/play_item"), "kind=file&path=Music%2Fa.flac"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_FILE && !strcmp(r.cmd.name, "Music/a.flac"));
+    r = req("POST", p("/api/play_item"), "kind=folder&path=Music%2FJazz"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_FOLDER && !strcmp(r.cmd.name, "Music/Jazz"));
+    r = req("POST", p("/api/play_item"), "kind=folder"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_FOLDER && !r.cmd.name[0]);   /* the whole card */
+    CHECK(req("POST", p("/api/play_item"), "kind=folder&path=Music%2F..%2F..").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/play_item"), "kind=folder&path=%2Fetc").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/play_item"), "kind=all"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_ALL);
     CHECK(req("POST", p("/api/play_item"), "kind=file&path=..%2Fx").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/play_item"), "kind=radio&pos=2&url=http%3A%2F%2Fs.example%2Fa");

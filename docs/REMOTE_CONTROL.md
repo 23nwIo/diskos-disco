@@ -42,7 +42,7 @@ The page's other tabs list **Albums, Artists, Playlists, Favourites, Songs** and
 audio files only). Each list has a search field and loads 100 entries at a time. Tap an album, artist, playlist or
 folder to open it; tap a song to play it in that context (the album, the artist's songs, the playlist, favourites or
 the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
-card on the Disc after copying new music). Folders never leave the card: `..` and links pointing elsewhere are refused.
+card on the Disc after copying new music). In Folders, **Play all** plays the open folder with its subfolders, in path order (A to Z), as one queue; files the library doesn't know are skipped. Folders never leave the card: `..` and links pointing elsewhere are refused.
 
 ### Playlists and favourites
 
@@ -127,7 +127,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
 | `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`, `fav`), `radio_search` (the last station search: also `"search":"idle"|"busy"|"done"|"failed"`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
-| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed); `kind=radio_hit` + `pos` + `url` (a search hit). `pos` counts from 1. |
+| `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=folder` + `path` (empty: the whole card; subfolders included, path order); `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed); `kind=radio_hit` + `pos` + `url` (a search hit). `pos` counts from 1. |
 | `POST api/radio_search` with `q` | Start a station search (`q` empty: popular stations); then poll `GET api/library/radio_search` until `search` is not `busy`. |
 | `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`. |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |

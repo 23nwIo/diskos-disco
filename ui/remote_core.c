@@ -185,7 +185,7 @@ static const struct { const char *name; rmt_list_t l; } LISTS[] = {
 };
 static const struct { const char *name; rmt_item_t i; } ITEMS[] = {
     { "album", RMT_I_ALBUM }, { "artist", RMT_I_ARTIST }, { "playlist", RMT_I_PLAYLIST }, { "favorites", RMT_I_FAVORITES },
-    { "song", RMT_I_SONG }, { "file", RMT_I_FILE }, { "all", RMT_I_ALL }, { "radio", RMT_I_RADIO }, { "radio_hit", RMT_I_RADIO_HIT },
+    { "song", RMT_I_SONG }, { "file", RMT_I_FILE }, { "folder", RMT_I_FOLDER }, { "all", RMT_I_ALL }, { "radio", RMT_I_RADIO }, { "radio_hit", RMT_I_RADIO_HIT },
 };
 /* optional number: absent = def; out of [lo, hi] or malformed = -1 */
 static int opt_num(const rmt_req_t *r, const char *name, long lo, long hi, long def, long *out){
@@ -227,6 +227,11 @@ static int route_item(const rmt_req_t *r, rmt_cmd_t *c){
     case RMT_I_FILE:
         if(param_str(r, "path", c->name, sizeof c->name) || !c->name[0] || !rmt_relpath_ok(c->name)) return -1;
         break;
+    case RMT_I_FOLDER: {                                      /* path "" or none = the whole card */
+        int pr = param_str(r, "path", c->name, sizeof c->name);
+        if(pr == -1) c->name[0] = 0;
+        if(pr == -2 || !rmt_relpath_ok(c->name)) return -1;
+        break; }
     case RMT_I_RADIO: case RMT_I_RADIO_HIT: {
         if(c->pos <= 0) return -1;
         int u = param_str(r, "url", c->name, sizeof c->name);
@@ -628,7 +633,7 @@ const char RMT_PAGE_HTML[] =
 "playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,{kind:'playlist',id:x.id},function(s){return song(s,{kind:'playlist',id:x.id,pos:s.pos})},null,function(){return plmenu(x)})}]},null,['New playlist',function(){newpl(function(){load(0)})}]],\n"
 "favorites:['Favourites',function(s){return song(s,{kind:'favorites',pos:s.pos})},{kind:'favorites'}],\n"
 "songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all'}],\n"
-"folder:['Folders',null],\n"
+"folder:['Folders',null,{kind:'folder',path:''}],\n"
 "radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}]]};\n"
 "function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},\n"
 "{g:x.fav?'&#9733;':'&#9734;',fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}},x.url]}\n"
@@ -648,7 +653,7 @@ const char RMT_PAGE_HTML[] =
 "function newpl(then){var n=prompt('Name of the new playlist');if(!n||!n.trim())return;cmdj('playlist_create',enc({name:n.trim()})).then(function(j){if(j.ok){say('Playlist created',1);then({id:j.id,name:n.trim()})}})}\n"
 "function plmenu(x){return[['Rename…',function(){var n=prompt('New name',cur().t);if(!n||!n.trim())return;cmd('playlist_rename',enc({id:x.id,name:n.trim()})).then(function(ok){if(ok){cur().t=n.trim();$('ti').textContent=n.trim();say('Renamed',1)}})}],\n"
 "['Delete playlist',function(){if(!confirm('Delete the playlist “'+cur().t+'”? The songs stay on the card.'))return;cmd('playlist_delete',enc({id:x.id})).then(function(ok){if(ok){say('Playlist deleted',1);st.pop();load(0)}})}]]}\n"
-"function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[(x.dir?'📁 ':'')+x.name,'',x.dir?function(){open('folder',{path:p},x.name,null,frow(p))}:function(){play({kind:'file',path:p})}]}}\n"
+"function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[(x.dir?'📁 ':'')+x.name,'',x.dir?function(){open('folder',{path:p},x.name,{kind:'folder',path:p},frow(p))}:function(){play({kind:'file',path:p})}]}}\n"
 "function open(l,p,t,pl,row,act,menu){st.push({l:l,p:p,t:t,play:pl,row:row,act:act,menu:menu});$('q').value='';load(0)}\n"
 "function act(v){return v.act||(v.play?['Play all',function(){play(v.play)}]:null)}\n"
 "function cur(){return st[st.length-1]}\n"

@@ -42,7 +42,7 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/play_item kind=album&name=Blue+Album&song_id=2', 'POST /api/play_item kind=album&name=Blue+Album&song_id=4',
         'POST /api/play_item kind=favorites&pos=2', 'POST /api/play_item kind=song&song_id=6',
         'POST /api/play_item kind=file&path=Music%2Funindexed.mp3', 'POST /api/play_item kind=file&path=Music%2Fescape%2Fpasswd',
-        'POST /api/play_item kind=all', 'GET /api/library/radio', 'GET /api/library/radio?q=fran',
+        'POST /api/play_item kind=all', 'POST /api/play_item kind=folder', 'POST /api/play_item kind=folder&path=Music%2Fnope', 'POST /api/play_item kind=folder&path=Music%2FOther', 'GET /api/library/radio', 'GET /api/library/radio?q=fran',
         'POST /api/play_item kind=radio&pos=1&url=http%3A%2F%2Fs.example%2Fjazz', 'POST /api/play_item kind=radio&pos=2&url=http%3A%2F%2Fs.example%2Fjazz',
         'POST /api/play_item kind=radio&pos=3', 'POST /api/radio_stop', 'POST /api/next',
         'POST /api/radio_search q=jazz', 'GET /api/library/radio_search', 'POST /api/play_item kind=radio_hit&pos=1&url=http%3A%2F%2Fx',
@@ -92,41 +92,46 @@ assert res[17]['rc'] == 0 and res[17]['plays'] == ["type=1 name='' pos=4"]   # S
 assert res[18]['rc'] == -1 and 'rescan' in res[18]['why']
 assert res[19]['rc'] == -1 and res[19]['why'] == 'No such file'
 assert res[20]['rc'] == 0 and res[20]['plays'] == ["type=1 name='' pos=1"]
-assert items(21) == [{'pos': 1, 'name': 'Jazz <FM>', 'url': 'http://s.example/jazz', 'codec': 'MP3', 'bitrate': 128, 'country': 'Germany', 'fav': True},
-                     {'pos': 2, 'name': 'Talk', 'url': 'https://s.example/talk', 'codec': 'AAC', 'bitrate': 64, 'country': 'France', 'fav': True}], items(21)
-assert [x['pos'] for x in items(22)] == [2]
-assert res[23]['rc'] == -1 and res[23]['why'] == 'Connect to Wi-Fi to play radio', res[23]   # the radio's own refusal (no Wi-Fi on a host)
-assert res[24]['why'] == res[25]['why'] == 'The radio favourites changed - reload'
-assert res[26]['rc'] == -1 and res[26]['why'] == 'The radio is not playing'
-assert res[27]['rc'] == 0                                                   # not radio: next goes to the player as before
-assert res[28]['rc'] == -1 and res[28]['why'] == 'Connect the Disc to Wi-Fi to find stations'
-assert res[29]['rc'] == 0 and res[29]['body']['search'] == 'idle' and res[29]['body']['items'] == []
-assert res[30]['why'] == 'The search results changed - search again'
-assert res[31]['rc'] == 0                                                   # already a favourite: no duplicate
-assert res[32]['rc'] == 0 and [x['name'] for x in items(33)] == ['Jazz <FM>']
+# a folder plays as the exact queue (type 5, the reserved slot) of its songs and its subfolders' in path order. The host's
+# player is not in local playback for that send, so the play itself is refused here; the queue it wrote is checked.
+assert res[22]['rc'] == -1 and res[22]['why'] == 'No such folder'
+slot = [t for (t,) in sqlite3.connect(db).execute('SELECT TITLE FROM CUSTOM_PLAYLIST WHERE PLAYLIST_ID=-1000 ORDER BY rowid')]
+assert slot == ['Nuit', 'Solo', 'Jour'], slot
+assert items(24) == [{'pos': 1, 'name': 'Jazz <FM>', 'url': 'http://s.example/jazz', 'codec': 'MP3', 'bitrate': 128, 'country': 'Germany', 'fav': True},
+                     {'pos': 2, 'name': 'Talk', 'url': 'https://s.example/talk', 'codec': 'AAC', 'bitrate': 64, 'country': 'France', 'fav': True}], items(24)
+assert [x['pos'] for x in items(25)] == [2]
+assert res[26]['rc'] == -1 and res[26]['why'] == 'Connect to Wi-Fi to play radio', res[26]   # the radio's own refusal (no Wi-Fi on a host)
+assert res[27]['why'] == res[28]['why'] == 'The radio favourites changed - reload'
+assert res[29]['rc'] == -1 and res[29]['why'] == 'The radio is not playing'
+assert res[30]['rc'] == 0                                                   # not radio: next goes to the player as before
+assert res[31]['rc'] == -1 and res[31]['why'] == 'Connect the Disc to Wi-Fi to find stations'
+assert res[32]['rc'] == 0 and res[32]['body']['search'] == 'idle' and res[32]['body']['items'] == []
+assert res[33]['why'] == 'The search results changed - search again'
+assert res[34]['rc'] == 0                                                   # already a favourite: no duplicate
+assert res[35]['rc'] == 0 and [x['name'] for x in items(36)] == ['Jazz <FM>']
 assert favs.read_text() == 'Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n', favs.read_text()   # radio.c's own file format
 favs.unlink()
-assert res[34]['rc'] == 0 and res[34]['body']['id'] == 2, res[34]
-assert res[35]['rc'] == 0 and res[35]['body']['added'] == 1
-assert res[36]['rc'] == -1 and res[36]['why'] == 'Already in this playlist'
-assert res[37]['rc'] == 0 and res[37]['body']['added'] == 2
-assert [(x['title'], x['pos']) for x in items(38)] == [('Tres', 1), ('Nuit', 2), ('Jour', 3)], items(38)
-assert res[39]['rc'] == -1 and res[39]['why'] == 'The playlist changed - reload'   # pos 1 holds Tres (3), not Jour (5)
-assert res[40]['rc'] == 0, res[40]
-assert res[41]['rc'] == 0 and {x['name'] for x in items(42)} == {'Road trip', 'Late drive'}, items(42)
-assert res[43]['rc'] == 0 and items(44)[0]['fav'] is True
-assert res[45]['rc'] == 0 and [x['title'] for x in items(46)] == ['Jour', 'Solo'] and all(x['fav'] for x in items(46)), items(46)
-assert res[47]['rc'] == 0 and [x['name'] for x in items(48)] == ['Road trip']
-assert res[49]['rc'] == -1 and res[49]['why'] == 'No scan is running'
-assert res[50]['rc'] == 0
-stat = {g['name']: dict(g['rows']) for g in res[51]['body']['groups']}
-assert stat['Playback']['EQ'] == 'R&B' and stat['Playback']['Library'] == '6 songs, 3 albums, 3 artists' and res[51]['body']['scan']['active'] is False, stat
+assert res[37]['rc'] == 0 and res[37]['body']['id'] == 2, res[37]
+assert res[38]['rc'] == 0 and res[38]['body']['added'] == 1
+assert res[39]['rc'] == -1 and res[39]['why'] == 'Already in this playlist'
+assert res[40]['rc'] == 0 and res[40]['body']['added'] == 2
+assert [(x['title'], x['pos']) for x in items(41)] == [('Tres', 1), ('Nuit', 2), ('Jour', 3)], items(41)
+assert res[42]['rc'] == -1 and res[42]['why'] == 'The playlist changed - reload'   # pos 1 holds Tres (3), not Jour (5)
+assert res[43]['rc'] == 0, res[43]
+assert res[44]['rc'] == 0 and {x['name'] for x in items(45)} == {'Road trip', 'Late drive'}, items(45)
+assert res[46]['rc'] == 0 and items(47)[0]['fav'] is True
+assert res[48]['rc'] == 0 and [x['title'] for x in items(49)] == ['Jour', 'Solo'] and all(x['fav'] for x in items(49)), items(49)
+assert res[50]['rc'] == 0 and [x['name'] for x in items(51)] == ['Road trip']
+assert res[52]['rc'] == -1 and res[52]['why'] == 'No scan is running'
+assert res[53]['rc'] == 0
+stat = {g['name']: dict(g['rows']) for g in res[54]['body']['groups']}
+assert stat['Playback']['EQ'] == 'R&B' and stat['Playback']['Library'] == '6 songs, 3 albums, 3 artists' and res[54]['body']['scan']['active'] is False, stat
 assert {'Bluetooth', 'Wi-Fi', 'Storage', 'System'} <= set(stat) and 'Uptime' in stat['System'], stat
 # no Bluetooth radio on a host: the real bt.c reports it off and refuses device actions
-assert res[52]['rc'] == 0 and res[52]['body']['state'] == 'off' and res[52]['body']['devices'] == [], res[52]
-k = res[52]['body']['codec']; assert [c['name'] for c in k['choices']] == ['SBC', 'AAC', 'aptX/LDAC Mobile', 'aptX/LDAC Standard', 'aptX/LDAC High'] and k['live'] == '' and k['current'] == 0, k
-assert res[53]['rc'] == -1 and res[53]['why'] == 'Bluetooth is off' and res[54]['rc'] == -1, res[53:]
+assert res[55]['rc'] == 0 and res[55]['body']['state'] == 'off' and res[55]['body']['devices'] == [], res[55]
+k = res[55]['body']['codec']; assert [c['name'] for c in k['choices']] == ['SBC', 'AAC', 'aptX/LDAC Mobile', 'aptX/LDAC Standard', 'aptX/LDAC High'] and k['live'] == '' and k['current'] == 0, k
+assert res[56]['rc'] == -1 and res[56]['why'] == 'Bluetooth is off' and res[57]['rc'] == -1, res[53:]
 # Working mode goes through the Working mode screen's own switch: on a host it refuses, and the page gets the Disc's own reason
-assert res[55]['rc'] == -1 and res[55]['why'] and res[55]['why'] != "Couldn't switch mode", res[55]
-assert res[56]['body']['work_mode'] == 0, res[56]['body'].get('work_mode')
-print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth, working mode')
+assert res[58]['rc'] == -1 and res[58]['why'] and res[58]['why'] != "Couldn't switch mode", res[58]
+assert res[59]['body']['work_mode'] == 0, res[59]['body'].get('work_mode')
+print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth, working mode, folder play')
