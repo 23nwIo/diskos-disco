@@ -6,12 +6,20 @@
  *      card stays mounted nothing is written.
  *   2. open /dev/mmcblk0 O_RDWR|O_EXCL. The kernel refuses that while any filesystem on the card is mounted, and while
  *      we hold it nobody (the stock player included) can mount the card. A second, independent guard.
- *   3. sdf_format (sdformat_core.c) through pwrite, synced every 16 MiB and at the end.
+ *   3. FAT32: sdf_format (sdformat_core.c) through pwrite, synced every 16 MiB and at the end.
+ *      ext4: the firmware's own /sbin/mke2fs (e2fsprogs 1.45.5 on V2.57, Jo 2026-11-11) on the whole card, after the
+ *      first 4 MiB and the last MiB were zeroed here (old partition table, so mke2fs needs no prompt). Our own exclusive
+ *      handle is closed for that (mke2fs opens the card exclusively itself and refuses a mounted card); g_sd_formatting
+ *      keeps diskOS from mounting it in between, and nothing sends the player a card event. sdformat_core.c's own
+ *      ext4 writer stays in the tree (and in the host tests) but is not used on the device.
  *   4. read back: the cache is dropped and the new MBR / ext4 superblock is read from the card.
  * The partition table is not re-read here (that would wake the stock player's mount routine mid-way); the restart that
  * follows every format does it. */
 #include "sdformat.h"
 #include "sdformat_core.h"
+#include "command_spawn.h"
+#include <signal.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -27,6 +35,8 @@
 
 #define SDF_DEV "/dev/mmcblk0"
 #define SDF_LOG "/usr/data/sdformat.log"
+#define SDF_MKE2FS "/sbin/mke2fs"
+#define SDF_MKE2FS_TIMEOUT_S 900
 
 int  ui_sd_format_unmount(FILE *log, char *why, size_t n);   /* main.c */
 
@@ -34,6 +44,7 @@ static struct {
     _Atomic int state;       /* SDFMT_IDLE / RUNNING / DONE */
     _Atomic int phase;       /* SDFMT_PH_* */
     _Atomic int permille;
+    _Atomic int elapsed;     /* seconds in the write phase (mke2fs gives no progress) */
     _Atomic int touched;     /* the card was unmounted (so the format ends in a restart) */
     int rc;                  /* 0 ok; written before state DONE (release) */
     char err[160];
@@ -78,6 +89,47 @@ static int any_card_mount(void){
     return hit;
 }
 
+/* ext4 through the firmware's mke2fs. fd: our exclusive handle (closed here). Returns 0 = formatted. */
+static int run_mke2fs(int fd, uint64_t bytes, FILE *log, char *ferr, size_t fn){
+    wctx_t c = { fd, 0, log };
+    static char zero[1 << 16];
+    for(uint64_t off = 0; off < (4u << 20); off += sizeof zero) if(dev_write(&c, off, zero, sizeof zero)){ snprintf(ferr, fn, "write failed"); close(fd); return -1; }
+    for(uint64_t off = (bytes & ~(uint64_t)4095) - (1u << 20); off < (bytes & ~(uint64_t)4095); off += sizeof zero)
+        if(dev_write(&c, off, zero, sizeof zero)){ snprintf(ferr, fn, "write failed"); close(fd); return -1; }
+    if(fsync(fd) != 0){ snprintf(ferr, fn, "flush failed"); close(fd); return -1; }
+    ioctl(fd, BLKFLSBUF, 0);
+    close(fd);
+    /* -F: no question about a whole-disk device (once only: a mounted card is still refused). -m 0: no blocks reserved
+     * for root on a music card. nodiscard: no card-wide erase of unknown duration. Everything else as the firmware's
+     * mke2fs.conf (or its built-in defaults) says for ext4. Output goes to the log. */
+    char *argv[] = { "/bin/sh", "-c", "exec " SDF_MKE2FS " -t ext4 -F -L DISC -m 0 -E nodiscard " SDF_DEV " 2>&1", NULL };
+    int lfd = log ? fileno(log) : -1;
+    if(log){ fprintf(log, "running: %s\n", argv[2] + 5); fflush(log); }
+    pid_t pid = 0;
+    if(command_spawn_io(&pid, argv, lfd, -1) != 0){ snprintf(ferr, fn, "mke2fs could not be started"); return -1; }
+    struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+    for(;;){
+        int st = 0; pid_t w = waitpid(pid, &st, WNOHANG);
+        if(w == pid){
+            if(WIFEXITED(st) && WEXITSTATUS(st) == 0) return 0;
+            if(WIFEXITED(st)) snprintf(ferr, fn, "mke2fs exit %d", WEXITSTATUS(st));
+            else snprintf(ferr, fn, "mke2fs killed by signal %d", WIFSIGNALED(st) ? WTERMSIG(st) : -1);
+            return -1;
+        }
+        if(w < 0 && errno != EINTR){ snprintf(ferr, fn, "mke2fs lost"); return -1; }
+        struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+        int el = (int)(now.tv_sec - t0.tv_sec);
+        atomic_store(&g_j.elapsed, el);
+        if(el >= SDF_MKE2FS_TIMEOUT_S){
+            kill(-pid, SIGKILL); kill(pid, SIGKILL);
+            while(waitpid(pid, &st, 0) < 0 && errno == EINTR){}
+            snprintf(ferr, fn, "mke2fs took longer than %d minutes", SDF_MKE2FS_TIMEOUT_S / 60);
+            return -1;
+        }
+        struct timespec ts = { 0, 200L * 1000 * 1000 }; nanosleep(&ts, NULL);
+    }
+}
+
 static void finish(int rc, const char *why, FILE *log){
     if(why) snprintf(g_j.err, sizeof g_j.err, "%s", why);
     if(log){ fprintf(log, "%ld result: %s%s%s\n\n", (long)time(NULL), rc ? "FAILED" : "ok", rc ? " - " : "", rc ? g_j.err : ""); fclose(log); }
@@ -93,6 +145,10 @@ static void *worker(void *arg){
     const char *kn = g_j.kind == SDF_EXT4 ? "ext4 (whole card)" : "FAT32 (MBR partition)";
     if(log) fprintf(log, "%ld format SD card as %s, card %llu bytes\n", (long)time(NULL), kn, (unsigned long long)sysfs_bytes());
 
+    if(g_j.kind == SDF_EXT4 && access(SDF_MKE2FS, X_OK) != 0){
+        if(log) fprintf(log, SDF_MKE2FS " not found: errno %d\n", errno);
+        finish(-7, "This firmware has no mke2fs, so ext4 is not available. Nothing was changed", log); return NULL;
+    }
     atomic_store(&g_j.phase, SDFMT_PH_UNMOUNT);
     char why[160] = "";
     if(ui_sd_format_unmount(log, why, sizeof why) != 0){ finish(-1, why, log); return NULL; }
@@ -125,10 +181,19 @@ static void *worker(void *arg){
 
     atomic_store(&g_j.phase, SDFMT_PH_WRITE);
     char ferr[96] = "";
-    int rc = sdf_format(g_j.kind, &t, ferr, sizeof ferr);
-    if(rc == 0){
-        atomic_store(&g_j.phase, SDFMT_PH_VERIFY);
-        if(fsync(fd) != 0){ if(log) fprintf(log, "final sync failed: errno %d (%s)\n", errno, strerror(errno)); rc = -5; snprintf(ferr, sizeof ferr, "flush failed"); }
+    int rc;
+    if(g_j.kind == SDF_EXT4){
+        atomic_store(&g_j.permille, -1);                  /* no progress from mke2fs: the UI shows the time instead */
+        rc = run_mke2fs(fd, bytes, log, ferr, sizeof ferr);  /* closes fd */
+        fd = rc == 0 ? open(SDF_DEV, O_RDWR | O_EXCL | O_CLOEXEC) : -1;
+        if(rc == 0 && fd < 0){ rc = -5; snprintf(ferr, sizeof ferr, "card not readable after mke2fs (errno %d)", errno); }
+        if(rc == 0) atomic_store(&g_j.phase, SDFMT_PH_VERIFY);
+    } else {
+        rc = sdf_format(g_j.kind, &t, ferr, sizeof ferr);
+        if(rc == 0){
+            atomic_store(&g_j.phase, SDFMT_PH_VERIFY);
+            if(fsync(fd) != 0){ if(log) fprintf(log, "final sync failed: errno %d (%s)\n", errno, strerror(errno)); rc = -5; snprintf(ferr, sizeof ferr, "flush failed"); }
+        }
     }
     if(rc == 0){
         unsigned char b[2048];
@@ -140,7 +205,7 @@ static void *worker(void *arg){
         if(!ok){ rc = -6; snprintf(ferr, sizeof ferr, "read-back check failed"); }
         if(log) fprintf(log, "read-back: %s\n", ok ? "ok" : "MISMATCH");
     }
-    if(close(fd) != 0 && rc == 0){ rc = -5; snprintf(ferr, sizeof ferr, "flush failed"); }
+    if(fd >= 0 && close(fd) != 0 && rc == 0){ rc = -5; snprintf(ferr, sizeof ferr, "flush failed"); }
     if(rc){
         char m[160]; snprintf(m, sizeof m, "Formatting failed (%s). Format the card again or on a computer", ferr[0] ? ferr : "error");
         if(log) fprintf(log, "sdf_format rc %d: %s\n", rc, ferr);
@@ -156,7 +221,7 @@ int sdfmt_start(sdf_kind_t kind){
     int idle = SDFMT_IDLE;
     if(!atomic_compare_exchange_strong(&g_j.state, &idle, SDFMT_RUNNING)) return -1;
     g_j.kind = kind; g_j.rc = 0; g_j.err[0] = 0;
-    atomic_store(&g_j.phase, SDFMT_PH_UNMOUNT); atomic_store(&g_j.permille, 0); atomic_store(&g_j.touched, 0);
+    atomic_store(&g_j.phase, SDFMT_PH_UNMOUNT); atomic_store(&g_j.permille, 0); atomic_store(&g_j.elapsed, 0); atomic_store(&g_j.touched, 0);
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 128 * 1024);
     int r = pthread_create(&g_j.th, &a, worker, NULL);
     pthread_attr_destroy(&a);
@@ -166,7 +231,7 @@ int sdfmt_start(sdf_kind_t kind){
 int sdfmt_poll(sdfmt_status_t *s){
     int st = atomic_load_explicit(&g_j.state, memory_order_acquire);
     if(s){
-        s->state = st; s->phase = atomic_load(&g_j.phase); s->permille = atomic_load(&g_j.permille);
+        s->state = st; s->phase = atomic_load(&g_j.phase); s->permille = atomic_load(&g_j.permille); s->elapsed = atomic_load(&g_j.elapsed);
         s->touched = atomic_load(&g_j.touched); s->rc = st == SDFMT_DONE ? g_j.rc : 0;
         snprintf(s->err, sizeof s->err, "%s", st == SDFMT_DONE ? g_j.err : "");
     }

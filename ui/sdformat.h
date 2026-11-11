@@ -8,7 +8,7 @@
 
 enum { SDFMT_IDLE = 0, SDFMT_RUNNING = 1, SDFMT_DONE = 2 };
 enum { SDFMT_PH_UNMOUNT = 1, SDFMT_PH_WRITE = 2, SDFMT_PH_VERIFY = 3 };
-typedef struct { int state, phase, permille, touched, rc; char err[160]; } sdfmt_status_t;
+typedef struct { int state, phase, permille, elapsed, touched, rc; char err[160]; } sdfmt_status_t;   /* permille -1: no progress (mke2fs) */
 
 int      sdfmt_start(sdf_kind_t kind);       /* 0 = worker started */
 int      sdfmt_poll(sdfmt_status_t *s);      /* returns the state; DONE is reported once, then the job is idle again */

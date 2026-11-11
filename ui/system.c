@@ -706,6 +706,7 @@ static void fmt_tick(lv_timer_t *t){
     if(st == SDFMT_RUNNING){
         char b[64];
         if(s.phase == SDFMT_PH_UNMOUNT) snprintf(b, sizeof b, "Closing the card...");
+        else if(s.phase == SDFMT_PH_WRITE && s.permille < 0) snprintf(b, sizeof b, "Creating ext4... %d:%02d", s.elapsed / 60, s.elapsed % 60);
         else if(s.phase == SDFMT_PH_WRITE) snprintf(b, sizeof b, "Writing... %d%%", s.permille / 10);
         else snprintf(b, sizeof b, "Checking...");
         if(g_fmt_lbl && lv_obj_is_valid(g_fmt_lbl)) fmt_set_text(g_fmt_lbl, b);
