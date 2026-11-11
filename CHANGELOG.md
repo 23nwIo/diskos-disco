@@ -4,6 +4,12 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Settings > System > Maintenance > Format SD Card: erase the microSD card as FAT32 (one MBR partition, as cards come
+  from the factory; for other players and computers) or as ext4 on the whole card without a partition table (diskOS
+  only). Shows the card size, needs Erase held for 3 seconds, closes and unmounts the card first (nothing is written if
+  it stays in use) and restarts the Disc afterwards. Needs no mkfs on the Disc: the formatter is built into the
+  interface. Log: /usr/data/sdformat.log. Checked on card images (e2fsck, a Linux mount, a FAT32 structure check); not
+  yet tested on a Disc.
 - Settings > System > Maintenance now also offers Restart and Shut down player (still under Battery & power too). Both
   ask first and close the card safely before the Disc restarts or switches off.
 - Radio (in Apps and the app menus): web radio over Wi-Fi. Search thousands of stations (radio-browser.info) or open

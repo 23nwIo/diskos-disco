@@ -51,6 +51,7 @@
 #include "stats.h"
 #include "menu_apps.h"
 #include "sdio.h"
+#include "sdformat.h"
 #include "art.h"
 #include "command_spawn.h"
 #include "remote.h"
@@ -606,6 +607,86 @@ int ui_sd_quiesce_drained(void){ return sd_io_active() == 0 && atomic_load(&g_sd
 void ui_sd_quiesce_end(void){
     atomic_store(&g_sd_quiesce, 0);
     if(g_sd_phase == SD_LOCAL && !g_sd_hold){ atomic_store(&g_sd_writable, 1); sd_io_resume(); }
+}
+/* ---- Format SD card (system.c UI, sdformat.c worker) ----
+ * The UI thread checks ui_sd_format_blocked() and calls ui_sd_format_begin() (closes card access like a Restart, stops
+ * the scan and the artwork decoders, pauses playback); the worker calls ui_sd_format_unmount(), which waits for our
+ * own readers and writers and then unmounts the card with a plain umount (never a lazy detach: a detached mount
+ * could still write to the card while it is being formatted). While g_sd_formatting is set no mount path of ours
+ * touches the card (sd_cold_mount_allowed, the ext return worker). If the unmount fails nothing was written and
+ * ui_sd_format_abort() reopens the still-mounted card. After a successful unmount the format always ends in a
+ * restart, success or not: the boot-time mount then picks up whatever is on the card. */
+static _Atomic int g_sd_formatting = 0;
+static int sd_exported_to_host(void);
+static void sd_holders_log(FILE *f);
+const char *ui_sd_format_blocked(void){
+    struct stat sb;
+    if(stat("/sys/block/mmcblk0", &sb) != 0) return "No SD card";
+    if(atomic_load(&g_sd_formatting)) return "Already formatting";
+    if(atomic_load(&g_launch_verdict) != 1 || g_sd_hold || atomic_load(&g_sd_quiesce)) return "SD card is not available right now";
+    if(g_sd_phase != SD_LOCAL || g_source_mode != 0 || sd_exported_to_host()) return "Switch back from USB storage first";
+    return NULL;
+}
+void ui_sd_format_begin(void){
+    atomic_store(&g_sd_formatting, 1);
+    atomic_store(&g_ext_ret_allow, 0);
+    ui_sd_quiesce_begin();
+    scanner_abort();
+    art_kill_all();
+    if(g_playing || ui_audio_running() == 1) ipc_send_cmd("0201000C0000");   /* pause: the player lets go of the file */
+}
+void ui_sd_format_abort(void){
+    atomic_store(&g_sd_formatting, 0);
+    ui_sd_quiesce_end();
+}
+int ui_sd_format_unmount(FILE *log, char *why, size_t n){
+    for(int i = 0; i < 100 && !ui_sd_quiesce_drained(); i++){ struct timespec ts = { 0, 100L * 1000 * 1000 }; nanosleep(&ts, NULL); }
+    if(!ui_sd_quiesce_drained()){ snprintf(why, n, "diskOS is still reading the card"); return -1; }
+    int rc = -1;
+    pthread_mutex_lock(&g_sd_mode_mu);
+    if(sd_exported_to_host()) snprintf(why, n, "The card is shared over USB");
+    else if(!coldplug_mounted()){ rc = 0; if(log) fprintf(log, "card was not mounted\n"); }
+    else {
+        int e = 0;
+        for(int i = 0; i < 20; i++){                     /* ~6 s: the player may need a moment after the pause */
+            if(umount("/tmp/sdcard") == 0){ rc = 0; break; }
+            e = errno;
+            if(e != EBUSY) break;
+            struct timespec ts = { 0, 300L * 1000 * 1000 }; nanosleep(&ts, NULL);
+        }
+        if(rc == 0){ if(log) fprintf(log, "unmounted /tmp/sdcard\n"); }
+        else {
+            if(log){ fprintf(log, "umount failed: errno %d (%s); open files on the card:\n", e, strerror(e)); sd_holders_log(log); }
+            snprintf(why, n, e == EBUSY ? "The card is in use by the player. Restart, then format before playing anything" : "Couldn't unmount the card");
+        }
+    }
+    pthread_mutex_unlock(&g_sd_mode_mu);
+    return rc;
+}
+/* Which processes hold files (or their working directory) on the card: for the format log when the unmount fails. */
+static void sd_holders_log(FILE *f){
+    DIR *d = opendir("/proc"); if(!d) return;
+    struct dirent *e; int shown = 0;
+    while((e = readdir(d)) && shown < 40){
+        if(e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+        char p[300], l[300], comm[40] = "?";
+        snprintf(p, sizeof p, "/proc/%s/comm", e->d_name);
+        FILE *c = fopen(p, "r"); if(c){ if(fgets(comm, sizeof comm, c)) comm[strcspn(comm, "\n")] = 0; fclose(c); }
+        snprintf(p, sizeof p, "/proc/%s/cwd", e->d_name);
+        ssize_t k = readlink(p, l, sizeof l - 1);
+        if(k > 0){ l[k] = 0; if(!strncmp(l, "/tmp/sdcard", 11)){ fprintf(f, "  %s %s cwd %s\n", e->d_name, comm, l); shown++; } }
+        snprintf(p, sizeof p, "/proc/%s/fd", e->d_name);
+        DIR *fd = opendir(p); if(!fd) continue;
+        struct dirent *x;
+        while((x = readdir(fd)) && shown < 40){
+            char q[320]; snprintf(q, sizeof q, "/proc/%s/fd/%s", e->d_name, x->d_name);
+            k = readlink(q, l, sizeof l - 1);
+            if(k > 0){ l[k] = 0; if(!strncmp(l, "/tmp/sdcard", 11)){ fprintf(f, "  %s %s fd %s\n", e->d_name, comm, l); shown++; } }
+        }
+        closedir(fd);
+    }
+    closedir(d);
+    if(!shown) fprintf(f, "  (none found)\n");
 }
 int sd_write_begin(void){
     atomic_fetch_add(&g_sd_writers, 1);
@@ -2441,6 +2522,7 @@ static void *log_maintenance(void *unused){
         diskos_log_rotate("/usr/data/coldplug.log",64*1024);
         diskos_log_rotate("/usr/data/volup_boot.log",64*1024);
         diskos_log_rotate("/usr/data/diskos_rmguard.log",64*1024);
+        diskos_log_rotate("/usr/data/sdformat.log",64*1024);
     }
     return NULL;
 }
@@ -2560,7 +2642,8 @@ static int sd_cold_mount_allowed(void){
     if(pu){ if(fscanf(pu, "%lf", &up) != 1) up = -1.0; fclose(pu); }
     /* g_sd_writable==0 means a Storage export is intended/pending (quiesced) - exclude that window even
      * if the gadget has not bound YET, so a mount can't race a queued-but-unexecuted export (M19). */
-    return (up >= 0.0 && up <= 150.0 && !sd_exported_to_host() && atomic_load(&g_sd_writable));
+    return (up >= 0.0 && up <= 150.0 && !sd_exported_to_host() && atomic_load(&g_sd_writable) &&
+            !atomic_load(&g_sd_formatting));   /* never mount a card that is being formatted */
 }
 /* Filesystems the direct mount tries, in order. */
 static const char *const SD_FS_TYPES[] = { "exfat", "vfat", "ext4" };
@@ -2579,6 +2662,7 @@ static int sd_card_is_ext(void){
     close(fd);
     return n == 2 && m[0] == 0x53 && m[1] == 0xEF;
 }
+int sd_card_is_ext_now(void){ return !sd_exported_to_host() && sd_card_is_ext(); }   /* Format SD card: the preselected kind */
 static int sd_return_needs_mount(void){
     return !sd_exported_to_host() && !coldplug_mounted() && sd_card_is_ext();
 }
@@ -2641,7 +2725,7 @@ static void *ext_return_thread(void *arg){
         else if(++gone >= SD_EXT_SETTLE_S){
             if(mounts > SD_EXT_REMOUNTS){ coldplug_log("storage return: re-mount limit reached"); break; }
             pthread_mutex_lock(&g_sd_mode_mu);
-            if(atomic_load(&g_ext_ret_allow) && !sd_exported_to_host() && !coldplug_mounted()){
+            if(atomic_load(&g_ext_ret_allow) && !atomic_load(&g_sd_formatting) && !sd_exported_to_host() && !coldplug_mounted()){
                 mkdir("/tmp/sdcard", 0755);          /* the guard's rmdir may have removed the mountpoint */
                 if(mount(dev, "/tmp/sdcard", "ext4", 0, NULL) == 0){
                     if(sd_exported_to_host()){

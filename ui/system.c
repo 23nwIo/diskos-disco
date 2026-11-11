@@ -254,11 +254,14 @@ int sys_reset_settings(void){ return cfg_remove_if(sys_reset_match); }
 #include "sdio.h"
 #include "fork_build.h"
 #include "i18n.h"
+#include "sdformat.h"
 #include <pthread.h>
 #include <stdatomic.h>
 
 void settings_diskos_id(char *buf, int n);    /* settings.c */
 void settings_restart_prompt(const char *note);           /* settings.c */
+void settings_restart_now(void);                          /* settings.c: drain, sync, reboot */
+int  sd_card_is_ext_now(void);                            /* main.c */
 
 static lv_obj_t *g_m;                          /* the one open modal (top layer) */
 static void modal_close(void){ if(g_m){ lv_obj_delete_async(g_m); g_m = NULL; } }
@@ -655,5 +658,172 @@ void system_reset_open(int v){
     modal_text(c, "Look and behaviour settings go back to defaults, then diskOS restarts. Music, Wi-Fi, Bluetooth, Last.fm, EQ and audio settings are kept.", 46, THEME_CLR_TEXT_MUTED);
     modal_pill(c, -58, "Cancel", THEME_CLR_TEXT_SECONDARY, cb_close, "system.reset_cancel");
     modal_pill(c,  58, "Reset", THEME_CLR_STATUS_DANGER, cb_reset_go, "system.reset_go");
+}
+
+/* ---- Format SD card (Settings > System > Maintenance). The worker is sdformat.c; the card checks and the unmount are
+ * in main.c. Three steps: choose FAT32 or ext4, confirm by holding Erase for 3 seconds, then progress. Once the card
+ * was unmounted the player always restarts at the end (success or not), so the boot-time mount picks up the new card
+ * and the library is rebuilt. ---- */
+static int g_fmt_kind;                        /* SDF_FAT32 / SDF_EXT4 */
+static lv_obj_t *g_fmt_seg[2], *g_fmt_desc, *g_fmt_hold_lbl, *g_fmt_lbl;
+static lv_timer_t *g_fmt_hold_tm, *g_fmt_tm;
+static uint32_t g_fmt_hold_t0;
+static const char *const FMT_DESC[2] = {
+    "For other players and computers: one FAT32 partition, as SD cards come from the factory. Files up to 4 GB.",
+    "For diskOS only: ext4 on the whole card, no partition. Computers need ext4 support to read it.",
+};
+static void fmt_set_text(lv_obj_t *l, const char *t){ if(!l) return; if(th_zune()){ char b[200]; zlow(b, sizeof b, t); lv_label_set_text(l, b); } else lv_label_set_text(l, t); }
+static void fmt_seg_paint(void){
+    for(int i = 0; i < 2; i++){
+        if(!g_fmt_seg[i]) continue;
+        int on = i == g_fmt_kind;
+        lv_obj_set_style_bg_color(g_fmt_seg[i], on ? TC(ACCENT_PRIMARY) : TC(SURFACE_RAISED), 0);
+        lv_obj_set_style_text_color(lv_obj_get_child(g_fmt_seg[i], 0), on ? TC(ON_ACCENT) : TC(TEXT_PRIMARY), 0);
+    }
+    fmt_set_text(g_fmt_desc, FMT_DESC[g_fmt_kind]);
+}
+static void cb_fmt_seg(lv_event_t *e){
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    g_fmt_kind = (int)(intptr_t)lv_event_get_user_data(e);
+    fmt_seg_paint();
+}
+static void fmt_tick(lv_timer_t *t);
+static void cb_fmt_restart(lv_event_t *e){ if(lv_event_get_code(e) == LV_EVENT_CLICKED){ modal_close(); settings_restart_now(); } }
+static void fmt_go(void){
+    if(g_fmt_hold_tm){ lv_timer_delete(g_fmt_hold_tm); g_fmt_hold_tm = NULL; }
+    g_fmt_hold_lbl = NULL;
+    const char *why = ui_sd_format_blocked();
+    if(why){ modal_close(); modal_simple("Format SD card", why); return; }
+    ui_sd_format_begin();
+    if(sdfmt_start(g_fmt_kind ? SDF_EXT4 : SDF_FAT32) != 0){ ui_sd_format_abort(); modal_close(); ui_toast("Couldn't start formatting"); return; }
+    lv_obj_t *c = modal_card("Formatting SD card", 190);
+    g_fmt_lbl = modal_text(c, "Closing the card...", 60, THEME_CLR_TEXT_MUTED);
+    g_fmt_tm = lv_timer_create(fmt_tick, 200, NULL);
+}
+static void fmt_tick(lv_timer_t *t){
+    sdfmt_status_t s;
+    int st = sdfmt_poll(&s);
+    if(st == SDFMT_RUNNING){
+        char b[64];
+        if(s.phase == SDFMT_PH_UNMOUNT) snprintf(b, sizeof b, "Closing the card...");
+        else if(s.phase == SDFMT_PH_WRITE) snprintf(b, sizeof b, "Writing... %d%%", s.permille / 10);
+        else snprintf(b, sizeof b, "Checking...");
+        if(g_fmt_lbl && lv_obj_is_valid(g_fmt_lbl)) fmt_set_text(g_fmt_lbl, b);
+        return;
+    }
+    lv_timer_delete(t); g_fmt_tm = NULL; g_fmt_lbl = NULL;
+    if(st != SDFMT_DONE) return;
+    if(s.rc == 0){
+        lv_obj_t *c = modal_card("SD card formatted", 190);
+        modal_text(c, "The player restarts now and reads the empty card.", 60, THEME_CLR_TEXT_MUTED);
+        settings_restart_now();
+        return;
+    }
+    if(!s.touched){                               /* the card was never unmounted: nothing written, carry on */
+        ui_sd_format_abort();
+        modal_simple("Card not formatted", s.err[0] ? s.err : "Nothing was changed.");
+        return;
+    }
+    lv_obj_t *c = modal_card("Card not formatted", 240);
+    modal_text(c, s.err[0] ? s.err : "Formatting failed.", 46, THEME_CLR_STATUS_WARNING);
+    modal_pill(c, 0, "Restart", THEME_CLR_ACCENT_EMPHASIS, cb_fmt_restart, "system.format_restart");
+}
+#define FMT_HOLD_MS 3000
+static void fmt_hold_tick(lv_timer_t *t){
+    (void)t;
+    uint32_t el = lv_tick_elaps(g_fmt_hold_t0);
+    if(el >= FMT_HOLD_MS){ fmt_go(); return; }
+    char b[16]; snprintf(b, sizeof b, "%u", (unsigned)((FMT_HOLD_MS - el + 999) / 1000));
+    if(g_fmt_hold_lbl) lv_label_set_text(g_fmt_hold_lbl, b);
+}
+static void cb_fmt_hold(lv_event_t *e){
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_PRESSED){
+        if(g_fmt_hold_tm) return;
+        g_fmt_hold_t0 = lv_tick_get();
+        g_fmt_hold_tm = lv_timer_create(fmt_hold_tick, 100, NULL);
+        if(g_fmt_hold_lbl) lv_label_set_text(g_fmt_hold_lbl, "3");
+    } else if(code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST){
+        if(g_fmt_hold_tm){ lv_timer_delete(g_fmt_hold_tm); g_fmt_hold_tm = NULL; }
+        if(g_fmt_hold_lbl) fmt_set_text(g_fmt_hold_lbl, "Erase");
+    }
+}
+static void cb_noop(lv_event_t *e){ (void)e; }
+static void cb_fmt_cancel(lv_event_t *e){
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if(g_fmt_hold_tm){ lv_timer_delete(g_fmt_hold_tm); g_fmt_hold_tm = NULL; }
+    g_fmt_hold_lbl = NULL; g_fmt_seg[0] = g_fmt_seg[1] = NULL; g_fmt_desc = NULL;
+    modal_close();
+}
+static void fmt_confirm(void);
+static void cb_fmt_next(lv_event_t *e){
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    g_fmt_seg[0] = g_fmt_seg[1] = NULL; g_fmt_desc = NULL;
+    const char *why = ui_sd_format_blocked();
+    if(why){ modal_simple("Format SD card", why); return; }
+    fmt_confirm();
+}
+static void fmt_confirm(void){
+    char sz[32] = "the", body[220]; uint64_t cb = sdfmt_card_bytes();
+    if(cb){ char b[24]; sys_fmt_bytes(cb, b, sizeof b); snprintf(sz, sizeof sz, "the %s", b); }
+    snprintf(body, sizeof body, "Everything on %s card is deleted and it is formatted as %s. This can't be undone. Hold Erase for 3 seconds.",
+             sz, g_fmt_kind ? "ext4" : "FAT32");
+    lv_obj_t *c = modal_card("Erase SD card?", 240);
+    modal_text(c, body, 46, THEME_CLR_STATUS_WARNING);
+    modal_pill(c, -58, "Cancel", THEME_CLR_TEXT_SECONDARY, cb_fmt_cancel, "system.format_cancel");
+    modal_pill(c,  58, "Erase", THEME_CLR_STATUS_DANGER, cb_noop, "system.format_erase");
+    lv_obj_t *b = lv_obj_get_child(c, -1);
+    g_fmt_hold_lbl = lv_obj_get_child(b, 0);
+    ui_on(b, cb_fmt_hold, LV_EVENT_PRESSED, NULL, "system.format_hold", UI_CORE);
+    ui_on(b, cb_fmt_hold, LV_EVENT_RELEASED, NULL, "system.format_hold", UI_CORE);
+    ui_on(b, cb_fmt_hold, LV_EVENT_PRESS_LOST, NULL, "system.format_hold", UI_CORE);
+}
+/* host renders only (tests/host_render.c FORMAT_PREVIEW): the dialogs without the card checks. 0/1 choose FAT32/ext4,
+ * 2 erase confirmation, 3 progress, 4 failure after the unmount. */
+static void fmt_choose(void);
+void system_format_sd_preview(int step){
+    if(step <= 1){ g_fmt_kind = step; fmt_choose(); return; }
+    if(step == 2){ g_fmt_kind = 0; fmt_confirm(); return; }
+    if(step == 3){ lv_obj_t *c = modal_card("Formatting SD card", 190); g_fmt_lbl = modal_text(c, "Writing... 42%", 60, THEME_CLR_TEXT_MUTED); return; }
+    lv_obj_t *c = modal_card("Card not formatted", 240);
+    modal_text(c, "Formatting failed (write failed). Format the card again or on a computer", 46, THEME_CLR_STATUS_WARNING);
+    modal_pill(c, 0, "Restart", THEME_CLR_ACCENT_EMPHASIS, cb_noop, "system.format_restart");
+}
+void system_format_sd_open(int v){
+    (void)v;
+    if(g_fmt_tm || g_fmt_hold_tm){ ui_toast("Already formatting"); return; }
+    const char *why = ui_sd_format_blocked();
+    if(why){ modal_simple("Format SD card", why); return; }
+    int batt = sys_read_battery(NULL);
+    if(batt >= 0 && batt < 15){ modal_simple("Format SD card", "Battery too low. Charge the player to at least 15% first."); return; }
+    g_fmt_kind = sd_card_is_ext_now() ? 1 : 0;      /* start on the card's current kind */
+    fmt_choose();
+}
+static void fmt_choose(void){
+    lv_obj_t *c = modal_card("Format SD card", 250);
+    int zune = th_zune(), y = zune ? 112 : 46;
+    for(int i = 0; i < 2; i++){
+        lv_obj_t *b = lv_obj_create(c); lv_obj_remove_style_all(b); kit_keep(b);
+        lv_obj_set_size(b, 112, 36); lv_obj_align(b, LV_ALIGN_TOP_MID, i ? 60 : -60, y);
+        lv_obj_set_style_radius(b, 10, 0); lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE); lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_ext_click_area(b, 4);
+        ui_on(b, cb_fmt_seg, LV_EVENT_CLICKED, (void *)(intptr_t)i, i ? "system.format_ext4" : "system.format_fat32", UI_CORE);
+        lv_obj_t *l = lv_label_create(b); kit_keep(l);
+        lv_label_set_text(l, i ? "ext4" : "FAT32");
+        lv_obj_set_style_text_font(l, zune ? zune_font(&font_zune_regular_17) : TF(UI_16), 0);
+        lv_obj_center(l);
+        g_fmt_seg[i] = b;
+    }
+    g_fmt_desc = lv_label_create(c); kit_keep(g_fmt_desc);
+    lv_label_set_long_mode(g_fmt_desc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(g_fmt_desc, zune ? 260 : 256);
+    lv_obj_set_style_text_align(g_fmt_desc, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(g_fmt_desc, zune ? zune_font(&font_zune_regular_16) : TF(UI_14), 0);
+    lv_obj_set_style_text_color(g_fmt_desc, TC(TEXT_MUTED), 0);
+    lv_obj_align(g_fmt_desc, LV_ALIGN_TOP_MID, 0, y + 46);
+    fmt_seg_paint();
+    modal_pill(c, -58, "Cancel", THEME_CLR_TEXT_SECONDARY, cb_fmt_cancel, "system.format_cancel");
+    modal_pill(c,  58, "Next", THEME_CLR_ACCENT_EMPHASIS, cb_fmt_next, "system.format_next");
 }
 #endif

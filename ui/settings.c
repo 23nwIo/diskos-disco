@@ -1038,6 +1038,8 @@ static const setting_t TABLE[] = {
     /* the same two power actions also live under Battery & power (Jo looks for them under Maintenance, Nov 2026) */
     { "Battery & power", "Restart",   ST_ACTION, NULL, 0,0,0, NULL,0, "Restart", apply_restart, 0,
       "Restart the device. Boots your default UI; hold Vol-Up for the other one.", NULL },
+    { "Maintenance",   "Format SD Card", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, system_format_sd_open, 0,
+      "Erase the SD card: FAT32 for other players and computers, or ext4 for diskOS only. The player restarts after.", NULL },
     { "Maintenance",   "Reset diskOS Settings", ST_ACTION, NULL, 0,0,0, NULL,0, "Reset", system_reset_open, 0,
       "Reset UI appearance/behaviour. Keep music, Wi-Fi, Bluetooth, Last.fm, EQ and audio settings.", NULL },
     { "Maintenance",   "Debug Mode",  ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_debug_mode, 0,

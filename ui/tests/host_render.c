@@ -1410,6 +1410,7 @@ int main(int argc, char **argv){
         screen_show(scr);
         if(th_zune())zune_status_refresh();
         if(getenv("FB_FIXTURE")){folderbrowser_open();nav_wait(500);if(getenv("FB_SCROLL")){lv_obj_t *list=NULL;lv_obj_t*r=screen_get_root(SCR_FOLDER);for(uint32_t i=0;i<lv_obj_get_child_count(r);i++){lv_obj_t*c=lv_obj_get_child(r,i);if(lv_obj_get_scroll_dir(c)==LV_DIR_VER&&lv_obj_get_y(c)==124){list=c;break;}}assert(list);lv_obj_scroll_to_y(list,atoi(getenv("FB_SCROLL")),LV_ANIM_OFF);nav_wait(500);}}
+        if(getenv("FORMAT_PREVIEW")){void system_format_sd_preview(int);system_format_sd_preview(atoi(getenv("FORMAT_PREVIEW")));nav_wait(150);}
         if(getenv("ZUNE_CONFIRM")){void system_preview_confirmation(int);system_preview_confirmation(atoi(getenv("ZUNE_CONFIRM")));nav_wait(150);}
         if(getenv("REVIEW_ZUNE_USB")){
             void modes_test_output_route(int);screen_show(SCR_WORKMODE);nav_wait(100);lv_obj_t*root=screen_get_root(SCR_WORKMODE);

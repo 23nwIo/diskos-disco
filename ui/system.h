@@ -69,6 +69,7 @@ void system_check_update_open(int v);
 void system_ota_allow_changed(int v);  /* row hook: OFF with a staged update asks to discard it (switch stays ON until Discard) */
 void settings_row_values_refresh(void);  /* settings.c: re-read every visible row value */
 void system_reset_open(int v);
+void system_format_sd_open(int v);   /* Settings > System > Maintenance > Format SD Card */
 void system_ota_note_playback(void); /* main.c: a real playback start was confirmed */
 void system_ota_health_init(void);   /* called once from main.c when the UI is up (OTA health marker) */
 #endif
