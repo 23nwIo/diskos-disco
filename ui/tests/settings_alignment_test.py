@@ -47,6 +47,8 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
    assert pages['Battery & power'][-1]['label']=='Charging Limit'
    for name in ['Screen-off delay','Screensaver delay','Restart','Shut down player','Sleep timer']:
     assert name in [x['label'] for x in pages['Battery & power']],(theme,name)
+   for name in ['Restart','Shut down player']:
+    assert name in [x['label'] for x in pages['Maintenance']],(theme,name)
    assert not any(x['key']=='disc_colour' for rows in pages.values() for x in rows)
    assert not any(x['key']=='eq_preset' for rows in pages.values() for x in rows)
    assert [x['key'] for x in pages['Sleep timer']]==['sleep_idx','sleep_action']

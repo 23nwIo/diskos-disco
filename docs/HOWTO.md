@@ -18,6 +18,7 @@
 | Change clock format | System > Date & Time |
 | Read version / build ID | Help > About |
 | Update from SD | System > Maintenance > Update from SD Card |
+| Restart / switch off | System > Maintenance > Restart / Shut down player (also Battery & power) |
 | Restore contextual hints | Help > Show hints again, on supported themes |
 
 Tap the Music title for track actions in Disco/Null/Squash; hold a library item for its context menu. Queue and Up Next are distinct: the former is the explicit next-song queue, the latter the player's playback context.

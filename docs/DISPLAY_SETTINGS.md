@@ -43,7 +43,7 @@ List motion is under **Display > <theme> settings > Navigation**. Disco, Null an
 - **Battery & power**: activation delays; **theme settings > Screensaver**: supported saver design. Screen-off delay is additional to screensaver delay.
 - **Battery & power > Sleep timer**: Duration and When sleep ends. This explicit timer is distinct from idle shutdown.
 - **Help > About**: running version and binary-derived build ID.
-- **System > Maintenance**: signed SD update, reset and debug entry points.
+- **System > Maintenance**: signed SD update, reset, debug, Restart and Shut down player (the last two also under Battery & power). Both close the card safely first.
 
 DSD Output is information labelled Player-managed, not a Native/DoP/PCM selector. Gain, codec, power, rotation and key controls have firmware/install guards. A setting's presence does not prove support on another stock firmware.
 

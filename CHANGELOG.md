@@ -4,6 +4,8 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Settings > System > Maintenance now also offers Restart and Shut down player (still under Battery & power too). Both
+  ask first and close the card safely before the Disc restarts or switches off.
 - Radio (in Apps and the app menus): web radio over Wi-Fi. Search thousands of stations (radio-browser.info) or open
   Popular, hold a station to save it as a favourite. The Disc's own player plays the stream (MP3, AAC, Ogg Vorbis,
   Opus, FLAC; HTTP and HTTPS) and the usual Music screen shows it, with the song the station names (ICY, or the Ogg

@@ -176,7 +176,6 @@ static const char *settings_page(const setting_t *s){
     const char *page=d?d->page:s->group;
     if(!strcmp(k,"screenoff_idx")||!strcmp(k,"saver_idx")||!strcmp(k,"clock_batt_pct"))return "Battery & power";
     if(!strcmp(k,"sleep_idx")||!strcmp(k,"sleep_action"))return "Sleep timer";
-    if(s->apply==apply_restart)return "Battery & power";
     if(!strcmp(k,"time_24h"))return "Date & Time";
     if(!strcmp(k,"language"))return "System";
     if(!strcmp(k,"bt_codec"))return "Bluetooth";

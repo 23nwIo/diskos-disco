@@ -1033,6 +1033,11 @@ static const setting_t TABLE[] = {
     /* Disco: no online updates (Update diskOS / Automatic Updates are gone); updates come from the SD card or a flash */
     { "Maintenance",   "Restart",     ST_ACTION, NULL, 0,0,0, NULL,0, "Restart", apply_restart, 0,
       "Restart the device. Boots your default UI; hold Vol-Up for the other one.", NULL },
+    { "Maintenance",   "Shut down player", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_POWER, apply_shutdown, 0,
+      "Switch the player off. Closes the card safely first.", NULL },
+    /* the same two power actions also live under Battery & power (Jo looks for them under Maintenance, Nov 2026) */
+    { "Battery & power", "Restart",   ST_ACTION, NULL, 0,0,0, NULL,0, "Restart", apply_restart, 0,
+      "Restart the device. Boots your default UI; hold Vol-Up for the other one.", NULL },
     { "Maintenance",   "Reset diskOS Settings", ST_ACTION, NULL, 0,0,0, NULL,0, "Reset", system_reset_open, 0,
       "Reset UI appearance/behaviour. Keep music, Wi-Fi, Bluetooth, Last.fm, EQ and audio settings.", NULL },
     { "Maintenance",   "Debug Mode",  ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_debug_mode, 0,
