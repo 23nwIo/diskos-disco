@@ -37,6 +37,15 @@ APP_SRCS += $(APP)/vendor/monocypher/monocypher.c $(APP)/vendor/monocypher/monoc
 APP_SRCS += $(APP)/aptx_blob.c
 $(APP)/aptx_blob.o: CFLAGS += -DAPTX_DIR='"$(APP)/vendor/aptx"'
 $(APP)/aptx_blob.o: $(APP)/vendor/aptx/bluealsa $(APP)/vendor/aptx/libfreeaptx.so.0 $(APP)/vendor/aptx/LICENSE-bluez-alsa.txt $(APP)/vendor/aptx/LICENSE-libfreeaptx.txt
+# diskos-watchdog (ui/watchdog, the open-source cmd_watchdog) built with the same toolchain and carried inside mq_ui;
+# main.c binds it over the stock /usr/bin/cmd_watchdog at start (wd_override.h)
+APP_SRCS += $(APP)/wd_blob.c
+WD_BIN := $(APP)/watchdog/diskos-watchdog
+$(WD_BIN): $(APP)/watchdog/main.c $(APP)/watchdog/watchdog.c $(APP)/watchdog/watchdog.h
+	$(CC) -Os -static -Wall -Wextra -Werror -ffile-prefix-map=$(APP)/watchdog/= $(FP_FLAGS) -o $@ $(APP)/watchdog/main.c $(APP)/watchdog/watchdog.c
+	$(CROSS)strip $@ || true
+$(APP)/wd_blob.o: CFLAGS += -DWD_BIN='"$(WD_BIN)"'
+$(APP)/wd_blob.o: $(WD_BIN)
 APP_SRCS += $(APP)/braun2.c $(APP)/zune_home.c $(APP)/zune_dial.c $(APP)/zune_thumbs.c $(APP)/zune_saver.c $(APP)/font_zune_light_150.c $(APP)/font_zune_light_18.c $(APP)/font_zune_light_21.c $(APP)/font_zune_light_24.c $(APP)/font_zune_light_28.c $(APP)/font_zune_light_32.c $(APP)/font_zune_light_40.c $(APP)/font_zune_light_46.c $(APP)/font_zune_light_50.c $(APP)/font_zune_light_64.c $(APP)/font_zune_light_72.c $(APP)/font_zune_light_88.c $(APP)/font_zune_light_96.c $(APP)/font_zune_regular_12.c $(APP)/font_zune_regular_13.c $(APP)/font_zune_regular_14.c $(APP)/font_zune_regular_15.c $(APP)/font_zune_regular_16.c $(APP)/font_zune_regular_17.c $(APP)/font_zune_regular_19.c $(APP)/font_zune_semibold_10.c $(APP)/font_zune_semibold_11.c $(APP)/font_zune_semibold_12.c $(APP)/font_zune_semibold_22.c $(APP)/font_zune_semibold_24.c $(APP)/font_zune_bold_14.c
 # bundled SQLite amalgamation (compiled in-process; replaces popen sqlite3 CLI)
 SQLITE_FLAGS := -Os -pipe -static -ffunction-sections -fdata-sections -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION \
@@ -75,7 +84,7 @@ mq_ui: $(OBJS)
 	   echo "size: $$(stat -c%s $@)"; \
 	   echo "built: $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
 	   echo "cc: $$($(CC) --version | head -1)"; \
-	   echo "src_md5: $$(cat $(APP_SRCS) $(APP)/*.h $(APP)/vendor/aptx/bluealsa $(APP)/vendor/aptx/libfreeaptx.so.0 2>/dev/null | md5sum | cut -d' ' -f1)"; \
+	   echo "src_md5: $$(cat $(APP_SRCS) $(APP)/*.h $(APP)/watchdog/*.c $(APP)/watchdog/*.h $(APP)/vendor/aptx/bluealsa $(APP)/vendor/aptx/libfreeaptx.so.0 2>/dev/null | md5sum | cut -d' ' -f1)"; \
 	 } > $@.manifest
 	@cat $@.manifest
 
@@ -133,7 +142,7 @@ $(APP)/boomshine/%.o: $(APP)/boomshine/%.c $(APP)/boomshine/game.h $(APP)/boomsh
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(OBJS:.o=.d) mq_ui mq_ui.debug mq_ui.manifest ipodos-ui diskos-bootprobe diskos-artdec
+	rm -f $(OBJS) $(OBJS:.o=.d) mq_ui mq_ui.debug mq_ui.manifest ipodos-ui diskos-bootprobe diskos-artdec $(WD_BIN)
 -include $(patsubst %.o,%.d,$(filter %.o,$(OBJS)))
 
 # Native render/action diagnostics. Explicitly separate from the production theme/cross-build gates.

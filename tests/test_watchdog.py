@@ -1,4 +1,4 @@
-"""Host tests for src/watchdog (diskos-watchdog, the cmd_watchdog replacement).
+"""Host tests for ui/watchdog (diskos-watchdog, the cmd_watchdog replacement).
 
 The tool is built for the host with a recording ioctl (WD_TEST_IOCTL) and a temporary device path, so every test
 checks the exact request codes the stock libhardware2.so uses without touching a real watchdog."""
@@ -12,7 +12,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / 'src' / 'watchdog'
+SRC = ROOT / 'ui' / 'watchdog'
 
 SHIM = r'''
 #include <errno.h>

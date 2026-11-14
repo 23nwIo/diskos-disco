@@ -35,6 +35,8 @@
 #include "theme.h"
 #include "fb_pan.h"
 #include "controls.h"
+#include "wd_blob.h"
+#include "wd_override.h"   /* own cmd_watchdog bound over the stock tool */
 #include "screens.h"
 #include "npshade.h"
 #include "ma.h"
@@ -3575,6 +3577,10 @@ int main(int argc, char **argv){
       sigaction(SIGALRM,&al,NULL); alarm(BOOT_DEADLINE_S); }
     fprintf(stderr,"=== diskOS Disco %s main start argc=%d ===\n", DISCO_VERSION, argc); fflush(stderr);
     wifi_apply_script_override();   /* before the player (started 2 s after us) or the keepalive runs wifi_up.sh */
+    {   /* our cmd_watchdog over the stock one, before the player (2 s after us) arms and feeds the watchdog */
+        int r = wdo_apply(wd_blob_data(), wd_blob_size(), WDO_SRC, WDO_DST, WDO_OFF);
+        fprintf(stderr, "watchdog: %s over %s: %s\n", WDO_SRC, WDO_DST, wdo_reason(r)); fflush(stderr);
+    }
     /* WiFi bring-up + keep-alive is handled by wifi_supervise() in the main loop (which
      * also restarts the supplicant if it dies, so a known net returning in range auto-
      * joins). Intent is seeded from SYSCONFIG.WIFI_STATUS after cfg_load, below. */

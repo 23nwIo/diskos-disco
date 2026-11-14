@@ -22,4 +22,10 @@ Targets below are proposals or verification work, not shipped features. Work bel
 - Keep focused test harnesses aligned with production interfaces; distinguish test failures from device bugs.
 - Revisit decoder cancellation only with a reproducible crash trace and device verification.
 
+## For the next rootfs (flash) change
+
+Rootfs changes are deferred for now (Jo, 2026-11-06). Collect here what a future flash should take along.
+
+- Replace `/usr/bin/cmd_watchdog` with `diskos-watchdog` (ui/watchdog) once it has run stably as the bind-mount override from mq_ui (ui/wd_override.h, since 2026-11-14). Caution: the rootfs is also the Vol-Up stock fallback, so after the swap the stock firmware runs our tool too; only do it with a long clean record. See docs/MQ_PLAYER_REPLACEMENT.md.
+
 No dates, performance improvements or completion status are promised by this list. Previous checkpoint lists are available in Git history.

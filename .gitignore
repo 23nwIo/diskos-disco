@@ -96,3 +96,5 @@ shelf.conf
 build/linux-packages/out/
 build/bluealsa-aptx/out/
 build/out/
+# diskos-watchdog built into mq_ui (ui/Makefile, embedded by wd_blob.c; never committed)
+ui/watchdog/diskos-watchdog

@@ -6,7 +6,7 @@
 # Default output: build/out/diskos-watchdog. Never pass -D overrides (device path, test hooks) for a device build.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-SRC="$HERE/../src/watchdog"
+SRC="$HERE/../ui/watchdog"
 OUT=${1:-"$HERE/out/diskos-watchdog"}
 CROSS=${CROSS:-mipsel-linux-musl-}
 mkdir -p "$(dirname "$OUT")"
