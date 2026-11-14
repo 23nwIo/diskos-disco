@@ -221,7 +221,13 @@ config and likely a USB-C OTG adapter.
 
 ## 10. Misc
 
-- **RTC:** `rtc0` present and correct - real hardware clock.
+- **RTC:** `rtc0` (`10003000.rtc`), real battery-backed hardware clock. It is kept in **local
+  time**: stock mq_player and mq_ui run BusyBox `hwclock -s`/`-w` without `-u`. The kernel loads it
+  at boot (`/sys/class/rtc/rtc0/hctosys` = 1) and assumes **UTC**, so until mq_ui/mq_player run
+  `hwclock -s` the system clock is ahead by the UTC offset (+1 h CET, +2 h CEST). Anything stamped
+  that early (S96/S97 lines in `/usr/data/diskos_install.log`) shows that offset. BusyBox 1.31.1
+  `hwclock` would follow `/var/lib/hwclock/adjtime`, but that directory is on the read-only rootfs
+  and absent. No init script runs `hwclock`. Device-checked 2026-11-14.
 - **ADC:** SoC SAR ADC, 6 aux channels (`/dev/jz_adc_aux_0..5`) - analog reads (e.g.
   jack/line detect, if wired).
 - **Watchdog:** hardware `/dev/jz_watchdog`.

@@ -235,9 +235,10 @@ static void status_poll_cb(lv_timer_t *t){
 }
 void ui_status_refresh(void){ status_poll_cb(NULL); }
 
-/* Persistent clock: the device has a (backed) RTC but the boot init never loads
- * it, so the system clock starts at the 2020 kernel default. Like stock
- * mq_player, load the system clock FROM the RTC at startup (offline-safe) and
+/* Persistent clock: the device has a (backed) RTC, kept in LOCAL time (stock
+ * convention). The kernel loads it at boot (hctosys) but assumes UTC, so until
+ * this runs the system clock is ahead by the UTC offset (docs/HARDWARE.md, Misc).
+ * Like stock mq_player, load the system clock FROM the RTC at startup (offline-safe) and
  * write it BACK periodically so the RTC stays current (ntpd corrects the system
  * clock when WiFi is up, and that corrected time then gets saved to the RTC). */
 static int run_bounded(char *const argv[], int timeout_ms);   /* defined below (killable child + hard timeout) */
