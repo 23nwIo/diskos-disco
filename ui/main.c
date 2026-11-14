@@ -2162,6 +2162,40 @@ static void crash_log(int sig, siginfo_t *si, void *ucv){
     signal(sig, SIG_DFL); raise(sig);
 }
 
+/* Who ended us: a terminating signal that is not a crash (SIGTERM from the player's power-off routine or a killall,
+ * SIGHUP, SIGPIPE, ...) left no trace before, so a UI that vanished seconds after start (field report 2026-11-14: the
+ * OTA build gone at ~15 s, stock UI and the flashed build then both running) could not be explained. Log the signal,
+ * the sender's pid and its command line, then die exactly as before (default action). SIGKILL cannot be caught.
+ * Async-signal-safe only: open/read/write/close. */
+static void term_log(int sig, siginfo_t *si, void *ucv){
+    (void)ucv;
+    int fd = open("/usr/data/diskos_boot.log", O_WRONLY|O_APPEND);
+    if(fd >= 0){
+        char b[400]; int i = 0;
+        const char *m = "=== diskos TERMINATED by signal "; while(*m) b[i++] = *m++;
+        if(sig >= 10) b[i++] = (char)('0' + sig / 10);
+        b[i++] = (char)('0' + sig % 10);
+        long pid = si ? (long)si->si_pid : 0;
+        const char *f = " from pid "; while(*f) b[i++] = *f++;
+        { char d[12]; int n = 0; long v = pid < 0 ? 0 : pid; do { d[n++] = (char)('0' + v % 10); v /= 10; } while(v && n < 11); while(n) b[i++] = d[--n]; }
+        if(pid > 0){
+            char path[32]; int k = 0; const char *pp = "/proc/"; while(*pp) path[k++] = *pp++;
+            { char d[12]; int n = 0; long v = pid; do { d[n++] = (char)('0' + v % 10); v /= 10; } while(v && n < 11); while(n) path[k++] = d[--n]; }
+            const char *pc = "/cmdline"; while(*pc) path[k++] = *pc++; path[k] = 0;
+            int cf = open(path, O_RDONLY);
+            b[i++] = ' '; b[i++] = '(';
+            if(cf >= 0){
+                char c[200]; ssize_t r = read(cf, c, sizeof c); close(cf);
+                for(ssize_t j = 0; j < r && i < (int)sizeof b - 4; j++) b[i++] = c[j] ? c[j] : ' ';
+            } else { const char *g = "gone"; while(*g) b[i++] = *g++; }
+            b[i++] = ')';
+        }
+        b[i++] = '\n';
+        (void)write(fd, b, (size_t)i); close(fd);
+    }
+    signal(sig, SIG_DFL); raise(sig);
+}
+
 /* Boot-hang protection ------------------------------------------------------
  * Two independent guards keep the device from ever sitting in a black-screen
  * hang at boot (fiio_init's watchdog only respawns a DEAD mq_ui via `pgrep -x`,
@@ -3525,7 +3559,11 @@ int main(int argc, char **argv){
       sa.sa_sigaction = crash_log; sa.sa_flags = SA_SIGINFO | SA_ONSTACK; sigemptyset(&sa.sa_mask);
       sigaction(SIGSEGV,&sa,NULL); sigaction(SIGBUS,&sa,NULL);
       sigaction(SIGABRT,&sa,NULL); sigaction(SIGFPE,&sa,NULL);
-      sigaction(SIGILL,&sa,NULL); sigaction(SIGTRAP,&sa,NULL); }   /* MIPS: a division by zero traps (SIGTRAP/SIGFPE) */
+      sigaction(SIGILL,&sa,NULL); sigaction(SIGTRAP,&sa,NULL);    /* MIPS: a division by zero traps (SIGTRAP/SIGFPE) */
+      struct sigaction st; memset(&st, 0, sizeof st);
+      st.sa_sigaction = term_log; st.sa_flags = SA_SIGINFO | SA_ONSTACK; sigemptyset(&st.sa_mask);
+      sigaction(SIGTERM,&st,NULL); sigaction(SIGHUP,&st,NULL); sigaction(SIGINT,&st,NULL);
+      sigaction(SIGQUIT,&st,NULL); sigaction(SIGPIPE,&st,NULL); sigaction(SIGUSR1,&st,NULL); sigaction(SIGUSR2,&st,NULL); }
     /* Boot-hang backstop: if we don't reach the main loop + first paint within
      * BOOT_DEADLINE_S, SIGALRM _exit()s us so fiio_init respawns a fresh mq_ui
      * (an alive-but-hung mq_ui is invisible to its `pgrep -x` watchdog). The
