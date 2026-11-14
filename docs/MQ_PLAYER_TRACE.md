@@ -39,9 +39,13 @@ A player that the firmware watchdog restarts directly (not through our launcher)
 One file per start of the player, named by its start time on the Disc's clock (the launcher passes the name in
 `DISKOS_TRACE_FILE`; helper programs inherit it and write into the same file):
 
-- default: `/tmp/sdcard/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log` on the SD card. It survives power off, so
-  the power off sequence is recorded up to the moment the card is unmounted. Lines are held in memory until the card
-  is mounted (the stock player mounts it some seconds after its start).
+- default: `/tmp/sdcard/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log` on the SD card. Lines are held in memory
+  until the card is mounted (the stock player mounts it some seconds after its start). Every `popen`/`system` first
+  writes what is buffered, so everything up to the player's own `umount` of the card is on the card. When the card
+  goes away after it was written (power off: the player runs `umount` and then `poweroff -f`; diskOS's "Shut down
+  player" unmounts it earlier; USB storage mode), the following lines go to
+  `/usr/data/diskos-trace-tail-<YYYYmmdd-HHMMSS>.log` in internal flash instead, at most 64 KiB per start, so the end
+  of a power off is kept.
 - switch file starting with `tmp`: `/tmp/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log`, meant to be RAM (not yet
   checked on the Disc that `/tmp` is a tmpfs: `grep " /tmp " /proc/mounts`); nothing is written to flash or the card,
   and a reboot clears it, so copy the file first.
@@ -120,8 +124,9 @@ SSH gives the seconds the log uses), so the blocks in the log can be told apart.
 7. Charger in and out.
 8. USB storage mode on and off; USB DAC mode on and off.
 9. Bluetooth output on, play, off.
-10. Power off from the menu (with the log on the card). Lines written in the last second before the card is
-    unmounted or the player is killed are lost. Then copy the log from the card.
+10. Power off from the menu (with the log on the card). Afterwards copy the log from the card and
+    `/usr/data/diskos-trace-tail-*.log` (the part after the card was unmounted). Lines from the last moment before the
+    player is killed, after its last `popen`/`system`, can still be lost.
 
 ## Limits
 

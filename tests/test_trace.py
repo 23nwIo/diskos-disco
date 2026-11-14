@@ -48,6 +48,8 @@ int main(void)
     pid_t c = fork();
     if (c == 0) { unsigned char k = 0x11; ioctl(fd, REQ_W, &k); execl("/bin/true", "true", "child-arg", (char *)0); _exit(1); }
     waitpid(c, NULL, 0);
+    const char *um = getenv("TEST_UMOUNT");                         /* the player unmounts the card before poweroff */
+    if (um) { unsigned char w = 0x77; system(um); ioctl(fd, REQ_W, &w); }
     close(fd);
     return 0;
 }
@@ -63,6 +65,7 @@ class TraceTest(unittest.TestCase):
         self.lib = self.tmp / 'diskos-trace.so'
         subprocess.run(['gcc', '-O1', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-fno-builtin',
                         f'-DTRACE_CARD_ROOT="{self.tmp}/sd"', f'-DTRACE_CARD_PARENT="{self.tmp}"',
+                        f'-DTRACE_TAIL_DIR="{self.tmp}"',
                         f'-DTRACE_OK_MARKER="{self.marker}"', '-o', str(self.lib), str(SRC), '-ldl'], check=True)
         (self.tmp / 'prog.c').write_text(PROG)
         self.prog = self.tmp / 'mq_player'
@@ -71,8 +74,8 @@ class TraceTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_prog(self, logfile=None):
-        env = dict(os.environ, LD_PRELOAD=str(self.lib), DISKOS_TRACE_FILE=str(logfile or self.logfile))
+    def run_prog(self, logfile=None, **extra):
+        env = dict(os.environ, LD_PRELOAD=str(self.lib), DISKOS_TRACE_FILE=str(logfile or self.logfile), **extra)
         return subprocess.run([str(self.prog)], env=env, capture_output=True, text=True, timeout=30)
 
     def log(self):
@@ -135,6 +138,22 @@ class TraceTest(unittest.TestCase):
             self.assertIn('=== trace start', log.read_text())
         finally:
             subprocess.run(['umount', str(card)], check=False)
+
+    @unittest.skipUnless(os.geteuid() == 0, 'needs root for a tmpfs as the card')
+    def test_lines_after_the_card_went_away_go_to_the_tail_file(self):
+        card = self.tmp / 'sd'
+        card.mkdir()
+        log = card / 'diskos-trace' / 'player-trace-20261114-230000.log'
+        subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', str(card)], check=True)
+        try:
+            r = self.run_prog(log, TEST_UMOUNT=f'umount {card}')
+            self.assertEqual(r.returncode, 0, r.stderr)
+        finally:
+            subprocess.run(['umount', str(card)], check=False)
+        tail = (self.tmp / 'diskos-trace-tail-20261114-230000.log').read_text()
+        self.assertIn(' in 77 ', tail)
+        self.assertIn('close 3 "/dev/full"', tail)
+        self.assertNotIn('=== trace start', tail)                  # only what the card missed
 
     def test_appends_across_runs(self):
         self.assertEqual(self.run_prog().returncode, 0)

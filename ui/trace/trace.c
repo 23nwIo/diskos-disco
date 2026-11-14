@@ -45,6 +45,10 @@
 #ifndef TRACE_CARD_ROOT
 #define TRACE_CARD_ROOT "/tmp/sdcard"       /* a log below this waits until the card is mounted here */
 #endif
+#ifndef TRACE_TAIL_DIR
+#define TRACE_TAIL_DIR "/usr/data"          /* lines after the card went away (power off), at most TAIL_CAP per start */
+#endif
+#define TAIL_CAP (64u * 1024u)
 #ifndef TRACE_CARD_PARENT
 #define TRACE_CARD_PARENT "/tmp"
 #endif
@@ -195,7 +199,8 @@ static void lock_drop(void) { __sync_lock_release(&g_lock); }
 
 /* ---- the log file: on the card (default) or in /tmp (RAM) ---- */
 static char g_file[200], g_dir[200];   /* set by the constructor; until then lines stay in memory */
-static int g_on_card;
+static int g_on_card, g_card_seen;
+static char g_tail[200];               /* TRACE_TAIL_DIR/diskos-trace-tail-<start time>.log */
 static long fs_type(const char *p)
 {
     long b[64];                  /* struct statfs starts with f_type on mips o32 and on the host */
@@ -228,7 +233,16 @@ static void flush(int force)
     uint32_t t = now_ms();
     if (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2) return;    /* unlocked peek, re-checked below */
     if (!g_file[0]) return;
-    if (g_on_card && !card_mounted()) return;                    /* keep the lines until the card is there */
+    /* The card log waits for the card. Once it has been written and the card goes away again (the player unmounts it
+     * before poweroff -f; diskOS's "Shut down player" earlier still; USB storage mode), the lines go to a small tail
+     * file in internal flash instead, so the end of a power off is not lost. */
+    const char *path = g_file, *dir = g_dir;
+    unsigned long cap = TRACE_CAP_BYTES;
+    int tail = 0;
+    if (g_on_card && !card_mounted()) {
+        if (!g_card_seen || !g_tail[0]) return;
+        path = g_tail; dir = 0; cap = TAIL_CAP; tail = 1;
+    }
     if (!lock_take()) return;
     if (g_flushing || (!g_len && !g_dropped) || (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2)) { lock_drop(); return; }
     g_last_flush = t;
@@ -237,12 +251,16 @@ static void flush(int force)
     lock_drop();
 
     unsigned lost = 0;
-    sc3(SYS_mkdir, g_dir, 0755, 0);
-    int fd = (int)sc4(SYS_open, (long)g_file, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0644, 0);
+    if (dir) sc3(SYS_mkdir, dir, 0755, 0);
+    int fd = (int)sc4(SYS_open, (long)path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0644, 0);
     if (fd < 0) lost = count_lines(out, n) + dropped;
     else {
         long size = sc3(SYS_lseek, fd, 0, 2 /* SEEK_END */);
-        if (size >= 0 && (unsigned long)size >= TRACE_CAP_BYTES) {
+        if (tail && size >= 0 && (unsigned long)size + n > cap) {
+            static const char m[] = "=== trace: tail file limit reached, lines dropped\n";
+            if ((unsigned long)size < cap) write_all(fd, m, sizeof m - 1);
+            lost = count_lines(out, n) + dropped;
+        } else if (size >= 0 && (unsigned long)size >= cap) {
             static const char m[] = "=== trace: file size limit reached, recording stopped\n";
             write_all(fd, m, sizeof m - 1);
             g_stopped = 1;
@@ -253,6 +271,7 @@ static void flush(int force)
                 write_all(fd, lb, o.n);
             }
             if (write_all(fd, out, n) < 0) lost = count_lines(out, n);
+            else if (!tail && g_on_card) g_card_seen = 1;
         }
         sc3(SYS_close, fd, 0, 0);
     }
@@ -708,6 +727,13 @@ __attribute__((constructor)) static void trace_init(void)
         for (size_t i = 0; i < slash; i++) g_dir[i] = f[i];
         g_dir[slash] = 0;
         g_on_card = s_pre(f, TRACE_CARD_ROOT "/");
+        if (g_on_card) {
+            const char *b = f + slash + 1;
+            if (s_pre(b, "player-trace-")) b += sizeof "player-trace-" - 1;
+            out_t t = { g_tail, 0, sizeof g_tail };
+            o_s(&t, TRACE_TAIL_DIR "/diskos-trace-tail-"); o_s(&t, b);
+            g_tail[t.n] = 0;
+        }
         for (size_t i = 1; i <= k; i++) g_file[i] = f[i];
         __sync_synchronize();
         g_file[0] = f[0];                                    /* last: flush() starts writing once this is set */
