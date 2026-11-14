@@ -37,6 +37,7 @@ static int fake_system(const char *cmd){
     return system(cmd);
 }
 #define system fake_system
+static int g_bt_enable_boot;   /* production: set by bt_boot_restore; this test drives user toggles */
 static void scan_abort(void){}
 static void bt_autoroute_stop(void){}
 static void bt_announce_reset(void){}

@@ -1107,6 +1107,15 @@ int ui_bt_live_codec(char *out, int cap){
 }
 /* Full stock bring-up: download the chip firmware patch over /dev/ttyS0 (creates a
  * working hci0 - the step our old bluez-only path lacked), then bluetoothd + agent. */
+/* Boot bring-up (bt_boot_restore) vs. the stock player. Field report 2026-11-14: in three of many boots the stock
+ * mq_player died with SIGSEGV inside libdbus (dmesg: invalid read of 0x6d6f632f = "/com", ra in libdbus) about 8 s
+ * after "bt_source: hci0 up failed, waiting for firmware burning" - the moment hci0 came up - and the stock watchdog
+ * then killed everything and started the stock UI (two UIs on screen). /tmp/btd.log showed "D-Bus setup failed: Name
+ * already in use": the player starts its own bluetoothd once hci0 is up, and ours raced it. Not proven to be the only
+ * trigger (Jo saw no failure in many boots with Bluetooth off). So at boot this bring-up kills no BT daemon, and after
+ * hci0 is RUNNING it gives the player's bluetoothd up to 8 s to appear and starts its own bluetoothd / BlueALSA only
+ * when none is running. A user toggle keeps the full restart. */
+static int g_bt_enable_boot;
 static void bt_enable(void){
     /* Guard against a SECOND concurrent bring-up: if the marker is already present a bring-up is
      * in flight, and starting another detached subshell would have the two kill each other's
@@ -1121,14 +1130,15 @@ static void bt_enable(void){
     static unsigned bt_gen;
     unsigned tok = (unsigned)time(NULL) * 1000u + (++bt_gen % 1000u);
     { FILE *m = fopen("/tmp/bt_enabling", "w"); if(m){ fprintf(m, "%u\n", tok); fclose(m); } }
-    char script[3584], alsa_args[768];
+    int boot = g_bt_enable_boot; g_bt_enable_boot = 0;
+    char script[3840], alsa_args[768];
     bt_alsa_cmd(alsa_args, sizeof alsa_args, bt_born_for(cfg_get_str("bt_last", "")),
                 bt_kind_for(cfg_get_str("bt_last", "")));                                    /* born on the right codec */
     snprintf(script, sizeof script,
         "( A(){ [ \"$(cat /tmp/bt_enabling 2>/dev/null)\" = %u ]; }; "                 /* still the current bring-up? */
         "  T(){ \"$@\" & p=$!; ( sleep 6; kill -9 $p 2>/dev/null ) & w=$!; wait $p; kill $w 2>/dev/null; }; "   /* 6 s cap per bluetoothctl */
         "  i=0; while [ -e /tmp/bt_disabling ] && [ \"$i\" -lt 40 ]; do sleep 0.25; i=$((i+1)); done; "   /* let a just-started teardown finish first (it would kill this bring-up) */
-        "  killall -9 fiio_bluetoothctl brcm_patchram_plus bluetoothd bluealsa 2>/dev/null; "
+        "  %s; "
         "  hciconfig hci0 down 2>/dev/null; "
         /* power-cycle the BT core (BT_REG_ON via rfkill) BEFORE patchram, so the chip
          * re-syncs whether this is a fresh boot OR a re-enable after a prior patchram
@@ -1147,15 +1157,20 @@ static void bt_enable(void){
         "  i=0; while [ \"$i\" -lt 40 ]; do A || exit; hciconfig hci0 up 2>/dev/null; "
         "    hciconfig hci0 2>/dev/null | grep -q RUNNING && break; sleep 0.5; i=$((i+1)); done; "
         "  A || exit; "     /* disabled during bring-up -> don't start the daemons */
-        "  /usr/project/bluetoothd --noplugin=sap --plugin=a2dp,avrcp --mode=source >/tmp/btd.log 2>&1 & "
-        "  %s >/tmp/bluealsa.log 2>&1 & "
+        "  %s"
+        "  pidof bluetoothd >/dev/null || /usr/project/bluetoothd --noplugin=sap --plugin=a2dp,avrcp --mode=source >/tmp/btd.log 2>&1 & "
+        "  pidof bluealsa >/dev/null || %s >/tmp/bluealsa.log 2>&1 & "
         /* hci0 UP alone leaves bluez Powered:no - power the controller on explicitly (needs
          * bluetoothd, hence after its start) so bt_on()'s "Powered: yes" check passes. */
         "  sleep 1; A || exit; "
         "  T bluetoothctl power on; hciconfig hci0 piscan; hciconfig hci0 class 0x200414; "
         "  T bluetoothctl agent on; T bluetoothctl default-agent; T bluetoothctl pairable on; "
         "  A && rm -f /tmp/bt_enabling "     /* enable finished: drop the marker (only if still ours) */
-        ") >/dev/null 2>&1 &", tok, alsa_args);
+        ") >/dev/null 2>&1 &", tok,
+        boot ? "killall -9 fiio_bluetoothctl brcm_patchram_plus 2>/dev/null"                       /* boot: no daemon killed */
+             : "killall -9 fiio_bluetoothctl brcm_patchram_plus bluetoothd bluealsa 2>/dev/null",
+        boot ? "i=0; while [ \"$i\" -lt 16 ] && ! pidof bluetoothd >/dev/null; do sleep 0.5; i=$((i+1)); done; A || exit; " : "",
+        alsa_args);
     system(script);
     /* NB: bluealsa is started INSIDE the subshell above (after hci0 is RUNNING +
      * bluetoothd), not here, so it never races the patchram attach. */
@@ -2320,6 +2335,7 @@ void bt_boot_restore(void){
     bt_init_intent();
     if(cfg_get_int("bt_on", 0) != 1) return;              /* was off -> stay off */
     if(bt_on()){ bt_ensure_services(); bt_autoroute_start(); return; }   /* already up (UI restart) */
+    g_bt_enable_boot = 1;                                  /* no daemon killed; the player's bluetoothd goes first */
     bt_enable();
     g_bootrestore_start = lv_tick_get();
     if(g_bootrestore_timer) lv_timer_del(g_bootrestore_timer);
