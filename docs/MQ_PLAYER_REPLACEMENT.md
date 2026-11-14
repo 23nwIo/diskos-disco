@@ -169,6 +169,22 @@ bottleneck, because almost every step touches hardware.
 - **Firmware updates.** The traced interface belongs to the kernel drivers. A new FiiO kernel could change ioctl
   numbers; the player would then need a version check, like the IPC tags today.
 
+## First building block: diskos-watchdog
+
+`src/watchdog/` holds an open-source replacement for `cmd_watchdog` (2026-11-14, not yet device-tested):
+
+- `watchdog.c` / `watchdog.h`: `wd_open`, `wd_start`, `wd_stop`, `wd_feed`, `wd_reset` with the exact request numbers
+  of the stock `libhardware2.so`. An own player links this file directly.
+- `main.c`: the command line tool `diskos-watchdog` with the stock commands (`start <ms>`, `stop`, `feed`, `reset`,
+  `-h`) plus `run <ms> [<every_ms>]`, which arms, feeds until SIGTERM/SIGINT/SIGHUP and then disarms (for headless
+  use). It prints nothing on success. Exit status 0 / 1 (device error) / 2 (usage); the stock tool returns 255 for
+  every failure, and its only caller (mq_player, through `popen`/`pclose`, feeding once per second) ignores it.
+- Build: `CROSS=<toolchain>/bin/mipsel-linux-musl- build/build-watchdog.sh` (static, about 42 KB). Host tests:
+  `python3 -m unittest tests.test_watchdog`.
+
+Using it for the stock player needs one more step in the launcher: put a directory holding it as `cmd_watchdog`
+first in the stock player's `PATH` (the player calls the tool without a path). Not done yet.
+
 ## Open questions for a device session
 
 1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes): a thin wrapper around `watchdog_start/feed/stop/reset` in
