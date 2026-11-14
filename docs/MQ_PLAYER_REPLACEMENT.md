@@ -181,7 +181,9 @@ bottleneck, because almost every step touches hardware.
   every failure, which stays compatible because every failure is non-zero and its only caller (mq_player, through
   `popen`/`pclose`, feeding once per second) ignores the status. The kernel refuses `start`
   while the watchdog runs (EPERM, dmesg `WDT: watchdog is running !`, device-checked 2026-11-14, same for the stock
-  tool); `run` then keeps feeding the running watchdog. `feed` was device-checked with exit 0.
+  tool); `run` then keeps feeding the running watchdog. Device-checked 2026-11-14 (build `b34fb6c4…`): `feed` exits 0,
+  `start` while running exits 1 with EPERM, bad arguments print the usage and exit 2. `stop`, `reset` and `run` are
+  not device-tested yet.
 - Build: `CROSS=<toolchain>/bin/mipsel-linux-musl- build/build-watchdog.sh` (static, about 42 KB). Host tests:
   `python3 -m unittest tests.test_watchdog`.
 
