@@ -193,7 +193,7 @@ bottleneck, because almost every step touches hardware.
 `/usr/bin/cmd_watchdog` (ui/wd_override.h, called from ui/main.c next to the wifi_up.sh override). Any failed check
 leaves the stock tool in place; `/usr/data/diskos-no-wd-override` switches it off. The bind is RAM-only, so the Vol-Up
 stock boot always keeps the original. The log line `watchdog: ... over /usr/bin/cmd_watchdog: <result>` goes to
-mq_ui's stderr. A manual check on a Disc (`mount --bind`, build `b34fb6c4…`) ran with the stock player feeding through
+`/usr/data/diskos_boot.log` (mq_ui's stderr, ui/main.c:3554). A manual check on a Disc (`mount --bind`, build `b34fb6c4…`) ran with the stock player feeding through
 our tool without a reboot. An own player links `ui/watchdog/watchdog.c` directly instead. Replacing the file in the
 rootfs at a later flash is listed in todo.md.
 
