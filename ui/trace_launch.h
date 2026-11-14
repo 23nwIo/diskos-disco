@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include "wd_override.h"     /* wdo_same_bytes / wdo_write */
 
@@ -23,11 +24,12 @@
 #define TRL_LIB     "/usr/data/diskos-trace.so"
 #define TRL_OK      "/usr/data/diskos-trace.ok"
 #define TRL_PENDING "/usr/data/diskos-trace.pending"
+#define TRL_LOGDIR  "/tmp/diskos-trace"     /* RAM: no flash or card writes, gone after a reboot */
 
 enum { TRL_OFF = 0, TRL_ON, TRL_FAILED_BEFORE, TRL_NO_LIBDL, TRL_WRITE_FAILED, TRL_ENV_FAILED };
 
 typedef struct {
-    const char *sw, *lib, *ok, *pending;
+    const char *sw, *lib, *ok, *pending, *logdir;
     const char *const *libdl;     /* NULL-terminated places where the device's glibc keeps libdl.so.2 */
 } trl_paths_t;
 
@@ -45,7 +47,9 @@ static inline const char *trl_reason(int r){
 
 static inline int trl_exists(const char *p){ return access(p, F_OK) == 0; }
 
-/* Decide and prepare. On TRL_ON, *env holds a copy of envp with LD_PRELOAD=<lib> (any earlier LD_PRELOAD dropped). */
+/* Decide and prepare. On TRL_ON, *env holds a copy of envp with LD_PRELOAD=<lib> and
+ * DISKOS_TRACE_FILE=<logdir>/player-trace-<YYYYmmdd-HHMMSS>.log (the player's start time, local clock; earlier values of
+ * both dropped). */
 static inline int trl_prepare(const trl_paths_t *p, const unsigned char *data, size_t len,
                               char *const *envp, char ***env){
     if(!trl_exists(p->sw)) return TRL_OFF;
@@ -63,14 +67,19 @@ static inline int trl_prepare(const trl_paths_t *p, const unsigned char *data, s
         return TRL_WRITE_FAILED;
     size_t n = 0;
     while(envp && envp[n]) n++;
-    char **e = calloc(n + 2, sizeof *e);
+    char **e = calloc(n + 3, sizeof *e);
     size_t plen = strlen(p->lib) + sizeof "LD_PRELOAD=";
-    char *pre = malloc(plen);
-    if(!e || !pre){ free(e); free(pre); return TRL_ENV_FAILED; }
+    char *pre = malloc(plen), *file = malloc(256);
+    if(!e || !pre || !file){ free(e); free(pre); free(file); return TRL_ENV_FAILED; }
     snprintf(pre, plen, "LD_PRELOAD=%s", p->lib);
+    char stamp[32] = "unknown-time";
+    time_t now = time(NULL); struct tm tmv;
+    if(localtime_r(&now, &tmv)) strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tmv);
+    snprintf(file, 256, "DISKOS_TRACE_FILE=%s/player-trace-%s.log", p->logdir, stamp);
     size_t k = 0;
-    for(size_t i = 0; i < n; i++) if(strncmp(envp[i], "LD_PRELOAD=", 11) != 0) e[k++] = envp[i];
-    e[k++] = pre; e[k] = NULL;
+    for(size_t i = 0; i < n; i++)
+        if(strncmp(envp[i], "LD_PRELOAD=", 11) != 0 && strncmp(envp[i], "DISKOS_TRACE_FILE=", 18) != 0) e[k++] = envp[i];
+    e[k++] = pre; e[k++] = file; e[k] = NULL;
     unlink(p->ok);
     int fd = open(p->pending, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if(fd >= 0) close(fd);

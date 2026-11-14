@@ -3219,7 +3219,7 @@ static void player_launch_prepare(void){
     launch_status_publish(guard, local);
     {   /* player trace (docs/MQ_PLAYER_TRACE.md): only with /usr/data/diskos-trace-player */
         static const char *const libdl[] = { "/lib/libdl.so.2", "/usr/lib/libdl.so.2", NULL };
-        const trl_paths_t tp = { TRL_SWITCH, TRL_LIB, TRL_OK, TRL_PENDING, libdl };
+        const trl_paths_t tp = { TRL_SWITCH, TRL_LIB, TRL_OK, TRL_PENDING, TRL_LOGDIR, libdl };
         char **te = NULL;
         int tr = trl_prepare(&tp, trace_blob_data(), trace_blob_size(), environ, &te);
         if(tr == TRL_ON) g_trace_env = te;

@@ -12,11 +12,11 @@
  * Every line carries the time since boot, the pid (and thread), and the caller's return address, which points into
  * the player's code (the start header lists the code mappings).
  *
- * Lines go to <card>/diskos-trace/player-trace.log on the SD card. They are held in memory until the card is mounted
- * and written about once a second, each time with open/append/close, so no file stays open on the card (USB mass
- * storage mode can still unmount it). Anything this library does for itself uses raw system calls, never glibc, so
- * errno and glibc's locks stay untouched. It must never take down the player: when anything goes wrong it records
- * less, never more; a hooked call always runs the real function and returns its result and errno unchanged.
+ * Lines go to the file the launcher names in DISKOS_TRACE_FILE (/tmp/diskos-trace/player-trace-<start time>.log; /tmp
+ * is RAM, so nothing is written to flash or the card and a reboot clears it). They are appended about once a second
+ * with open/append/close. Anything this library does for itself uses raw system calls, never glibc, so errno and
+ * glibc's locks stay untouched. It must never take down the player: when anything goes wrong it records less, never
+ * more; a hooked call always runs the real function and returns its result and errno unchanged.
  *
  * Build: built by ui/Makefile with the static musl toolchain as a self-contained shared object (-nostdlib), linked
  * only against stub libc.so.6 / libdl.so.2 so the device's glibc supplies dlsym and __errno_location at run time.
@@ -39,18 +39,14 @@
 #ifndef O_TMPFILE
 #define O_TMPFILE 020200000
 #endif
-#ifndef TRACE_SD_ROOT
-#define TRACE_SD_ROOT "/tmp/sdcard"
-#endif
-#ifndef TRACE_SD_PARENT
-#define TRACE_SD_PARENT "/tmp"
+#ifndef TRACE_DEFAULT_FILE
+#define TRACE_DEFAULT_FILE "/tmp/diskos-trace/player-trace.log"
 #endif
 #ifndef TRACE_OK_MARKER
 #define TRACE_OK_MARKER "/usr/data/diskos-trace.ok"
 #endif
-#define TRACE_DIR  TRACE_SD_ROOT "/diskos-trace"
-#define TRACE_FILE TRACE_DIR "/player-trace.log"
-#define TRACE_CAP_BYTES (256u * 1024u * 1024u)   /* stop appending past this size */
+#define TRACE_ENV "DISKOS_TRACE_FILE"             /* set by the launcher (trace_launch.h), inherited by helpers */
+#define TRACE_CAP_BYTES (16u * 1024u * 1024u)    /* /tmp is RAM: stop appending past this size */
 #define BUF_BYTES (512u * 1024u)    /* per buffer, two of them; untouched pages cost no RAM */
 #define DUMP_MAX 64
 #define DATA_MAX 48
@@ -191,19 +187,8 @@ got:
 }
 static void lock_drop(void) { __sync_lock_release(&g_lock); }
 
-/* ---- the card ---- */
-static long fs_type(const char *p)
-{
-    long b[64];                  /* struct statfs starts with f_type on mips o32 and on the host */
-    b[0] = 0;
-    if (sc3(SYS_statfs, p, b, 0) < 0) return -1;
-    return b[0];
-}
-static int card_mounted(void)
-{
-    long a = fs_type(TRACE_SD_ROOT), b = fs_type(TRACE_SD_PARENT);
-    return a != -1 && b != -1 && a != b;
-}
+/* ---- the log file (RAM, /tmp) ---- */
+static char g_file[200], g_dir[200];   /* set by the constructor; until then lines stay in memory */
 static int write_all(int fd, const char *p, size_t n)
 {
     while (n) {
@@ -222,18 +207,17 @@ static void flush(int force)
     if (g_disabled || g_stopped) return;
     uint32_t t = now_ms();
     if (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2) return;    /* unlocked peek, re-checked below */
-    int mounted = card_mounted();
+    if (!g_file[0]) return;
     if (!lock_take()) return;
     if (g_flushing || (!g_len && !g_dropped) || (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2)) { lock_drop(); return; }
     g_last_flush = t;
-    if (!mounted) { lock_drop(); return; }                      /* keep holding the lines until the card is there */
     char *out = g_cur; size_t n = g_len; unsigned dropped = g_dropped;
     g_cur = (g_cur == g_bufa) ? g_bufb : g_bufa; g_len = 0; g_dropped = 0; g_flushing = 1;
     lock_drop();
 
     unsigned lost = 0;
-    sc3(SYS_mkdir, TRACE_DIR, 0755, 0);
-    int fd = (int)sc4(SYS_open, (long)TRACE_FILE, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0644, 0);
+    sc3(SYS_mkdir, g_dir, 0755, 0);
+    int fd = (int)sc4(SYS_open, (long)g_file, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0644, 0);
     if (fd < 0) lost = count_lines(out, n) + dropped;
     else {
         long size = sc3(SYS_lseek, fd, 0, 2 /* SEEK_END */);
@@ -244,7 +228,7 @@ static void flush(int force)
         } else {
             if (dropped) {
                 char lb[96]; out_t o = { lb, 0, sizeof lb };
-                o_s(&o, "=== trace: "); o_u(&o, dropped); o_s(&o, " lines lost (card away or buffer full)\n");
+                o_s(&o, "=== trace: "); o_u(&o, dropped); o_s(&o, " lines lost (log file not writable or buffer full)\n");
                 write_all(fd, lb, o.n);
             }
             if (write_all(fd, out, n) < 0) lost = count_lines(out, n);
@@ -688,6 +672,24 @@ static size_t read_small(const char *p, char *b, size_t cap)
 __attribute__((constructor)) static void trace_init(void)
 {
     g_pid = cur_pid(); g_bufpid = (unsigned)g_pid;
+    {   /* where to write: DISKOS_TRACE_FILE (an absolute path with the player's start time, from the launcher) */
+        static char env[65536];      /* BSS: costs RAM only for the bytes read */
+        size_t m = read_small("/proc/self/environ", env, sizeof env - 1); env[m] = 0;
+        const char *f = TRACE_DEFAULT_FILE;
+        for (size_t i = 0; i < m; i += s_len(env + i) + 1)
+            if (s_pre(env + i, TRACE_ENV "=")) {
+                const char *v = env + i + sizeof TRACE_ENV;
+                if (v[0] == '/' && s_len(v) < sizeof g_file) f = v;
+                break;
+            }
+        size_t k = s_len(f), slash = 0;
+        for (size_t i = 0; i < k; i++) if (f[i] == '/') slash = i;
+        for (size_t i = 0; i < slash; i++) g_dir[i] = f[i];
+        g_dir[slash] = 0;
+        for (size_t i = 1; i <= k; i++) g_file[i] = f[i];
+        __sync_synchronize();
+        g_file[0] = f[0];                                    /* last: flush() starts writing once this is set */
+    }
     char cl[512]; size_t n = read_small("/proc/self/cmdline", cl, sizeof cl - 1); cl[n] = 0;
     /* argv as one line; and the program name */
     const char *a0 = cl, *base = a0;

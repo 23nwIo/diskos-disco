@@ -35,11 +35,19 @@ A player that the firmware watchdog restarts directly (not through our launcher)
 
 ## The log
 
-`<card>/diskos-trace/player-trace.log` on the SD card (`/tmp/sdcard/diskos-trace/player-trace.log` on the Disc).
-Lines are held in memory until the card is mounted and then appended about once a second, each time with
-open/append/close, so no file stays open on the card and USB storage mode can still unmount it. If the card is away
-for long enough that the memory buffer (512 KiB) fills, the file says how many lines were lost. The file stops
-growing at 256 MiB. Every start appends a new `=== trace start` block.
+`/tmp/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log`, one file per start of the player, named by the start time on
+the Disc's clock (the launcher passes the name in `DISKOS_TRACE_FILE`; helper programs inherit it and write into the
+same file). `/tmp` is meant to be RAM (Jo's choice, 2026-11-14; that it is a tmpfs is not yet checked on the Disc,
+`grep " /tmp " /proc/mounts`): nothing is written to the flash or the card, and a reboot clears
+it, so **copy the file before rebooting**:
+
+```sh
+ls -l /tmp/diskos-trace/
+```
+
+Lines are appended about once a second with open/append/close. The file stops growing at 16 MiB (RAM). If the file
+cannot be written, lines wait in a 512 KiB memory buffer, and the file says how many were lost. Every file starts with
+a `=== trace start` block.
 
 Each line: seconds since boot, pid (`pid/thread` for other threads), the caller's return address, the event (the
 values below show the format only, they are not from a device):
@@ -110,10 +118,9 @@ SSH gives the seconds the log uses), so the blocks in the log can be told apart.
 7. Charger in and out.
 8. USB storage mode on and off; USB DAC mode on and off.
 9. Bluetooth output on, play, off.
-10. Power off from the menu (the last lines before power off are lost if the player is killed before its next
-    write; the log is written about once a second).
-
-Then copy `diskos-trace/player-trace.log` from the card.
+10. Copy the log off the Disc now (`scp`), because power off and reboot clear `/tmp`.
+11. If the power off sequence is wanted: start the copy in a loop from the PC first, then power off from the menu;
+    lines written in the last second are lost either way.
 
 ## Limits
 
@@ -121,7 +128,7 @@ Then copy `diskos-trace/player-trace.log` from the card.
   direct `syscall()` use is not recorded.
 - Reads are not recorded except the first open of a polled file.
 - Writing the log (about once a second) happens on whichever player thread made the hooked call at that moment; it
-  is short (one append), but on a slow card that thread waits for it.
+  is short (one append to RAM).
 - A forked child that exits with `_exit` without exec loses its unwritten lines.
 
 ## Files
@@ -133,4 +140,4 @@ Then copy `diskos-trace/player-trace.log` from the card.
 - `ui/trace_blob.c`: carries the library inside mq_ui. `ui/trace_launch.h`: the switch, the fail-safe and the
   environment for the exec.
 - Tests: `python3 -m unittest tests.test_trace` (builds the library for the host glibc and preloads it into a
-  small program named mq_player; needs root for a tmpfs as the card) and `make -C ui/tests trace_launch_test`.
+  small program named mq_player) and `make -C ui/tests trace_launch_test`.

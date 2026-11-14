@@ -12,7 +12,7 @@ static int fails;
 static char dir[64];
 static char pbuf[8][160]; static int pn;
 static char *path(const char *n){ char *b = pbuf[pn++ % 8]; snprintf(b, 160, "%s/%s", dir, n); return b; }
-static void env_free(char **e){ if(!e) return; for(char **x = e; *x; x++) if(!strncmp(*x, "LD_PRELOAD=", 11)) free(*x); free(e); }
+static void env_free(char **e){ if(!e) return; for(char **x = e; *x; x++) if(!strncmp(*x, "LD_PRELOAD=", 11) || !strncmp(*x, "DISKOS_TRACE_FILE=", 18)) free(*x); free(e); }
 static void touch(const char *p){ FILE *f = fopen(p, "w"); if(f) fclose(f); }
 #define LIB "\x7f" "ELF fake library"
 
@@ -21,7 +21,7 @@ int main(void){
     if(!mkdtemp(dir)){ perror("mkdtemp"); return 2; }
     const char *libdl_none[] = { path("nolib/libdl.so.2"), NULL };
     const char *libdl_ok[] = { path("nolib/libdl.so.2"), path("libdl.so.2"), NULL };
-    trl_paths_t p = { path("switch"), path("trace.so"), path("trace.ok"), path("trace.pending"), libdl_ok };
+    trl_paths_t p = { path("switch"), path("trace.so"), path("trace.ok"), path("trace.pending"), "/tmp/diskos-trace", libdl_ok };
     char *envp[] = { "PATH=/bin", "LD_PRELOAD=/old.so", "HOME=/", NULL };
     char **env = NULL;
     const unsigned char *d = (const unsigned char *)LIB; size_t n = sizeof LIB - 1;
@@ -37,9 +37,10 @@ int main(void){
     EXPECT(trl_exists(p.pending) && !trl_exists(p.ok));
     int pre = 0, old = 0, cnt = 0;
     for(char **e = env; *e; e++){ cnt++; if(!strncmp(*e, "LD_PRELOAD=", 11)){ pre++; if(strstr(*e, "/old.so")) old++; } }
-    EXPECT(cnt == 3 && pre == 1 && !old);
+    EXPECT(cnt == 4 && pre == 1 && !old);
     char want[200]; snprintf(want, sizeof want, "LD_PRELOAD=%s", p.lib);
     EXPECT(!strcmp(env[2], want));
+    EXPECT(!strncmp(env[3], "DISKOS_TRACE_FILE=/tmp/diskos-trace/player-trace-2", 50) && strstr(env[3], ".log"));
     touch(p.ok);                                                              /* the library loaded */
     env_free(env); env = NULL;
     EXPECT(trl_prepare(&p, d, n, envp, &env) == TRL_ON && env);              /* and is used again */

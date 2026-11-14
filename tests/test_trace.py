@@ -1,8 +1,8 @@
 """Host tests for ui/trace (diskos-trace.so, the LD_PRELOAD recorder for the stock player).
 
-The library is built for the host glibc with a temporary card path and preloaded into a small program named mq_player
-that does what the stock player does (device opens, ioctls, sysfs writes, shell commands). The card is a tmpfs mounted
-inside the test folder, so these tests need root; without it they are skipped."""
+The library is built for the host glibc and preloaded into a small program named mq_player that does what the stock
+player does (device opens, ioctls, sysfs writes, shell commands). The log file is named by DISKOS_TRACE_FILE, as the
+launcher does on the device, inside the test folder."""
 import os
 from pathlib import Path
 import shutil
@@ -54,40 +54,30 @@ int main(void)
 '''
 
 
-@unittest.skipUnless(shutil.which('gcc') and os.geteuid() == 0, 'needs gcc and root (tmpfs card)')
+@unittest.skipUnless(shutil.which('gcc'), 'needs gcc')
 class TraceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.card = self.tmp / 'sd'
-        self.card.mkdir()
+        self.logfile = self.tmp / 'logs' / 'player-trace-20261114-230000.log'   # the folder does not exist yet
         self.marker = self.tmp / 'ok'
         self.lib = self.tmp / 'diskos-trace.so'
         subprocess.run(['gcc', '-O1', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-fno-builtin',
-                        f'-DTRACE_SD_ROOT="{self.card}"', f'-DTRACE_SD_PARENT="{self.tmp}"',
                         f'-DTRACE_OK_MARKER="{self.marker}"', '-o', str(self.lib), str(SRC), '-ldl'], check=True)
         (self.tmp / 'prog.c').write_text(PROG)
         self.prog = self.tmp / 'mq_player'
         subprocess.run(['gcc', '-O1', '-fno-builtin', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-o', str(self.prog), str(self.tmp / 'prog.c')], check=True)
-        self.mounted = False
 
     def tearDown(self):
-        if self.mounted:
-            subprocess.run(['umount', str(self.card)], check=False)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def mount(self):
-        subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', str(self.card)], check=True)
-        self.mounted = True
-
-    def run_prog(self):
-        env = dict(os.environ, LD_PRELOAD=str(self.lib))
+    def run_prog(self, logfile=None):
+        env = dict(os.environ, LD_PRELOAD=str(self.lib), DISKOS_TRACE_FILE=str(logfile or self.logfile))
         return subprocess.run([str(self.prog)], env=env, capture_output=True, text=True, timeout=30)
 
     def log(self):
-        return (self.card / 'diskos-trace' / 'player-trace.log').read_text()
+        return self.logfile.read_text()
 
     def test_records_player_activity(self):
-        self.mount()
         r = self.run_prog()
         self.assertEqual(r.returncode, 0, r.stderr)
         log = self.log()
@@ -125,13 +115,13 @@ class TraceTest(unittest.TestCase):
         self.assertNotIn('/proc/self/stat"', log)                  # /proc in a helper program
         self.assertIn('close 3 "/dev/full"', log)
 
-    def test_no_card_no_file_and_no_harm(self):
-        r = self.run_prog()                                         # card folder exists but nothing is mounted
+    def test_unwritable_log_no_harm(self):
+        blocker = self.tmp / 'file'
+        blocker.write_text('')
+        r = self.run_prog(blocker / 'sub' / 'x.log')                # its folder cannot be created
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertFalse((self.card / 'diskos-trace').exists())
 
     def test_appends_across_runs(self):
-        self.mount()
         self.assertEqual(self.run_prog().returncode, 0)
         self.assertEqual(self.run_prog().returncode, 0)
         self.assertEqual(self.log().count(f'=== trace start "{self.prog}"'), 2)
