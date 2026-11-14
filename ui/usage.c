@@ -124,11 +124,45 @@ static int usb_to_computer(void){   /* read at most every 5 s */
     if(d) closedir(d);
     return on;
 }
+/* The USB-C port controller (AW35615, i2c 2-0022) says what the far end presents on CC. As a sink the Disc sees the
+ * source's current advertisement - Rdef, R1p5 or R3p0 - whenever a wall charger, power bank or computer supplies
+ * power, whether or not the battery draws any; "Undefined" with nothing plugged in. Device-probed 2026-11-14 (V2.57):
+ * wall charger, battery held at 80 % by Charging Limit, no charge current -> "Rdef"; unplugged -> "Undefined". The
+ * gauge and the USB controller showed no difference there, so this is the only signal for that case. Anything else
+ * (Rd/Ra: the Disc itself is the source, e.g. a USB drive on OTG; a missing node on other firmware) is unknown (-1)
+ * and the older guesses below decide. Read at most every 5 s. */
+#ifndef TYPEC_CC_TERM
+#define TYPEC_CC_TERM "/sys/bus/i2c/devices/2-0022/control/cc_term"
+#endif
+int usage_typec_cc_term_parse(const char *v){
+    if(!v) return -1;
+    size_t n = strcspn(v, " \t\r\n");
+    if((n == 4 && !strncmp(v, "Rdef", 4)) || (n == 4 && !strncmp(v, "R1p5", 4)) || (n == 4 && !strncmp(v, "R3p0", 4))) return 1;
+    if(n == 9 && !strncmp(v, "Undefined", 9)) return 0;
+    return -1;
+}
+static int typec_power_in(void){
+    static uint32_t at; static int have, cached = -1;
+    uint32_t now = lv_tick_get();
+    if(have && now - at < 5000u) return cached;
+    have = 1; at = now; cached = -1;
+    char v[32] = "";
+    FILE *f = fopen(TYPEC_CC_TERM, "r");
+    if(!f) return cached;
+    if(fgets(v, sizeof v, f)) cached = usage_typec_cc_term_parse(v);
+    fclose(f);
+    return cached;
+}
 static int plugged_listed(void);
 int usage_plugged_in(void){
     int r = plugged_listed();
     if(r == 1) return 1;
-    if(charger_remembered() || usb_to_computer()) return 1;
+    int t = typec_power_in();
+    if(t == 1) return 1;
+    int remembered = charger_remembered();   /* keeps its own state current either way */
+    if(usb_to_computer()) return 1;
+    if(t == 0) return 0;                     /* the port says nothing is plugged in: no guessing from history */
+    if(remembered) return 1;
     return r;
 }
 static int plugged_listed(void){

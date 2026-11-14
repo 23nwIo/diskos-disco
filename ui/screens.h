@@ -21,6 +21,7 @@ void usage_tick(int screen_on, int playing);        /* main loop: one sample a m
 void usage_note_battery(int pct, int charging);     /* status poll */
 int  usage_charging(void);                           /* battery charging now (charge current > 0) */
 int  usage_plugged_in(void);                         /* 1 on external power, 0 not, -1 unknown */
+int  usage_typec_cc_term_parse(const char *v);         /* USB-C cc_term text -> 1 power in (Rdef/R1p5/R3p0), 0 nothing (Undefined), -1 unknown */
 void ui_shutdown_screen(void);   /* the themed "Shutting down" screen (top layer) */
 void ui_shutdown_hide(void);
 void ui_power_off(void);         /* shutdown screen, save, sync, poweroff */
