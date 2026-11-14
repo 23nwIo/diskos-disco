@@ -174,7 +174,8 @@ bottleneck, because almost every step touches hardware.
 1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes): a thin wrapper around `watchdog_start/feed/stop/reset` in
    Ingenic's `libhardware2.so` (both checked 2026-11-14). The library opens `/dev/jz_watchdog` and uses four ioctls:
    start `_IOW('W', 13, int ms)` (0x8004570d), stop `_IO('W', 14)`, feed `_IO('W', 15)`, reset `_IO('W', 16)`. So the
-   watchdog needs no further RE. Still open: whether `stop` really disarms it, and whether it already runs before
+   watchdog needs no further RE. The library also has an `/dev/mcu` "shutdown" call; that node does not exist on the
+   Disc (checked 2026-11-14). Still open: whether `stop` really disarms it, and whether it already runs before
    mq_player starts.
 2. Resolved 2026-11-14: no `/dev/spidev*` and no SPI devices, so no MCU. While idle the stock player holds
    `/dev/key_ioctl`, `/dev/cs43131` and `/dev/cs43131c` open; the other nodes are opened on demand.
