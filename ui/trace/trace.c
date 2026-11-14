@@ -12,9 +12,9 @@
  * Every line carries the time since boot, the pid (and thread), and the caller's return address, which points into
  * the player's code (the start header lists the code mappings).
  *
- * Lines go to the file the launcher names in DISKOS_TRACE_FILE (/tmp/diskos-trace/player-trace-<start time>.log; /tmp
- * is RAM, so nothing is written to flash or the card and a reboot clears it). They are appended about once a second
- * with open/append/close. Anything this library does for itself uses raw system calls, never glibc, so errno and
+ * Lines go to the file the launcher names in DISKOS_TRACE_FILE: on the SD card,
+ * /tmp/sdcard/diskos-trace/player-trace-<start time>.log, or /tmp/diskos-trace/ (RAM) when the switch file says "tmp".
+ * Lines for the card are held in memory until it is mounted. They are appended about once a second with open/append/close. Anything this library does for itself uses raw system calls, never glibc, so errno and
  * glibc's locks stay untouched. It must never take down the player: when anything goes wrong it records less, never
  * more; a hooked call always runs the real function and returns its result and errno unchanged.
  *
@@ -40,7 +40,13 @@
 #define O_TMPFILE 020200000
 #endif
 #ifndef TRACE_DEFAULT_FILE
-#define TRACE_DEFAULT_FILE "/tmp/diskos-trace/player-trace.log"
+#define TRACE_DEFAULT_FILE "/tmp/sdcard/diskos-trace/player-trace.log"
+#endif
+#ifndef TRACE_CARD_ROOT
+#define TRACE_CARD_ROOT "/tmp/sdcard"       /* a log below this waits until the card is mounted here */
+#endif
+#ifndef TRACE_CARD_PARENT
+#define TRACE_CARD_PARENT "/tmp"
 #endif
 #ifndef TRACE_OK_MARKER
 #define TRACE_OK_MARKER "/usr/data/diskos-trace.ok"
@@ -187,8 +193,22 @@ got:
 }
 static void lock_drop(void) { __sync_lock_release(&g_lock); }
 
-/* ---- the log file (RAM, /tmp) ---- */
+/* ---- the log file: on the card (default) or in /tmp (RAM) ---- */
 static char g_file[200], g_dir[200];   /* set by the constructor; until then lines stay in memory */
+static int g_on_card;
+static long fs_type(const char *p)
+{
+    long b[64];                  /* struct statfs starts with f_type on mips o32 and on the host */
+    b[0] = 0;
+    if (sc3(SYS_statfs, p, b, 0) < 0) return -1;
+    return b[0];
+}
+/* the card is mounted when its folder is on another file system type than its parent (tmpfs) */
+static int card_mounted(void)
+{
+    long a = fs_type(TRACE_CARD_ROOT), b = fs_type(TRACE_CARD_PARENT);
+    return a != -1 && b != -1 && a != b;
+}
 static int write_all(int fd, const char *p, size_t n)
 {
     while (n) {
@@ -208,6 +228,7 @@ static void flush(int force)
     uint32_t t = now_ms();
     if (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2) return;    /* unlocked peek, re-checked below */
     if (!g_file[0]) return;
+    if (g_on_card && !card_mounted()) return;                    /* keep the lines until the card is there */
     if (!lock_take()) return;
     if (g_flushing || (!g_len && !g_dropped) || (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2)) { lock_drop(); return; }
     g_last_flush = t;
@@ -686,6 +707,7 @@ __attribute__((constructor)) static void trace_init(void)
         for (size_t i = 0; i < k; i++) if (f[i] == '/') slash = i;
         for (size_t i = 0; i < slash; i++) g_dir[i] = f[i];
         g_dir[slash] = 0;
+        g_on_card = s_pre(f, TRACE_CARD_ROOT "/");
         for (size_t i = 1; i <= k; i++) g_file[i] = f[i];
         __sync_synchronize();
         g_file[0] = f[0];                                    /* last: flush() starts writing once this is set */

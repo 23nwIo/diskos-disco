@@ -24,12 +24,13 @@
 #define TRL_LIB     "/usr/data/diskos-trace.so"
 #define TRL_OK      "/usr/data/diskos-trace.ok"
 #define TRL_PENDING "/usr/data/diskos-trace.pending"
-#define TRL_LOGDIR  "/tmp/diskos-trace"     /* RAM: no flash or card writes, gone after a reboot */
+#define TRL_LOGDIR  "/tmp/sdcard/diskos-trace"   /* default: the card, survives power off */
+#define TRL_LOGDIR_RAM "/tmp/diskos-trace"      /* switch file containing "tmp": RAM, gone after a reboot */
 
 enum { TRL_OFF = 0, TRL_ON, TRL_FAILED_BEFORE, TRL_NO_LIBDL, TRL_WRITE_FAILED, TRL_ENV_FAILED };
 
 typedef struct {
-    const char *sw, *lib, *ok, *pending, *logdir;
+    const char *sw, *lib, *ok, *pending, *logdir, *logdir_ram;
     const char *const *libdl;     /* NULL-terminated places where the device's glibc keeps libdl.so.2 */
 } trl_paths_t;
 
@@ -49,7 +50,7 @@ static inline int trl_exists(const char *p){ return access(p, F_OK) == 0; }
 
 /* Decide and prepare. On TRL_ON, *env holds a copy of envp with LD_PRELOAD=<lib> and
  * DISKOS_TRACE_FILE=<logdir>/player-trace-<YYYYmmdd-HHMMSS>.log (the player's start time, local clock; earlier values of
- * both dropped). */
+ * both dropped). The log goes to logdir_ram instead when the switch file starts with "tmp". */
 static inline int trl_prepare(const trl_paths_t *p, const unsigned char *data, size_t len,
                               char *const *envp, char ***env){
     if(!trl_exists(p->sw)) return TRL_OFF;
@@ -75,7 +76,10 @@ static inline int trl_prepare(const trl_paths_t *p, const unsigned char *data, s
     char stamp[32] = "unknown-time";
     time_t now = time(NULL); struct tm tmv;
     if(localtime_r(&now, &tmv)) strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tmv);
-    snprintf(file, 256, "DISKOS_TRACE_FILE=%s/player-trace-%s.log", p->logdir, stamp);
+    const char *dir = p->logdir;
+    {   char c[4] = {0}; int sfd = open(p->sw, O_RDONLY | O_CLOEXEC);
+        if(sfd >= 0){ if(read(sfd, c, 3) == 3 && !memcmp(c, "tmp", 3)) dir = p->logdir_ram; close(sfd); } }
+    snprintf(file, 256, "DISKOS_TRACE_FILE=%s/player-trace-%s.log", dir, stamp);
     size_t k = 0;
     for(size_t i = 0; i < n; i++)
         if(strncmp(envp[i], "LD_PRELOAD=", 11) != 0 && strncmp(envp[i], "DISKOS_TRACE_FILE=", 18) != 0) e[k++] = envp[i];

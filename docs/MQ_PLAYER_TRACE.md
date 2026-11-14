@@ -10,7 +10,8 @@ and records; argument bytes were missing in that build (`in ?`), fixed since, th
 Over SSH on the Disc:
 
 ```sh
-touch /usr/data/diskos-trace-player     # on, takes effect at the next start of the player (reboot)
+touch /usr/data/diskos-trace-player     # on, log on the SD card; takes effect at the next start of the player
+echo tmp > /usr/data/diskos-trace-player   # or: on, log in /tmp (RAM, gone after a reboot)
 reboot
 rm /usr/data/diskos-trace-player        # off again
 reboot
@@ -35,19 +36,20 @@ A player that the firmware watchdog restarts directly (not through our launcher)
 
 ## The log
 
-`/tmp/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log`, one file per start of the player, named by the start time on
-the Disc's clock (the launcher passes the name in `DISKOS_TRACE_FILE`; helper programs inherit it and write into the
-same file). `/tmp` is meant to be RAM (Jo's choice, 2026-11-14; that it is a tmpfs is not yet checked on the Disc,
-`grep " /tmp " /proc/mounts`): nothing is written to the flash or the card, and a reboot clears
-it, so **copy the file before rebooting**:
+One file per start of the player, named by its start time on the Disc's clock (the launcher passes the name in
+`DISKOS_TRACE_FILE`; helper programs inherit it and write into the same file):
 
-```sh
-ls -l /tmp/diskos-trace/
-```
+- default: `/tmp/sdcard/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log` on the SD card. It survives power off, so
+  the power off sequence is recorded up to the moment the card is unmounted. Lines are held in memory until the card
+  is mounted (the stock player mounts it some seconds after its start).
+- switch file starting with `tmp`: `/tmp/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log`, meant to be RAM (not yet
+  checked on the Disc that `/tmp` is a tmpfs: `grep " /tmp " /proc/mounts`); nothing is written to flash or the card,
+  and a reboot clears it, so copy the file first.
 
-Lines are appended about once a second with open/append/close. The file stops growing at 16 MiB (RAM). If the file
-cannot be written, lines wait in a 512 KiB memory buffer, and the file says how many were lost. Every file starts with
-a `=== trace start` block.
+Files of earlier starts can be deleted at any time (on the card with `busybox rm`); the running start only appends to
+its own file. Lines are appended about once a second with open/append/close, so no file stays open and USB storage
+mode can still unmount the card. The file stops growing at 16 MiB. If lines cannot be written for a while, they wait in
+a 512 KiB memory buffer, and the file says how many were lost. Every file starts with a `=== trace start` block.
 
 Each line: seconds since boot, pid (`pid/thread` for other threads), the caller's return address, the event (the
 values below show the format only, they are not from a device):
@@ -118,9 +120,8 @@ SSH gives the seconds the log uses), so the blocks in the log can be told apart.
 7. Charger in and out.
 8. USB storage mode on and off; USB DAC mode on and off.
 9. Bluetooth output on, play, off.
-10. Copy the log off the Disc now (`scp`), because power off and reboot clear `/tmp`.
-11. If the power off sequence is wanted: start the copy in a loop from the PC first, then power off from the menu;
-    lines written in the last second are lost either way.
+10. Power off from the menu (with the log on the card). Lines written in the last second before the card is
+    unmounted or the player is killed are lost. Then copy the log from the card.
 
 ## Limits
 
@@ -128,7 +129,7 @@ SSH gives the seconds the log uses), so the blocks in the log can be told apart.
   direct `syscall()` use is not recorded.
 - Reads are not recorded except the first open of a polled file.
 - Writing the log (about once a second) happens on whichever player thread made the hooked call at that moment; it
-  is short (one append to RAM).
+  is short (one append), but on a slow card that thread waits for it.
 - A forked child that exits with `_exit` without exec loses its unwritten lines.
 
 ## Files

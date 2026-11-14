@@ -62,6 +62,7 @@ class TraceTest(unittest.TestCase):
         self.marker = self.tmp / 'ok'
         self.lib = self.tmp / 'diskos-trace.so'
         subprocess.run(['gcc', '-O1', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-fno-builtin',
+                        f'-DTRACE_CARD_ROOT="{self.tmp}/sd"', f'-DTRACE_CARD_PARENT="{self.tmp}"',
                         f'-DTRACE_OK_MARKER="{self.marker}"', '-o', str(self.lib), str(SRC), '-ldl'], check=True)
         (self.tmp / 'prog.c').write_text(PROG)
         self.prog = self.tmp / 'mq_player'
@@ -120,6 +121,20 @@ class TraceTest(unittest.TestCase):
         blocker.write_text('')
         r = self.run_prog(blocker / 'sub' / 'x.log')                # its folder cannot be created
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    @unittest.skipUnless(os.geteuid() == 0, 'needs root for a tmpfs as the card')
+    def test_card_log_waits_for_the_card(self):
+        card = self.tmp / 'sd'
+        card.mkdir()
+        log = card / 'diskos-trace' / 'player-trace-x.log'
+        self.assertEqual(self.run_prog(log).returncode, 0)          # nothing mounted: nothing written below it
+        self.assertFalse((card / 'diskos-trace').exists())
+        subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', str(card)], check=True)
+        try:
+            self.assertEqual(self.run_prog(log).returncode, 0)
+            self.assertIn('=== trace start', log.read_text())
+        finally:
+            subprocess.run(['umount', str(card)], check=False)
 
     def test_appends_across_runs(self):
         self.assertEqual(self.run_prog().returncode, 0)

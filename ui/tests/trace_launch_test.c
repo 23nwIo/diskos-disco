@@ -21,7 +21,7 @@ int main(void){
     if(!mkdtemp(dir)){ perror("mkdtemp"); return 2; }
     const char *libdl_none[] = { path("nolib/libdl.so.2"), NULL };
     const char *libdl_ok[] = { path("nolib/libdl.so.2"), path("libdl.so.2"), NULL };
-    trl_paths_t p = { path("switch"), path("trace.so"), path("trace.ok"), path("trace.pending"), "/tmp/diskos-trace", libdl_ok };
+    trl_paths_t p = { path("switch"), path("trace.so"), path("trace.ok"), path("trace.pending"), "/tmp/sdcard/diskos-trace", "/tmp/diskos-trace", libdl_ok };
     char *envp[] = { "PATH=/bin", "LD_PRELOAD=/old.so", "HOME=/", NULL };
     char **env = NULL;
     const unsigned char *d = (const unsigned char *)LIB; size_t n = sizeof LIB - 1;
@@ -40,7 +40,12 @@ int main(void){
     EXPECT(cnt == 4 && pre == 1 && !old);
     char want[200]; snprintf(want, sizeof want, "LD_PRELOAD=%s", p.lib);
     EXPECT(!strcmp(env[2], want));
-    EXPECT(!strncmp(env[3], "DISKOS_TRACE_FILE=/tmp/diskos-trace/player-trace-2", 50) && strstr(env[3], ".log"));
+    EXPECT(!strncmp(env[3], "DISKOS_TRACE_FILE=/tmp/sdcard/diskos-trace/player-trace-2", 57) && strstr(env[3], ".log"));
+    { FILE *f = fopen(p.sw, "w"); fputs("tmp\n", f); fclose(f); }                /* "tmp": the log goes to RAM */
+    char **e2 = NULL;
+    touch(p.ok);
+    EXPECT(trl_prepare(&p, d, n, envp, &e2) == TRL_ON && e2 && !strncmp(e2[3], "DISKOS_TRACE_FILE=/tmp/diskos-trace/player-trace-", 49));
+    env_free(e2);
     touch(p.ok);                                                              /* the library loaded */
     env_free(env); env = NULL;
     EXPECT(trl_prepare(&p, d, n, envp, &env) == TRL_ON && env);              /* and is used again */
