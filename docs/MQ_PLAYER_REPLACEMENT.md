@@ -177,8 +177,10 @@ bottleneck, because almost every step touches hardware.
   of the stock `libhardware2.so`. An own player links this file directly.
 - `main.c`: the command line tool `diskos-watchdog` with the stock commands (`start <ms>`, `stop`, `feed`, `reset`,
   `-h`) plus `run <ms> [<every_ms>]`, which arms, feeds until SIGTERM/SIGINT/SIGHUP and then disarms (for headless
-  use). It prints nothing on success. Exit status 0 / 1 (device error) / 2 (usage); the stock tool returns 255 for
-  every failure, and its only caller (mq_player, through `popen`/`pclose`, feeding once per second) ignores it.
+  use). It prints nothing on success. Exit status 0 on success and 255 on any failure, like the stock tool; its only
+  caller (mq_player, through `popen`/`pclose`, feeding once per second) ignores it anyway. The kernel refuses `start`
+  while the watchdog runs (EPERM, dmesg `WDT: watchdog is running !`, device-checked 2026-11-14, same for the stock
+  tool); `run` then keeps feeding the running watchdog. `feed` was device-checked with exit 0.
 - Build: `CROSS=<toolchain>/bin/mipsel-linux-musl- build/build-watchdog.sh` (static, about 42 KB). Host tests:
   `python3 -m unittest tests.test_watchdog`.
 
@@ -190,9 +192,9 @@ first in the stock player's `PATH` (the player calls the tool without a path). N
 1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes): a thin wrapper around `watchdog_start/feed/stop/reset` in
    Ingenic's `libhardware2.so` (both checked 2026-11-14). The library opens `/dev/jz_watchdog` and uses four ioctls:
    start `_IOW('W', 13, int ms)` (0x8004570d), stop `_IO('W', 14)`, feed `_IO('W', 15)`, reset `_IO('W', 16)`. So the
-   watchdog needs no further RE. The library also has an `/dev/mcu` "shutdown" call; that node does not exist on the
-   Disc (checked 2026-11-14). Still open: whether `stop` really disarms it, and whether it already runs before
-   mq_player starts.
+   watchdog needs no further RE. A second `start` while it runs fails with EPERM, so it is not armed before mq_player starts
+   it (device-checked 2026-11-14). The library also has an `/dev/mcu` "shutdown" call; that node does not exist on the
+   Disc (checked 2026-11-14). Still open: whether `stop` really disarms it.
 2. Resolved 2026-11-14: no `/dev/spidev*` and no SPI devices, so no MCU. While idle the stock player holds
    `/dev/key_ioctl`, `/dev/cs43131` and `/dev/cs43131c` open; the other nodes are opened on demand.
 3. Which volume path does the Disc use: CS43131 registers, `ICODEC HPOUTL GAIN`, or `i2c-4/4-0034/vol`?

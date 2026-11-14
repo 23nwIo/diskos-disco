@@ -10,8 +10,12 @@
  *                                           then disarm and exit. SIGKILL or a hang leaves it armed: that is the point.
  *   diskos-watchdog -h | --help
  *
- * Exit status: 0 success, 1 device error, 2 usage error. The stock tool exits with 255 for both kinds of failure;
- * its only caller, the stock mq_player, runs it through popen()/pclose() and ignores the status. */
+ * Exit status: 0 on success, 255 on any failure (device error or bad usage), exactly like the stock tool, whose
+ * main() returns the library's -1. Its only caller, the stock mq_player, runs it through popen()/pclose() and
+ * ignores the status anyway; the message on stderr says which failure it was.
+ *
+ * The kernel refuses "start" while the watchdog already runs (EPERM, dmesg "WDT: watchdog is running !", seen on a
+ * Disc 2026-11-14). "run" therefore treats EPERM from start as "already armed" and just keeps feeding it. */
 #include "watchdog.h"
 
 #include <errno.h>
@@ -21,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#define EXIT_FAIL 255
 
 static const char *g_prog = "diskos-watchdog";
 static volatile sig_atomic_t g_quit;
@@ -57,7 +63,7 @@ static int parse_ms(const char *s, int *out)
 static int fail(const char *what, int err)
 {
     fprintf(stderr, "%s: %s failed: %s\n", g_prog, what, strerror(-err));
-    return 1;
+    return EXIT_FAIL;
 }
 
 static void on_signal(int sig)
@@ -83,7 +89,10 @@ static int run(int fd, int timeout_ms, int every_ms)
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
 
-    if ((r = wd_start(fd, timeout_ms)) < 0)
+    r = wd_start(fd, timeout_ms);
+    if (r == -EPERM)
+        fprintf(stderr, "%s: watchdog already running, its timeout stays as it was; feeding it\n", g_prog);
+    else if (r < 0)
         return fail("start", r);
     while (!g_quit) {
         if ((r = wd_feed(fd)) < 0)
@@ -103,29 +112,29 @@ int main(int argc, char **argv)
     if (argc > 0 && argv[0] && argv[0][0])
         g_prog = argv[0];
     if (argc < 2)
-        return usage(2);
+        return usage(EXIT_FAIL);
     cmd = argv[1];
 
     if (!strcmp(cmd, "-h") || !strcmp(cmd, "--help"))
-        return argc == 2 ? usage(0) : usage(2);
+        return argc == 2 ? usage(0) : usage(EXIT_FAIL);
 
     if (!strcmp(cmd, "start")) {
         if (argc != 3 || parse_ms(argv[2], &ms))
-            return usage(2);
+            return usage(EXIT_FAIL);
     } else if (!strcmp(cmd, "run")) {
         if (argc < 3 || argc > 4 || parse_ms(argv[2], &ms))
-            return usage(2);
+            return usage(EXIT_FAIL);
         if (argc == 4) {
             if (parse_ms(argv[3], &every) || every >= ms)
-                return usage(2);
+                return usage(EXIT_FAIL);
         } else {
             every = ms / 4 > 0 ? ms / 4 : 1;
         }
     } else if (!strcmp(cmd, "stop") || !strcmp(cmd, "feed") || !strcmp(cmd, "reset")) {
         if (argc != 2)
-            return usage(2);
+            return usage(EXIT_FAIL);
     } else {
-        return usage(2);
+        return usage(EXIT_FAIL);
     }
 
     fd = wd_open();

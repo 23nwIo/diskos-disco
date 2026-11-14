@@ -27,7 +27,10 @@ int wd_test_ioctl(int fd, unsigned long req, void *arg)
         fprintf(f, "%08lx %d\n", req, arg ? *(int *)arg : -1);
         fclose(f);
     }
-    if (failreq && strtoul(failreq, NULL, 16) == req) { errno = EIO; return -1; }
+    if (failreq && strtoul(failreq, NULL, 16) == req) {
+        errno = getenv("WD_ERRNO") ? atoi(getenv("WD_ERRNO")) : EIO;
+        return -1;
+    }
     return 0;
 }
 '''
@@ -82,7 +85,7 @@ class WatchdogTests(unittest.TestCase):
             with self.subTest(args=args):
                 self.log.unlink(missing_ok=True)
                 p = self.run_wd(*args)
-                self.assertEqual(p.returncode, 2)
+                self.assertEqual(p.returncode, 255)
                 self.assertIn('Usage', p.stderr)
                 self.assertEqual(self.calls(), [])
 
@@ -94,14 +97,14 @@ class WatchdogTests(unittest.TestCase):
 
     def test_ioctl_failure_is_reported(self):
         p = self.run_wd('feed', env=dict(self.env, WD_FAIL=f'{FEED:x}'))
-        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.returncode, 255)
         self.assertIn('feed failed', p.stderr)
 
     def test_missing_device(self):
         self.dev.unlink()
         try:
             p = self.run_wd('feed')
-            self.assertEqual(p.returncode, 1)
+            self.assertEqual(p.returncode, 255)
             self.assertIn('open', p.stderr)
         finally:
             self.dev.write_bytes(b'')
@@ -118,6 +121,25 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(c[-1], (STOP, -1))
         self.assertGreaterEqual(sum(1 for r, _ in c if r == FEED), 3)
         self.assertEqual({r for r, _ in c[1:-1]}, {FEED})
+
+
+    def test_run_keeps_feeding_an_already_running_watchdog(self):
+        env = dict(self.env, WD_FAIL=f'{START:x}', WD_ERRNO=str(1))   # EPERM, as the Disc's kernel answers
+        proc = subprocess.Popen([str(self.bin), 'run', '1000', '50'], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(0.3)
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=5)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertIn('already running', err)
+        c = self.calls()
+        self.assertGreaterEqual(sum(1 for r, _ in c if r == FEED), 2)
+        self.assertEqual(c[-1], (STOP, -1))
+
+    def test_run_aborts_on_other_start_errors(self):
+        p = self.run_wd('run', '1000', '50', env=dict(self.env, WD_FAIL=f'{START:x}'))
+        self.assertEqual(p.returncode, 255)
+        self.assertNotIn(FEED, [r for r, _ in self.calls()])
 
 
 if __name__ == '__main__':
