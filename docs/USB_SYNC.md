@@ -3,7 +3,7 @@
 Copy music between the Disc's SD card and a USB drive: a USB stick, an SD card reader, or a second Disc in mass
 storage mode. Nothing is ever deleted on either side.
 
-Status (2026-11-14): implemented, host-tested (unit tests and real rsync runs); **not device-tested yet**.
+Status (2026-11-14): implemented, host-tested (unit tests and real rsync runs). On the device so far: host port and drive detection; import/export not yet.
 
 ## Requirements
 
@@ -63,8 +63,8 @@ which that sweep does not match, and takes a FAT drive back if the player mounte
 ## Host port
 
 diskOS requests the host port with the player IPC frame `0642000C0005` and releases it with `0642000C0000` (not while
-the USB audio output is selected). Device-verified so far: enumeration and mass storage with the Zune "usb-c out" route
-(`0666 3` + `0642 5`). **Not verified**: that `0642 5` alone takes the host port while audio stays on the headphones.
+the USB audio output is selected). Device-verified 2026-11-14: `0642 5` alone takes the host port (card reader behind
+a hub enumerated as sdb, output route stayed on the headphones).
 If no drive appears, check `/usr/data/usbdrive.log` and `dmesg`.
 
 ## Not yet
