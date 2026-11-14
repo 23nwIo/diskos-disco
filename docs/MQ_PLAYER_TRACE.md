@@ -45,7 +45,8 @@ One file per start of the player, named by its start time on the Disc's clock (t
   goes away after it was written (power off: the player runs `umount` and then `poweroff -f`; diskOS's "Shut down
   player" unmounts it earlier; USB storage mode), the following lines go to
   `/usr/data/diskos-trace-tail-<YYYYmmdd-HHMMSS>.log` in internal flash instead, at most 64 KiB per start, so the end
-  of a power off is kept.
+  of a power off is kept. In that state every line is written and fsynced at once (`poweroff -f` does not sync), not
+  once a second.
 - switch file starting with `tmp`: `/tmp/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log`, meant to be RAM (not yet
   checked on the Disc that `/tmp` is a tmpfs: `grep " /tmp " /proc/mounts`); nothing is written to flash or the card,
   and a reboot clears it, so copy the file first.
@@ -125,8 +126,9 @@ SSH gives the seconds the log uses), so the blocks in the log can be told apart.
 8. USB storage mode on and off; USB DAC mode on and off.
 9. Bluetooth output on, play, off.
 10. Power off from the menu (with the log on the card). Afterwards copy the log from the card and
-    `/usr/data/diskos-trace-tail-*.log` (the part after the card was unmounted). Lines from the last moment before the
-    player is killed, after its last `popen`/`system`, can still be lost.
+    `/usr/data/diskos-trace-tail-*.log` (the part after the card was unmounted). What can still be missing: lines
+    from up to one second between the `umount` and the player's next `popen`/`system` if the power is cut in that
+    second, and calls a thread is in the middle of when the power goes.
 
 ## Limits
 

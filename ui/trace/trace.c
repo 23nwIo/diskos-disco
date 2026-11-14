@@ -200,6 +200,7 @@ static void lock_drop(void) { __sync_lock_release(&g_lock); }
 /* ---- the log file: on the card (default) or in /tmp (RAM) ---- */
 static char g_file[200], g_dir[200];   /* set by the constructor; until then lines stay in memory */
 static int g_on_card, g_card_seen;
+static volatile int g_in_tail, g_tail_full;   /* card gone after use: every line is written (and synced) at once */
 static char g_tail[200];               /* TRACE_TAIL_DIR/diskos-trace-tail-<start time>.log */
 static long fs_type(const char *p)
 {
@@ -241,8 +242,10 @@ static void flush(int force)
     int tail = 0;
     if (g_on_card && !card_mounted()) {
         if (!g_card_seen || !g_tail[0]) return;
+        if (g_tail_full) return;
         path = g_tail; dir = 0; cap = TAIL_CAP; tail = 1;
-    }
+        g_in_tail = 1;
+    } else g_in_tail = 0;
     if (!lock_take()) return;
     if (g_flushing || (!g_len && !g_dropped) || (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2)) { lock_drop(); return; }
     g_last_flush = t;
@@ -260,6 +263,7 @@ static void flush(int force)
             static const char m[] = "=== trace: tail file limit reached, lines dropped\n";
             if ((unsigned long)size < cap) write_all(fd, m, sizeof m - 1);
             lost = count_lines(out, n) + dropped;
+            g_tail_full = 1; g_in_tail = 0;
         } else if (size >= 0 && (unsigned long)size >= cap) {
             static const char m[] = "=== trace: file size limit reached, recording stopped\n";
             write_all(fd, m, sizeof m - 1);
@@ -273,6 +277,7 @@ static void flush(int force)
             if (write_all(fd, out, n) < 0) lost = count_lines(out, n);
             else if (!tail && g_on_card) g_card_seen = 1;
         }
+        if (tail) sc3(SYS_fsync, fd, 0, 0);   /* poweroff -f does not sync: the line must be on the flash now */
         sc3(SYS_close, fd, 0, 0);
     }
     if (lock_take()) { g_flushing = 0; g_dropped += lost; lock_drop(); }
@@ -309,6 +314,7 @@ static void emit_x(void *caller, const char *ev, size_t evn, int nolimit)
     if (g_len + o.n <= BUF_BYTES) { for (size_t i = 0; i < o.n; i++) g_cur[g_len + i] = line[i]; g_len += o.n; }
     else g_dropped++;
     lock_drop();
+    if (g_in_tail) flush(1);                                    /* power off is under way: no line may wait */
 }
 
 static void emit(void *caller, const char *ev, size_t evn) { emit_x(caller, ev, evn, 0); }
