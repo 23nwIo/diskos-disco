@@ -46,6 +46,23 @@ $(WD_BIN): $(APP)/watchdog/main.c $(APP)/watchdog/watchdog.c $(APP)/watchdog/wat
 	$(CROSS)strip $@ || true
 $(APP)/wd_blob.o: CFLAGS += -DWD_BIN='"$(WD_BIN)"'
 $(APP)/wd_blob.o: $(WD_BIN)
+# diskos-trace.so (ui/trace, docs/MQ_PLAYER_TRACE.md): an LD_PRELOAD library for the stock glibc player, built with the same
+# toolchain as a self-contained shared object (no musl linked in; dlsym and __errno_location come from the device's glibc,
+# the stubs only name them). Carried inside mq_ui; the launcher preloads it when /usr/data/diskos-trace-player exists.
+APP_SRCS += $(APP)/trace_blob.c
+TRACE_BIN := $(APP)/trace/diskos-trace.so
+TRACE_STUBS := $(APP)/trace/stub-libdl.so.2 $(APP)/trace/stub-libc.so.6
+$(APP)/trace/stub-libdl.so.2: $(APP)/trace/stub.c
+	$(CC) -shared -fPIC -nostdlib -DSTUB_LIBDL -Wl,-soname,libdl.so.2 -o $@ $<
+$(APP)/trace/stub-libc.so.6: $(APP)/trace/stub.c
+	$(CC) -shared -fPIC -nostdlib -Wl,-soname,libc.so.6 -o $@ $<
+$(TRACE_BIN): $(APP)/trace/trace.c $(TRACE_STUBS)
+	$(CC) -Os -ffreestanding -shared -fPIC -nostdlib -fno-stack-protector -Wall -Wextra -Werror \
+	  -ffile-prefix-map=$(APP)/trace/= $(FP_FLAGS) -Wl,-soname,diskos-trace.so -Wl,-z,noexecstack \
+	  -o $@ $(APP)/trace/trace.c -Wl,--no-as-needed $(TRACE_STUBS)
+	$(CROSS)strip $@ || true
+$(APP)/trace_blob.o: CFLAGS += -DTRACE_BIN='"$(TRACE_BIN)"'
+$(APP)/trace_blob.o: $(TRACE_BIN)
 APP_SRCS += $(APP)/braun2.c $(APP)/zune_home.c $(APP)/zune_dial.c $(APP)/zune_thumbs.c $(APP)/zune_saver.c $(APP)/font_zune_light_150.c $(APP)/font_zune_light_18.c $(APP)/font_zune_light_21.c $(APP)/font_zune_light_24.c $(APP)/font_zune_light_28.c $(APP)/font_zune_light_32.c $(APP)/font_zune_light_40.c $(APP)/font_zune_light_46.c $(APP)/font_zune_light_50.c $(APP)/font_zune_light_64.c $(APP)/font_zune_light_72.c $(APP)/font_zune_light_88.c $(APP)/font_zune_light_96.c $(APP)/font_zune_regular_12.c $(APP)/font_zune_regular_13.c $(APP)/font_zune_regular_14.c $(APP)/font_zune_regular_15.c $(APP)/font_zune_regular_16.c $(APP)/font_zune_regular_17.c $(APP)/font_zune_regular_19.c $(APP)/font_zune_semibold_10.c $(APP)/font_zune_semibold_11.c $(APP)/font_zune_semibold_12.c $(APP)/font_zune_semibold_22.c $(APP)/font_zune_semibold_24.c $(APP)/font_zune_bold_14.c
 # bundled SQLite amalgamation (compiled in-process; replaces popen sqlite3 CLI)
 SQLITE_FLAGS := -Os -pipe -static -ffunction-sections -fdata-sections -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION \
@@ -84,7 +101,7 @@ mq_ui: $(OBJS)
 	   echo "size: $$(stat -c%s $@)"; \
 	   echo "built: $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
 	   echo "cc: $$($(CC) --version | head -1)"; \
-	   echo "src_md5: $$(cat $(APP_SRCS) $(APP)/*.h $(APP)/watchdog/*.c $(APP)/watchdog/*.h $(APP)/vendor/aptx/bluealsa $(APP)/vendor/aptx/libfreeaptx.so.0 2>/dev/null | md5sum | cut -d' ' -f1)"; \
+	   echo "src_md5: $$(cat $(APP_SRCS) $(APP)/*.h $(APP)/watchdog/*.c $(APP)/watchdog/*.h $(APP)/trace/*.c $(APP)/vendor/aptx/bluealsa $(APP)/vendor/aptx/libfreeaptx.so.0 2>/dev/null | md5sum | cut -d' ' -f1)"; \
 	 } > $@.manifest
 	@cat $@.manifest
 
@@ -142,7 +159,7 @@ $(APP)/boomshine/%.o: $(APP)/boomshine/%.c $(APP)/boomshine/game.h $(APP)/boomsh
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(OBJS:.o=.d) mq_ui mq_ui.debug mq_ui.manifest ipodos-ui diskos-bootprobe diskos-artdec $(WD_BIN)
+	rm -f $(OBJS) $(OBJS:.o=.d) mq_ui mq_ui.debug mq_ui.manifest ipodos-ui diskos-bootprobe diskos-artdec $(WD_BIN) $(TRACE_BIN) $(TRACE_STUBS)
 -include $(patsubst %.o,%.d,$(filter %.o,$(OBJS)))
 
 # Native render/action diagnostics. Explicitly separate from the production theme/cross-build gates.

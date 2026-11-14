@@ -37,6 +37,8 @@
 #include "controls.h"
 #include "wd_blob.h"
 #include "wd_override.h"   /* own cmd_watchdog bound over the stock tool */
+#include "trace_blob.h"
+#include "trace_launch.h"  /* player trace switch (docs/MQ_PLAYER_TRACE.md) */
 #include "screens.h"
 #include "npshade.h"
 #include "ma.h"
@@ -3169,11 +3171,14 @@ static void handoff_signal_reset(void){
 }
 /* The ONE place that hands off to the stock player. Kills any preparation child first: a shell or
  * sqlite left running would otherwise keep mutating state after stock has started. */
+static char **volatile g_trace_env;       /* set by player_launch_prepare when the player trace is switched on */
 static void exec_stock_player(void){
     if(g_bounded_pgid > 0) kill(-(pid_t)g_bounded_pgid, SIGKILL);
     if(g_bounded_pid > 0) kill((pid_t)g_bounded_pid, SIGKILL);   /* the child itself, grouped or not */
     handoff_signal_reset();
     char *pa[2]; pa[0] = (char*)"mq_player"; pa[1] = NULL;
+    char **te = g_trace_env;
+    if(te) execve("/usr/bin/mq_player", pa, te);   /* LD_PRELOAD=diskos-trace.so (trace_launch.h); falls through on failure */
     execv("/usr/bin/mq_player", pa);
     _exit(127);                            /* exec failed: let the watchdog respawn stock */
 }
@@ -3212,6 +3217,18 @@ static void player_launch_prepare(void){
      * never reaches the stock player. If the alarm fires during them, the handler execs stock and the
      * missing note is the acceptable loss. alarm(0) happens in exec_stock_player(), not here. */
     launch_status_publish(guard, local);
+    {   /* player trace (docs/MQ_PLAYER_TRACE.md): only with /usr/data/diskos-trace-player */
+        static const char *const libdl[] = { "/lib/libdl.so.2", "/usr/lib/libdl.so.2", NULL };
+        const trl_paths_t tp = { TRL_SWITCH, TRL_LIB, TRL_OK, TRL_PENDING, libdl };
+        char **te = NULL;
+        int tr = trl_prepare(&tp, trace_blob_data(), trace_blob_size(), environ, &te);
+        if(tr == TRL_ON) g_trace_env = te;
+        if(tr != TRL_OFF){
+            char m[200];
+            snprintf(m, sizeof m, "launcher: player trace %s", trl_reason(tr));
+            boot_note(m);
+        }
+    }
     if(!guard)      boot_note("launcher: SD guard unavailable - stock player launched UNPROTECTED; diskOS SD features held");
     else if(!local) boot_note("launcher: local ownership unconfirmed - stock player launched; diskOS SD features held");
 }

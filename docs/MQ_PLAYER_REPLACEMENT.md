@@ -107,7 +107,8 @@ route, for example by making the stock USB automount's `system("mount …")` cal
    PCM at 44.1/96/192 kHz, DSD64/128 native and DoP, each DAC filter, volume steps, gain, balance, mute, screen
    off/on, power key, charging on/off, USB storage and USB DAC mode, power off. Check on the device what
    `cmd_watchdog` is and whether `/dev/spidev0.0` talks to anything. Result: a documented hardware interface in
-   HARDWARE.md and RE_CATALOGUE.md. This step is useful even if we never replace the player.
+   HARDWARE.md and RE_CATALOGUE.md. This step is useful even if we never replace the player. Built 2026-11-14:
+   [MQ_PLAYER_TRACE.md](MQ_PLAYER_TRACE.md) (`touch /usr/data/diskos-trace-player`, log on the SD card).
 1. **Backend seam in diskOS (1 week).** Put the ~33 command tags diskOS sends behind one player-backend interface,
    so the UI can talk to either the stock player or ours. The stock path stays the default.
 2. **Own player, local playback only (3 to 4 weeks).** A new `diskos-player` daemon in `/usr/data`, started by the
