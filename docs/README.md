@@ -24,6 +24,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [Settings implementation](SETTINGS_TEMPLATE.md), [design rules](DESIGN_SYSTEM.md).
 - [SSH keys, reboot-proof Debug Mode and rsync](SSH_ACCESS.md) (optional, on `/usr/data`; not yet device-tested).
 - [Hardware](HARDWARE.md), [IPC commands](COMMAND_MAP.md), [reverse engineering](RE_CATALOGUE.md).
+- [Replacing mq_player with own code](MQ_PLAYER_REPLACEMENT.md): assessment, inventory, strategy and effort (nothing implemented).
 - [Audiobook speed](AUDIOBOOK_SPEED.md): why there is no playback-speed control (investigated, not planned).
 
 ## Release and provenance
