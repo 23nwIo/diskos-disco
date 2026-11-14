@@ -10,7 +10,7 @@ Status: assessment only (2026-11-14). Nothing here is implemented. Facts marked 
 Yes, it is possible, and it does **not** need a new flash: the boot hook already starts `/usr/data/mq_player`, and
 that path is ours. The protocols (decoding, ALSA, Bluetooth, AirPlay, DLNA, USB gadgets) are all covered by existing
 open-source software. The work that only exists inside FiiO's binary is the hardware control: the four CS43131 DACs,
-the hardware watchdog, power/charging, the power key and screen sleep, and possibly an MCU on SPI. The DAC interface
+the hardware watchdog, power/charging, the power key and screen sleep. The DAC interface
 turned out to be small (19 ioctl codes), which makes a replacement much more realistic than earlier notes suggested.
 
 Rough effort: a first own player that plays local files on headphones with volume, DAC filter and EQ is about
@@ -54,7 +54,7 @@ the job itself, so the stock part is no longer needed.
 | Battery, charger, USB-C PD | `adc_control.c`, `/dev/sgm41513`, `/dev/aw35615`, `/dev/usbcc_ioctl`, cw221X sysfs | reads cw221X; uses cc_term for idle (memory note) | own code | **yes** |
 | Headphone / balanced detect | `adc_bal_det_handler`, `po_handle` (SAR ADC `/dev/jz_adc_aux_*`) | none | own code; thresholds need RE | **yes** |
 | Watchdog | `watchdog_control.c`: `cmd_watchdog start 10000`, `cmd_watchdog feed` | none | run the same command | small |
-| MCU over SPI | `spi_handler.c`, `/dev/spidev0.0`, framed packets with checksum; commands `SET_DEVICE_VOL`, `SET_DAC_FILTER`, `SET_USB_MODE`, `SET_MCU_POWER`, `ENTER_MCU_UPDATE_MODE` … | none | **unknown**: whether the Disc has an MCU at all is **unverified** (HARDWARE.md lists none) | **yes** |
+| MCU over SPI | `spi_handler.c`, `/dev/spidev0.0`, framed packets with checksum; commands `SET_DEVICE_VOL`, `SET_DAC_FILTER`, `SET_USB_MODE`, `SET_MCU_POWER`, `ENTER_MCU_UPDATE_MODE` … | none | **not present on the Disc**: no `/dev/spidev*` node and no device under `/sys/bus/spi/devices` (checked on Jo's Disc 2026-11-14); the code is shared with other FiiO models | no |
 | RTC | `hwclock -w/-s` | diskOS loads the clock from the RTC (ui/main.c:238) | keep | no |
 
 ## Key findings from the binary
@@ -149,14 +149,14 @@ bottleneck, because almost every step touches hardware.
 | Bluetooth sink | 3-5 |
 | USB storage / USB DAC (UAC2) / external USB DAC | 1-2 / 5-8 / 2-3 |
 | AirPlay / DLNA renderer / NAS | 3-5 / 5-10 / 1-2 |
-| Charger, PD, balanced detect, power details | 3-8 (more if the MCU is real) |
+| Charger, PD, balanced detect, power details | 3-8 |
 | **Local playback ready (0-2)** | **about 25-35** |
 | **Parity with today's diskOS use** | **about 60-100** |
 
 ## Risks
 
-- **Undocumented hardware.** The biggest open item is whether there is an SPI MCU and what it controls (volume,
-  filter, power). If yes, its protocol has to be traced too and the estimate grows.
+- **Undocumented hardware.** The DAC, charger and USB-C ioctls still have to be traced (step 0). There is no SPI
+  MCU on the Disc (checked 2026-11-14), so nothing beyond those drivers is expected.
 - **Pops, clicks and DAC damage.** Wrong power or mute order on the DACs can be loud on headphones. Test with low
   volume and without headphones first.
 - **Battery and charging.** The stock player sets charger and USB-C PD state. A missing call could stop charging or
@@ -172,8 +172,9 @@ bottleneck, because almost every step touches hardware.
 
 ## Open questions for a device session
 
-1. What is `cmd_watchdog` (`which cmd_watchdog`, `ls -l`, `strings`)? Is the watchdog already running before
-   mq_player starts?
-2. Does `/dev/spidev0.0` exist, and does anything answer on it (log stock SPI traffic with the tracer)?
+1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes, checked 2026-11-14). Still open: what it does inside, and
+   whether the watchdog is already running before mq_player starts.
+2. Resolved 2026-11-14: no `/dev/spidev*` and no SPI devices, so no MCU. While idle the stock player holds
+   `/dev/key_ioctl`, `/dev/cs43131` and `/dev/cs43131c` open; the other nodes are opened on demand.
 3. Which volume path does the Disc use: CS43131 registers, `ICODEC HPOUTL GAIN`, or `i2c-4/4-0034/vol`?
 4. Is the physical output balanced, single-ended, or both with detection (`adc_bal_det_handler`)?
