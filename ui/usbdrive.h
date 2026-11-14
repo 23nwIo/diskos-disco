@@ -21,6 +21,7 @@ typedef struct {
     char fstype[8];        /* ext4, exfat, vfat, ntfs, xfs */
     unsigned long long bytes;
     int rw;                /* 1 while an export holds it writable */
+    int remounts;          /* times someone else unmounted it and diskOS mounted it again */
 } ud_vol_t;
 
 const char *usbdrive_blocked(void);     /* why the host port can't be taken now (toast text), NULL = it can */
