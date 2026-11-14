@@ -172,7 +172,8 @@ bottleneck, because almost every step touches hardware.
 
 ## Open questions for a device session
 
-1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes, checked 2026-11-14). Still open: what it does inside, and
+1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes): a thin wrapper around `watchdog_start/feed/stop/reset` in
+   Ingenic's `libhardware2.so` (checked 2026-11-14). Still open: which device the library uses, whether `stop` works, and
    whether the watchdog is already running before mq_player starts.
 2. Resolved 2026-11-14: no `/dev/spidev*` and no SPI devices, so no MCU. While idle the stock player holds
    `/dev/key_ioctl`, `/dev/cs43131` and `/dev/cs43131c` open; the other nodes are opened on demand.
