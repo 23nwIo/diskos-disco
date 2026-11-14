@@ -2,7 +2,8 @@
 
 Step 0 of [MQ_PLAYER_REPLACEMENT.md](MQ_PLAYER_REPLACEMENT.md): record what the stock FiiO player
 (`/usr/bin/mq_player`) does to the hardware, so an own player can do the same. Nothing about the player changes; it
-only runs with a recording library preloaded. Built 2026-11-14, **not device-tested yet**.
+only runs with a recording library preloaded. Built 2026-11-14. First device run 2026-11-14 (build 4cefebb7): loads
+and records; argument bytes were missing in that build (`in ?`), fixed since, the fix is not device-tested yet.
 
 ## Switch it on and off
 
@@ -57,17 +58,39 @@ What is recorded:
 - `open`, `open64`, `openat`, `openat64`, `fopen`, `fopen64` of paths under `/dev`, `/sys` and `/proc`. Read-only
   opens of `/sys` and `/proc` only the first time per path (they are polled); everything else every time.
 - Every `ioctl`, with the request decoded (`_IO/_IOR/_IOW/_IOWR`, type, number, size) and up to 64 argument bytes
-  before (`in`) and after (`out`) the call. The hot ALSA PCM calls (status, delay, sync, read/write frames) are left
-  out.
+  before (`in`) and after (`out`) the call. FiiO drivers also pass structs with plain `_IO` requests (`/dev/gpio`
+  `'G'` 122): when such an argument looks like a pointer, 16 bytes behind it are shown (`mem`, and `mem-after` when
+  the call changed them). The bytes are copied through a short-lived pipe, so a bad pointer gives `?` instead of a
+  crash. The hot ALSA PCM calls (status, delay, sync, read/write frames) are left out.
 - `write`, `fwrite`, `fputs`, `fputc`, `fprintf`, `vfprintf` to files opened under `/dev`, `/sys` and `/proc`
   (first 48 bytes).
 - `system`, `popen`, `execl`, `execv`, `execvp`, `execve` (the shell commands the player runs). Programs started
-  this way inherit `LD_PRELOAD` and record too, under their own pid. The once-a-second `cmd_watchdog feed` is
-  recorded three times, then not any more.
+  this way (helpers) inherit `LD_PRELOAD` and record too, under their own pid, but less: no `/proc`, no `ioctl` on
+  sockets, no exec of their own (the player's line already has the command), and their `=== trace start` line only
+  once they record something. The once-a-second `cmd_watchdog feed` is recorded three times, then not any more.
+- Never recorded: `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/console`, `/dev/pts/*`.
 - `close` of `/dev` files.
 
 The same event more than 4 times in 10 s is counted instead of written: the next one that passes says
-`[+N like this in 10 s]`.
+`[+N like this in 10 s]`. `ioctl` calls on `/dev/cs43131*` (the DACs) are always written.
+
+## First findings (device run 2026-11-14, build 4cefebb7)
+
+Not yet with argument bytes, so values are still open. Times are seconds since boot in that run.
+
+- Only `/dev/cs43131` and `/dev/cs43131c` are opened; `/dev/cs43131b` and `/dev/cs43131d` are not.
+- Polled about once a second: `_IO('M',40)` on cs43131 returns 11, `_IO('M',43)` on cs43131c returns 0.
+- Headphone jack: thread polls `/dev/gpio` `_IO('G',122)` with a pointer argument (0x6e16a0) about three times a
+  second; the return value changes between 0 and 1 when the plug goes in or out. After a change the player issues
+  `_IOW('M',45)` + `_IOW('M',66)` on cs43131 and `_IOW('M',47)` + `_IOW('M',68)` on cs43131c (one byte each).
+- Volume keys: another thread reads `/dev/gpio` `'G'` 122 with two arguments (0x6db930, 0x6db938, probably the two
+  keys) and then sends the same four ioctls (45/66, 47/68). So these four carry the volume; the values are needed.
+- Start of playback: `_IOW('M',56)` + `_IOW('M',60)` (twice), `_IOW('M',52)`, `_IOW('M',54)`, `_IOW('M',41)`,
+  `_IOW('M',50)`, the volume group, `_IO('M',46)`, then ALSA `/dev/snd/pcmC0D3p` (hw_params, sw_params, start).
+  The second `_IOW('M',56)` returns an odd value with errno 2 (both runs).
+- At start: `_IOW('M',62)` / `_IOW('M',64)` and `_IOW('M',70)`; ALSA controls on `/dev/snd/controlC0`.
+- Battery and charger: `/dev/sgm41513` `_IO('I',40)` and `/dev/aw35615` are opened and closed several times a second.
+- Backlight: `fwrite` of the brightness value ("31", "0") to the pwm-backlight sysfs file.
 
 The caller address points into the code mapping listed in the `map` lines of the same start block. For
 `/usr/bin/mq_player` it is the plain address in the binary (not position independent), so it can be looked up in a

@@ -80,23 +80,6 @@ static long sc4(long n, long a, long b, long c, long d)
                          : SC_CLOBBER, "$8", "$9", "$10");
     return r7 && r2 > 0 ? -r2 : r2;
 }
-static long sc6(long n, long a, long b, long c, long d, long e, long f)
-{
-    register long r4 __asm__("$4") = a;
-    register long r5 __asm__("$5") = b;
-    register long r6 __asm__("$6") = c;
-    register long r7 __asm__("$7") = d;
-    register long r8 __asm__("$8") = e;
-    register long r9 __asm__("$9") = f;
-    register long r2 __asm__("$2");
-    __asm__ __volatile__("subu $sp,$sp,32 ; sw $8,16($sp) ; sw $9,20($sp) ; "
-                         "addu $2,$0,%4 ; syscall ;"
-                         "addu $sp,$sp,32"
-                         : "=&r"(r2), "+r"(r7), "+r"(r8), "+r"(r9)
-                         : "ir"(n), "r"(r4), "r"(r5), "r"(r6)
-                         : SC_CLOBBER, "$10");
-    return r7 && r2 > 0 ? -r2 : r2;
-}
 #else
 /* host test build only: glibc's syscall(), with errno saved around it */
 extern long syscall(long n, ...);
@@ -273,9 +256,12 @@ static void flush(int force)
 }
 
 /* Add one line: prefix, rate limit on the event text, buffer. */
-static void emit(void *caller, const char *ev, size_t evn)
+static char g_hdr[400];          /* a helper program's start line, written only once it records something */
+static size_t g_hdr_len;
+static void emit_x(void *caller, const char *ev, size_t evn, int nolimit)
 {
     if (g_disabled || g_stopped) return;
+    if (g_hdr_len) { size_t n = g_hdr_len; g_hdr_len = 0; emit_x(0, g_hdr, n, 1); }
     uint32_t t = now_ms();
     uint32_t h = fnv(ev, evn);
     char line[LINE_MAX_ + 64]; out_t o = { line, 0, sizeof line };
@@ -286,7 +272,7 @@ static void emit(void *caller, const char *ev, size_t evn)
         if (g_rate[i].h != h || t - g_rate[i].win >= 10000) {
             if (g_rate[i].h == h) sup = g_rate[i].sup;
             g_rate[i].h = h; g_rate[i].win = t; g_rate[i].n = 1; g_rate[i].sup = 0;
-        } else if (++g_rate[i].n > 4) { g_rate[i].sup++; lock_drop(); return; }
+        } else if (++g_rate[i].n > 4 && !nolimit) { g_rate[i].sup++; lock_drop(); return; }
     }
     int tid = cur_tid();
     o_u(&o, t / 1000); o_ch(&o, '.'); { unsigned ms = t % 1000; o_ch(&o, (char)('0' + ms / 100)); o_ch(&o, (char)('0' + ms / 10 % 10)); o_ch(&o, (char)('0' + ms % 10)); }
@@ -300,6 +286,8 @@ static void emit(void *caller, const char *ev, size_t evn)
     else g_dropped++;
     lock_drop();
 }
+
+static void emit(void *caller, const char *ev, size_t evn) { emit_x(caller, ev, evn, 0); }
 
 /* ---- real functions ---- */
 #define REAL(ret, name, args) \
@@ -337,6 +325,14 @@ static int classify(const char *p)
     if (s_pre(p, "/proc/")) return C_PROC;
     return C_NONE;
 }
+/* Files never worth a line: shell redirections and random numbers; and /proc in helper programs (killall and
+ * start-stop-daemon walk all of /proc). Helper programs are the ones the player starts, which load us anew. */
+static int quiet_path(int c, const char *p)
+{
+    if (c == C_PROC && !g_main) return 1;
+    return s_eq(p, "/dev/null") || s_eq(p, "/dev/zero") || s_eq(p, "/dev/urandom") || s_eq(p, "/dev/random") ||
+           s_eq(p, "/dev/tty") || s_eq(p, "/dev/console") || s_pre(p, "/dev/pts/");
+}
 static void copy_path(char *dst, const char *p) { size_t i = 0; for (; p[i] && i < FDPATH - 1; i++) dst[i] = p[i]; dst[i] = 0; }
 static const char *fd_path(int fd) { return (fd >= 0 && fd < NFD && g_fdpath[fd][0]) ? g_fdpath[fd] : 0; }
 static int first_seen(const char *p)
@@ -353,8 +349,8 @@ static void o_err(out_t *o, long r, int e) { o_s(o, " -> "); o_i(o, r); if (r < 
 static void note_open(void *ra, const char *fn, const char *p, int flags, int r, int e)
 {
     int c = classify(p);
-    if (r >= 0 && r < NFD) { if (c != C_NONE) copy_path(g_fdpath[r], p); else g_fdpath[r][0] = 0; }
-    if (c == C_NONE || g_disabled) return;
+    if (r >= 0 && r < NFD) { if (c != C_NONE && !quiet_path(c, p)) copy_path(g_fdpath[r], p); else g_fdpath[r][0] = 0; }
+    if (c == C_NONE || g_disabled || quiet_path(c, p)) return;
     if (c != C_DEV && (flags & O_ACCMODE) == O_RDONLY && !first_seen(p)) return;
     char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
     o_s(&o, fn); o_ch(&o, ' '); o_qs(&o, p); o_s(&o, " flags "); o_x(&o, (unsigned)flags, 0);
@@ -413,11 +409,20 @@ int close(int fd)
 #define IOC_WRITE 1u
 #endif
 
-/* copy up to n bytes from our own memory without faulting on a bad pointer */
+/* Copy up to n (<= 64) bytes from our own memory without faulting on a bad pointer: the kernel copies them into a
+ * pipe of our own, and a bad pointer comes back as EFAULT. The pipe lives only for this call, so its descriptors can
+ * never be someone else's file. (The first version used process_vm_readv; on the Disc every call failed, device log
+ * 2026-11-14, cause not checked.) Returns the bytes copied or a negative errno. */
 static long safe_read(void *dst, const void *src, size_t n)
 {
-    struct { void *b; size_t l; } lv = { dst, n }, rv = { (void *)src, n };
-    return sc6(SYS_process_vm_readv, cur_pid(), (long)&lv, 1, (long)&rv, 1, 0);
+    int pf[2];
+    long r = sc3(SYS_pipe2, pf, O_CLOEXEC | O_NONBLOCK, 0);
+    if (r < 0) return r;
+    r = sc3(SYS_write, pf[1], src, n);
+    if (r > 0) r = sc3(SYS_read, pf[0], dst, (size_t)r);
+    sc3(SYS_close, pf[0], 0, 0);
+    sc3(SYS_close, pf[1], 0, 0);
+    return r;
 }
 static int alsa_hot(const char *p, unsigned type, unsigned nr)
 {
@@ -432,14 +437,19 @@ int ioctl(int fd, unsigned long req, ...)
     unsigned nr = req & 0xff, type = (req >> 8) & 0xff;
     unsigned size = (req >> 16) & ((1u << IOC_SIZEBITS) - 1), dir = (unsigned)(req >> IOC_DIRSHIFT);
     const char *p = fd_path(fd);
-    if (g_disabled || alsa_hot(p, type, nr)) return real_ioctl(fd, req, arg);
+    if (g_disabled || alsa_hot(p, type, nr) || (!p && !g_main)) return real_ioctl(fd, req, arg);   /* sockets in helpers */
     int known = dir == IOC_NONE || dir == IOC_READ || dir == IOC_WRITE || dir == (IOC_READ | IOC_WRITE);
     unsigned char in[DUMP_MAX], out[DUMP_MAX];
     size_t dn = size < DUMP_MAX ? size : DUMP_MAX;
     long inok = -1, outok = -1;
-    if (known && (dir & IOC_WRITE) && dir != IOC_NONE && dn && arg) inok = safe_read(in, arg, dn);
+    /* FiiO drivers pass structs with plain _IO requests (e.g. /dev/gpio 'G' 122): show 16 bytes behind an argument
+     * that looks like a pointer, before and after the call */
+    int memarg = (!known || dir == IOC_NONE || !size) && (unsigned long)arg >= 0x10000ul;
+    if (memarg) dn = 16;
+    if (dn && arg && (memarg || (known && (dir & IOC_WRITE) && dir != IOC_NONE))) inok = safe_read(in, arg, dn);
     int r = real_ioctl(fd, req, arg); int e = *__errno_location();
-    if (known && (dir & IOC_READ) && dir != IOC_NONE && dn && arg && r >= 0) outok = safe_read(out, arg, dn);
+    if (dn && arg && r >= 0 && (memarg || (known && (dir & IOC_READ) && dir != IOC_NONE))) outok = safe_read(out, arg, dn);
+    if (memarg && inok > 0 && outok == inok) { size_t i = 0; while (i < (size_t)inok && in[i] == out[i]) i++; if (i == (size_t)inok) outok = -1; }
 
     char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
     o_s(&o, "ioctl "); o_i(&o, fd); o_ch(&o, ' '); if (p) o_qs(&o, p); else o_ch(&o, '?');
@@ -451,11 +461,12 @@ int ioctl(int fd, unsigned long req, ...)
         o_s(&o, "',"); o_u(&o, nr); if (dir != IOC_NONE) { o_s(&o, ",sz"); o_u(&o, size); } o_ch(&o, ')');
     }
     if (!known || dir == IOC_NONE || !size) { o_s(&o, " arg "); o_x(&o, (unsigned long)arg, 0); }
-    if (inok > 0) { o_s(&o, " in "); o_hex(&o, in, (size_t)inok); }
-    else if (inok == 0 || (inok < 0 && known && (dir & IOC_WRITE) && dir != IOC_NONE && dn && arg)) o_s(&o, " in ?");
-    if (outok > 0) { o_s(&o, " out "); o_hex(&o, out, (size_t)outok); }
+    if (inok > 0) { o_s(&o, memarg ? " mem " : " in "); o_hex(&o, in, (size_t)inok); }
+    else if (!memarg && (inok == 0 || (inok < 0 && known && (dir & IOC_WRITE) && dir != IOC_NONE && dn && arg))) { o_s(&o, " in ?"); if (inok < 0) o_i(&o, inok); }
+    if (outok > 0) { o_s(&o, memarg ? " mem-after " : " out "); o_hex(&o, out, (size_t)outok); }
     o_err(&o, r, e);
-    emit(RA(), ev, o.n);
+    /* DAC writes are what this is for: never folded away by the rate limit */
+    emit_x(RA(), ev, o.n, p && s_pre(p, "/dev/cs43131"));
     flush(0);
     *__errno_location() = e;
     return r;
@@ -500,7 +511,7 @@ static FILE *fopen_common(void *ra, const char *fn, FILE *(*real)(const char *, 
 {
     FILE *f = real(path, mode); int e = *__errno_location();
     int c = classify(path);
-    if (c != C_NONE && !g_disabled) {
+    if (c != C_NONE && !g_disabled && !quiet_path(c, path)) {
         int rd = mode && mode[0] == 'r' && !(mode[1] == '+' || (mode[1] && mode[2] == '+'));
         if (f) {
             for (unsigned i = 0; i < 32; i++) if (g_files[i].f == f) g_files[i].f = 0;    /* a reused FILE * */
@@ -622,6 +633,7 @@ FILE *popen(const char *cmd, const char *type)
 static void note_exec(void *ra, const char *fn, const char *path, char *const argv[])
 {
     if (g_disabled) return;
+    if (!g_main) { flush(1); return; }   /* a helper's own execs repeat the command the player already logged */
     char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
     o_s(&o, fn); o_ch(&o, ' '); o_qs(&o, path);
     for (int i = 1; argv && argv[i] && i < 16; i++) { o_ch(&o, ' '); o_qs(&o, argv[i]); }
@@ -692,7 +704,8 @@ __attribute__((constructor)) static void trace_init(void)
     long rt[4] = {0}; sc3(SC_CLOCK, 0 /* CLOCK_REALTIME */, rt, 0);
     o_s(&o, "=== trace start "); o_qs(&o, joined); o_s(&o, " ppid "); o_i(&o, sc3(SYS_getppid, 0, 0, 0));
     o_s(&o, " realtime "); o_u(&o, (unsigned long)rt[0]);
-    emit(0, ev, o.n);
+    if (g_main) emit(0, ev, o.n);
+    else { for (size_t i = 0; i < o.n && i < sizeof g_hdr; i++) g_hdr[i] = ev[i]; g_hdr_len = o.n < sizeof g_hdr ? o.n : sizeof g_hdr; }
     if (g_main) {
         /* code mappings, to place the caller addresses */
         static char maps[16384];
