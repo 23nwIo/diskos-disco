@@ -200,7 +200,7 @@ static void lock_drop(void) { __sync_lock_release(&g_lock); }
 /* ---- the log file: on the card (default) or in /tmp (RAM) ---- */
 static char g_file[200], g_dir[200];   /* set by the constructor; until then lines stay in memory */
 static int g_on_card, g_card_seen;
-static volatile int g_in_tail, g_tail_full;   /* card gone after use: every line is written (and synced) at once */
+static volatile int g_in_tail, g_tail_full;   /* power off under way with the card gone: lines go out at once */
 static char g_tail[200];               /* TRACE_TAIL_DIR/diskos-trace-tail-<start time>.log */
 static long fs_type(const char *p)
 {
@@ -227,25 +227,26 @@ static int write_all(int fd, const char *p, size_t n)
 }
 static unsigned count_lines(const char *p, size_t n) { unsigned c = 0; while (n--) if (*p++ == '\n') c++; return c; }
 
-/* Write what is buffered. force: regardless of the one-second pace (exec, exit). */
+/* Write what is buffered. force 1: regardless of the one-second pace (popen, system, exec). force 2: the end is near
+ * (poweroff/reboot/halt command, process exit): with the card gone, write to the tail file. */
 static void flush(int force)
 {
     if (g_disabled || g_stopped) return;
     uint32_t t = now_ms();
     if (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2) return;    /* unlocked peek, re-checked below */
     if (!g_file[0]) return;
-    /* The card log waits for the card. Once it has been written and the card goes away again (the player unmounts it
-     * before poweroff -f; diskOS's "Shut down player" earlier still; USB storage mode), the lines go to a small tail
-     * file in internal flash instead, so the end of a power off is not lost. */
+    /* The card log waits for the card; lines stay in memory while it is away (the player unmounts and remounts it at
+     * start, USB storage mode). Only when the end is near and the card is gone after it had been written (diskOS's
+     * "Shut down player" unmounts it before the player powers off) do they go to a small tail file in internal flash,
+     * so the end of a power off is not lost; from then on every line is written at once. */
     const char *path = g_file, *dir = g_dir;
     unsigned long cap = TRACE_CAP_BYTES;
     int tail = 0;
     if (g_on_card && !card_mounted()) {
-        if (!g_card_seen || !g_tail[0]) return;
-        if (g_tail_full) return;
+        if (!g_card_seen || !g_tail[0] || g_tail_full || (force < 2 && !g_in_tail)) return;
         path = g_tail; dir = 0; cap = TAIL_CAP; tail = 1;
         g_in_tail = 1;
-    } else g_in_tail = 0;
+    }
     if (!lock_take()) return;
     if (g_flushing || (!g_len && !g_dropped) || (!force && t - g_last_flush < 1000 && g_len < BUF_BYTES / 2)) { lock_drop(); return; }
     g_last_flush = t;
@@ -263,7 +264,7 @@ static void flush(int force)
             static const char m[] = "=== trace: tail file limit reached, lines dropped\n";
             if ((unsigned long)size < cap) write_all(fd, m, sizeof m - 1);
             lost = count_lines(out, n) + dropped;
-            g_tail_full = 1; g_in_tail = 0;
+            g_tail_full = 1;
         } else if (size >= 0 && (unsigned long)size >= cap) {
             static const char m[] = "=== trace: file size limit reached, recording stopped\n";
             write_all(fd, m, sizeof m - 1);
@@ -339,6 +340,9 @@ REAL(int, fputc, (int, FILE *))
 REAL(int, vfprintf, (FILE *, const char *, va_list))
 REAL(int, vsnprintf, (char *, size_t, const char *, va_list))
 REAL(int, system, (const char *))
+REAL(int, dup2, (int, int))
+REAL(int, dup3, (int, int, int))
+REAL(void, sync, (void))
 REAL(FILE *, popen, (const char *, const char *))
 REAL(int, execv, (const char *, char *const[]))
 REAL(int, execvp, (const char *, char *const[]))
@@ -502,6 +506,34 @@ int ioctl(int fd, unsigned long req, ...)
     return r;
 }
 
+/* the shell's "echo 1 > /sys/..." opens the file and moves it to fd 1: carry the path along */
+static void dup_path(int from, int to)
+{
+    if (to < 0 || to >= NFD || from == to) return;
+    const char *p = fd_path(from);
+    if (p) copy_path(g_fdpath[to], p); else g_fdpath[to][0] = 0;
+}
+int dup2(int a, int b)
+{
+    if (!get_dup2()) { *__errno_location() = ENOSYS_; return -1; }
+    int r = real_dup2(a, b);
+    if (r >= 0) dup_path(a, b);
+    return r;
+}
+int dup3(int a, int b, int fl)
+{
+    if (!get_dup3()) { *__errno_location() = ENOSYS_; return -1; }
+    int r = real_dup3(a, b, fl);
+    if (r >= 0) dup_path(a, b);
+    return r;
+}
+void sync(void)
+{
+    if (!get_sync()) return;
+    if (!g_disabled) { static const char m[] = "sync"; emit(RA(), m, sizeof m - 1); }
+    real_sync();
+}
+
 static void note_data(void *ra, const char *fn, const char *path, const void *data, size_t n, long r, int e)
 {
     char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
@@ -629,6 +661,14 @@ int fprintf(FILE *f, const char *fmt, ...)
 
 /* the stock player feeds the watchdog once a second: record the first few, then only count */
 static int is_wd_feed(const char *cmd) { return cmd && s_pre(cmd, "cmd_watchdog feed"); }
+/* a command that ends the system: everything up to here must be written, wherever possible */
+static int is_final(const char *c)
+{
+    if (!c) return 0;
+    for (; *c; c++)
+        if (s_pre(c, "poweroff") || s_pre(c, "reboot") || s_pre(c, "halt")) return 1;
+    return 0;
+}
 static void note_cmd(void *ra, const char *fn, const char *cmd, const char *extra)
 {
     if (g_disabled) return;
@@ -643,7 +683,7 @@ int system(const char *cmd)
     if (!get_system()) { *__errno_location() = ENOSYS_; return -1; }
     void *ra = RA();
     note_cmd(ra, "system", cmd, 0);
-    flush(1);
+    flush(is_final(cmd) ? 2 : 1);
     int r = real_system(cmd); int e = *__errno_location();
     if (r != 0 && !g_disabled && !is_wd_feed(cmd)) {
         char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
@@ -657,7 +697,7 @@ FILE *popen(const char *cmd, const char *type)
 {
     if (!get_popen()) { *__errno_location() = ENOSYS_; return 0; }
     note_cmd(RA(), "popen", cmd, type);
-    flush(1);
+    flush(is_final(cmd) ? 2 : 1);
     return real_popen(cmd, type);
 }
 static void note_exec(void *ra, const char *fn, const char *path, char *const argv[])
@@ -666,9 +706,10 @@ static void note_exec(void *ra, const char *fn, const char *path, char *const ar
     if (!g_main) { flush(1); return; }   /* a helper's own execs repeat the command the player already logged */
     char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
     o_s(&o, fn); o_ch(&o, ' '); o_qs(&o, path);
-    for (int i = 1; argv && argv[i] && i < 16; i++) { o_ch(&o, ' '); o_qs(&o, argv[i]); }
+    int fin = is_final(path);
+    for (int i = 1; argv && argv[i] && i < 16; i++) { o_ch(&o, ' '); o_qs(&o, argv[i]); fin |= is_final(argv[i]); }
     emit(ra, ev, o.n);
-    flush(1);
+    flush(fin ? 2 : 1);
 }
 int execv(const char *path, char *const argv[])
 {
@@ -777,4 +818,4 @@ __attribute__((constructor)) static void trace_init(void)
         if (fd >= 0) sc3(SYS_close, fd, 0, 0);
     }
 }
-__attribute__((destructor)) static void trace_fini(void) { flush(1); }
+__attribute__((destructor)) static void trace_fini(void) { flush(2); }

@@ -40,13 +40,13 @@ One file per start of the player, named by its start time on the Disc's clock (t
 `DISKOS_TRACE_FILE`; helper programs inherit it and write into the same file):
 
 - default: `/tmp/sdcard/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log` on the SD card. Lines are held in memory
-  until the card is mounted (the stock player mounts it some seconds after its start). Every `popen`/`system` first
-  writes what is buffered, so everything up to the player's own `umount` of the card is on the card. When the card
-  goes away after it was written (power off: the player runs `umount` and then `poweroff -f`; diskOS's "Shut down
-  player" unmounts it earlier; USB storage mode), the following lines go to
-  `/usr/data/diskos-trace-tail-<YYYYmmdd-HHMMSS>.log` in internal flash instead, at most 64 KiB per start, so the end
-  of a power off is kept. In that state every line is written and fsynced at once (`poweroff -f` does not sync), not
-  once a second.
+  while the card is not mounted (before the first mount, during the stock player's own unmount and remount at start,
+  in USB storage mode) and written once it is back. Every `popen`/`system`/exec first writes what is buffered. Only
+  when the end is near (a `poweroff`/`reboot`/`halt` command, or the process exits) and the card is gone after it had
+  been written (diskOS's "Shut down player" unmounts it before the player powers off) do the held lines go to
+  `/usr/data/diskos-trace-tail-<YYYYmmdd-HHMMSS>.log` in internal flash, at most 64 KiB per start, each line then
+  written and fsynced at once (`poweroff -f` does not sync). In the stock idle power off (device run 2026-11-14) the
+  card stays mounted to the end and no tail file is needed.
 - switch file starting with `tmp`: `/tmp/diskos-trace/player-trace-<YYYYmmdd-HHMMSS>.log`, meant to be RAM (not yet
   checked on the Disc that `/tmp` is a tmpfs: `grep " /tmp " /proc/mounts`); nothing is written to flash or the card,
   and a reboot clears it, so copy the file first.
@@ -84,7 +84,8 @@ What is recorded:
   sockets, no exec of their own (the player's line already has the command), and their `=== trace start` line only
   once they record something. The once-a-second `cmd_watchdog feed` is recorded three times, then not any more.
 - Never recorded: `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/console`, `/dev/pts/*`.
-- `close` of `/dev` files.
+- `close` of `/dev` files; `sync`. `dup2`/`dup3` carry a file's path to the new descriptor, so the shell's
+  `echo 0 > /sys/...` in a helper shows the written value.
 
 The same event more than 4 times in 10 s is counted instead of written: the next one that passes says
 `[+N like this in 10 s]`. `ioctl` calls on `/dev/cs43131*` (the DACs) are always written.
@@ -104,6 +105,21 @@ Not yet with argument bytes, so values are still open. Times are seconds since b
   `_IOW('M',50)`, the volume group, `_IO('M',46)`, then ALSA `/dev/snd/pcmC0D3p` (hw_params, sw_params, start).
   The second `_IOW('M',56)` returns an odd value with errno 2 (both runs).
 - At start: `_IOW('M',62)` / `_IOW('M',64)` and `_IOW('M',70)`; ALSA controls on `/dev/snd/controlC0`.
+
+Second run (2026-11-14/15, build 19ca546, with argument bytes; idle, then the player's own idle power off):
+
+- Volume group at start: `_IOW('M',45)`, `('M',66)` on cs43131 and `('M',47)`, `('M',68)` on cs43131c, all with
+  0x72 (114).
+- Start sequence values: `M,62`=0, `M,64`=0, `M,70`=1, `M,56`=0 and 3, `M,60`=0 and 3 (one call each), `M,52`=2, `M,54`=2,
+  `M,41`=0, `M,50`=0.
+- `/dev/gpio` `'G'` 122: the argument points to a 16-byte buffer that starts with text (`pb20`, `po_add:%`), so the
+  pin is probably named by a string (`pb20`, port B pin 20, for the jack; unverified); the return value is the level.
+- Charger: `/dev/sgm41513` `_IO('I',40)` fills a text buffer (`98\n`, `97\n`), apparently the battery percent.
+- Stock idle power off (thread 1441, about 5 min after start): Bluetooth off (dbus Powered false, `hciconfig hci0
+  down`, kill BT daemons), `ifconfig wlan0 down`, kill `udhcpc`/`wpa_supplicant`/`curl`/`wget`, backlight 0,
+  `/dev/lcd_st77916` `_IO(0xef,1)` (display off), **`killall -9 mq_ui`**, rfkill 0, kill `bluetoothd`/`bluealsa`/
+  `brcm_patchram_plus`, `poweroff -f`. No DAC ioctls, no unmount of the card. The `killall -9 mq_ui` explains a killed
+  diskOS UI before power off.
 - Battery and charger: `/dev/sgm41513` `_IO('I',40)` and `/dev/aw35615` are opened and closed several times a second.
 - Backlight: `fwrite` of the brightness value ("31", "0") to the pwm-backlight sysfs file.
 

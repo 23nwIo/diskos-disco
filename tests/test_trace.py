@@ -48,8 +48,13 @@ int main(void)
     pid_t c = fork();
     if (c == 0) { unsigned char k = 0x11; ioctl(fd, REQ_W, &k); execl("/bin/true", "true", "child-arg", (char *)0); _exit(1); }
     waitpid(c, NULL, 0);
-    const char *um = getenv("TEST_UMOUNT");                         /* the player unmounts the card before poweroff */
+    const char *um = getenv("TEST_UMOUNT");                         /* the card goes away before poweroff */
     if (um) { unsigned char w = 0x77; system(um); ioctl(fd, REQ_W, &w); }
+    const char *rm = getenv("TEST_REMOUNT");                        /* the player remounts the card at start */
+    if (rm) { unsigned char w = 0x66; system(um ? "true" : getenv("TEST_UMOUNT2")); ioctl(fd, REQ_W, &w); system(rm); }
+    int d = dup2(fd, 20);                                           /* the shell's "> file" moves the fd */
+    CHECK(d == 20 && write(20, "dup", 3) == -1);
+    close(20);
     close(fd);
     return 0;
 }
@@ -118,6 +123,7 @@ class TraceTest(unittest.TestCase):
         self.assertIn(' mem 0102030405060708090a0b0c0d0e0f10', mem[0])
         self.assertNotIn('/proc/self/stat"', log)                  # /proc in a helper program
         self.assertIn('close 3 "/dev/full"', log)
+        self.assertIn('write "/dev/full" "dup"', log)
 
     def test_unwritable_log_no_harm(self):
         blocker = self.tmp / 'file'
@@ -154,6 +160,20 @@ class TraceTest(unittest.TestCase):
         self.assertIn(' in 77 ', tail)
         self.assertIn('close 3 "/dev/full"', tail)
         self.assertNotIn('=== trace start', tail)                  # only what the card missed
+
+    @unittest.skipUnless(os.geteuid() == 0, 'needs root for a tmpfs as the card')
+    def test_card_away_for_a_moment_no_tail_file(self):
+        card = self.tmp / 'sd'
+        card.mkdir()
+        log = card / 'diskos-trace' / 'player-trace-20261114-230000.log'
+        subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', str(card)], check=True)
+        try:
+            r = self.run_prog(log, TEST_UMOUNT2=f'umount {card}', TEST_REMOUNT=f'mount -t tmpfs tmpfs {card}')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(' in 66 ', log.read_text())               # held in memory, written once the card is back
+        finally:
+            subprocess.run(['umount', str(card)], check=False)
+        self.assertFalse((self.tmp / 'diskos-trace-tail-20261114-230000.log').exists())
 
     def test_appends_across_runs(self):
         self.assertEqual(self.run_prog().returncode, 0)
