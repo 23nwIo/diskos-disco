@@ -85,7 +85,7 @@ class WatchdogTests(unittest.TestCase):
             with self.subTest(args=args):
                 self.log.unlink(missing_ok=True)
                 p = self.run_wd(*args)
-                self.assertEqual(p.returncode, 255)
+                self.assertEqual(p.returncode, 2)
                 self.assertIn('Usage', p.stderr)
                 self.assertEqual(self.calls(), [])
 
@@ -97,14 +97,14 @@ class WatchdogTests(unittest.TestCase):
 
     def test_ioctl_failure_is_reported(self):
         p = self.run_wd('feed', env=dict(self.env, WD_FAIL=f'{FEED:x}'))
-        self.assertEqual(p.returncode, 255)
+        self.assertEqual(p.returncode, 1)
         self.assertIn('feed failed', p.stderr)
 
     def test_missing_device(self):
         self.dev.unlink()
         try:
             p = self.run_wd('feed')
-            self.assertEqual(p.returncode, 255)
+            self.assertEqual(p.returncode, 1)
             self.assertIn('open', p.stderr)
         finally:
             self.dev.write_bytes(b'')
@@ -138,7 +138,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_run_aborts_on_other_start_errors(self):
         p = self.run_wd('run', '1000', '50', env=dict(self.env, WD_FAIL=f'{START:x}'))
-        self.assertEqual(p.returncode, 255)
+        self.assertEqual(p.returncode, 1)
         self.assertNotIn(FEED, [r for r, _ in self.calls()])
 
 

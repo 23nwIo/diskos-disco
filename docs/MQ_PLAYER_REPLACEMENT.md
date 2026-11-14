@@ -177,8 +177,9 @@ bottleneck, because almost every step touches hardware.
   of the stock `libhardware2.so`. An own player links this file directly.
 - `main.c`: the command line tool `diskos-watchdog` with the stock commands (`start <ms>`, `stop`, `feed`, `reset`,
   `-h`) plus `run <ms> [<every_ms>]`, which arms, feeds until SIGTERM/SIGINT/SIGHUP and then disarms (for headless
-  use). It prints nothing on success. Exit status 0 on success and 255 on any failure, like the stock tool; its only
-  caller (mq_player, through `popen`/`pclose`, feeding once per second) ignores it anyway. The kernel refuses `start`
+  use). It prints nothing on success. Exit status 0 / 1 (device error) / 2 (usage); the stock tool returns 255 for
+  every failure, which stays compatible because every failure is non-zero and its only caller (mq_player, through
+  `popen`/`pclose`, feeding once per second) ignores the status. The kernel refuses `start`
   while the watchdog runs (EPERM, dmesg `WDT: watchdog is running !`, device-checked 2026-11-14, same for the stock
   tool); `run` then keeps feeding the running watchdog. `feed` was device-checked with exit 0.
 - Build: `CROSS=<toolchain>/bin/mipsel-linux-musl- build/build-watchdog.sh` (static, about 42 KB). Host tests:
