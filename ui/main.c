@@ -25,6 +25,7 @@
 #include <sys/ioctl.h>
 #include <poll.h>          /* main loop rest: sleep until a touch, player news or the next timer */
 #include "usbdrive.h"
+#include "usbsync.h"
 #include <sys/mount.h>     /* mount(): direct SD mount fallback when the player's uevent listener won't (V2.40) */
 #include <sys/stat.h>
 #include <dirent.h>      /* mkdir() for the SD mount point */
@@ -4269,8 +4270,9 @@ int main(int argc, char **argv){
         {   /* Idle power-off (issue #17): only "idle" when playing music locally and nothing is playing. A working mode
              * other than Playback (USB DAC, Bluetooth DAC, BT streaming, AirPlay, USB storage) is the Disc in use
              * without a song of its own moving, and a Disc on external power (plugged in, or charging) is on purpose:
-             * neither powers off. */
-            int busy = playing || ma_playing() || discshelf_busy() || ui_get_source_mode() != 0 || usage_charging() || usage_plugged_in() == 1;
+             * neither powers off. Nor does a USB drive import/export while it counts or copies (no touch for minutes is
+             * normal there, and a power-off would cut the copy short). */
+            int busy = playing || ma_playing() || discshelf_busy() || usbsync_busy() || ui_get_source_mode() != 0 || usage_charging() || usage_plugged_in() == 1;
             power_tick(last_activity, busy);
         }   /* Sendspin: AirPlay playback the player may not report */   /* AFTER all input is consumed (a pending touch must win the race): SD-safe shutdown, diskOS idle power-off, temperature notice */
         int in_saver = (screen_current()==SCR_SAVER);
