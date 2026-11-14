@@ -77,29 +77,6 @@ static int try_mount(const char *dev, ud_vol_t *v){
     ud_log("%s: no file system diskOS can mount (last error: %s)", dev, strerror(errno));
     rmdir(v->mnt); return 0;
 }
-/* Is something mounted at `mnt` right now? (/proc/mounts, field 2) */
-static int is_mounted(const char *mnt){
-    FILE *m = fopen("/proc/mounts", "r"); if(!m) return 1;          /* can't tell: assume yes */
-    char l[512], dev[256], dir[256]; int yes = 0;
-    while(!yes && fgets(l, sizeof l, m)) if(sscanf(l, "%255s %255s", dev, dir) == 2 && !strcmp(dir, mnt)) yes = 1;
-    fclose(m);
-    return yes;
-}
-/* Device test 2026-11-14 (card reader, ext4 on sdb): the kernel logged our mount, yet a moment later /proc/mounts had
- * no /dev/sdb and /tmp/usbdrive/sdb was gone ("Can't open folder"). Most likely the stock firmware's own hotplug
- * handling for a new /dev/sd* (unmount, remove the mount point, `mount -o iocharset=utf8`, which ext4 rejects - its
- * SD card routine does exactly that) landed after ours. Unverified; the log records it. Mount it again, a few times
- * at most so we never fight the firmware in a loop. */
-#define UD_REMOUNT_MAX 3
-static int remount_lost(ud_vol_t *v){
-    char path[32]; snprintf(path, sizeof path, "/dev/%.15s", v->dev);
-    mkdir(UD_ROOT, 0755); mkdir(v->mnt, 0755);
-    const unsigned long fl = MS_NOSUID | MS_NODEV | MS_NOEXEC | (v->rw ? 0 : MS_RDONLY);
-    int win = strcmp(v->fstype, "ext4") && strcmp(v->fstype, "xfs");
-    if((win && mount(path, v->mnt, v->fstype, fl, "iocharset=utf8") == 0) || mount(path, v->mnt, v->fstype, fl, NULL) == 0) return 1;
-    ud_log("%s: mounting again failed: %s", v->dev, strerror(errno));
-    return 0;
-}
 static void drop(ud_vol_t *v){
     if(umount(v->mnt) != 0){
         int e = errno;
@@ -126,19 +103,6 @@ static void *worker(void *arg){
         for(int i = 0; i < g_nfailed; ){
             int here = 0; for(int k = 0; k < n; k++) if(!strcmp(d[k].name, g_failed[i])) here = 1;
             if(here) i++; else memmove(g_failed[i], g_failed[--g_nfailed], sizeof g_failed[0]);
-        }
-        for(int i = 0; i < g_nvol; ){                                     /* still there, but unmounted by someone else */
-            if(is_mounted(g_vol[i].mnt)){ i++; continue; }
-            ud_log("%s: no longer mounted at %s (unmounted by the firmware?)", g_vol[i].dev, g_vol[i].mnt);
-            log_sd_mounts();
-            if(g_vol[i].remounts < UD_REMOUNT_MAX && remount_lost(&g_vol[i])){
-                g_vol[i].remounts++; ud_log("%s: mounted again (%d)", g_vol[i].dev, g_vol[i].remounts);
-                changed = 1; i++; continue;
-            }
-            ud_log("%s: giving up on it", g_vol[i].dev);
-            rmdir(g_vol[i].mnt);
-            if(g_nfailed < UD_MAX) snprintf(g_failed[g_nfailed++], sizeof g_failed[0], "%.15s", g_vol[i].dev);   /* until replugged */
-            g_vol[i] = g_vol[--g_nvol]; changed = 1;
         }
         pthread_mutex_unlock(&g_mu);
         for(int k = 0; k < n && !atomic_load(&g_stop_req); k++){             /* new */
