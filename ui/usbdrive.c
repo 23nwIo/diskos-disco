@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <time.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -47,17 +48,60 @@ static void ud_log(const char *fmt, ...){
     va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
     fputc('\n', f); fclose(f);
 }
-static void log_sd_mounts(void){                     /* who else mounted a /dev/sd* (the stock firmware's own attempt) */
+static void log_sd_mounts(void){                     /* ours, and any /dev/sd* the player mounted (/tmp/udisk<N>) */
     FILE *m = fopen("/proc/mounts", "r"); if(!m) return;
     char l[512];
-    while(fgets(l, sizeof l, m)) if(!strncmp(l, "/dev/sd", 7)){ l[strcspn(l, "\n")] = 0; ud_log("  mounts: %s", l); }
+    while(fgets(l, sizeof l, m)) if(!strncmp(l, "/dev/sd", 7) || strstr(l, UD_ROOT "/")){ l[strcspn(l, "\n")] = 0; ud_log("  mounts: %s", l); }
     fclose(m);
 }
 
 /* ---- the worker: mounts what appears, drops what goes, unmounts everything on stop ---------------------------- */
 static int failed_has(const char *dev){ for(int i = 0; i < g_nfailed; i++) if(!strcmp(g_failed[i], dev)) return 1; return 0; }
+/* Why diskOS mounts through its own device node (mq_player V2.57, disassembled 2026-11-14):
+ * every uevent SUBSYSTEM=scsi_device ACTION=add (one per LUN; a card reader sends four) runs the player's
+ * on_usb_host_add -> mount_storage_dev(0). That first calls unmount_udisk(), which walks /proc/mounts and, for
+ * EVERY line whose source contains "/dev/sd" (strstr), runs `umount <mountpoint>` (up to 5 tries) and then
+ * `rm -rf <mountpoint>`; then mount_udisk() mounts each /dev/sd* itself at /tmp/udisk<N> with
+ * `mount -o iocharset=utf8` (ext4 rejects that, so the player removes its folder again). A drive diskOS had
+ * mounted from /dev/sdb was therefore unmounted and its folder deleted by the next LUN's event.
+ * /proc/mounts shows the source path exactly as passed to mount(2), so mounting from a node of our own
+ * (UD_ROOT/.blk/<dev>, same major:minor) keeps our volumes out of that walk. */
+#define UD_DEVDIR UD_ROOT "/.blk"     /* never contains "/dev/sd" */
+static int own_node(const char *dev, char *out, size_t cap){
+    char sp[64], buf[32]; unsigned ma, mi;
+    snprintf(out, cap, "/dev/%.15s", dev);                                   /* fallback: the stock node */
+    snprintf(sp, sizeof sp, "/sys/class/block/%.15s/dev", dev);
+    FILE *f = fopen(sp, "r");
+    if(!f){ ud_log("%s: no %s, mounting from /dev", dev, sp); return 0; }
+    int ok = fgets(buf, sizeof buf, f) && sscanf(buf, "%u:%u", &ma, &mi) == 2;
+    fclose(f);
+    if(!ok) return 0;
+    char np[48]; snprintf(np, sizeof np, UD_DEVDIR "/%.15s", dev);
+    mkdir(UD_ROOT, 0755); mkdir(UD_DEVDIR, 0700);
+    unlink(np);                                                              /* a stale node from an earlier drive */
+    if(mknod(np, S_IFBLK | 0600, makedev(ma, mi)) != 0){ ud_log("%s: mknod %s failed: %s, mounting from /dev", dev, np, strerror(errno)); return 0; }
+    snprintf(out, cap, "%s", np);
+    return 1;
+}
+static void unlink_own(const char *dev){ char np[48]; snprintf(np, sizeof np, UD_DEVDIR "/%.15s", dev); unlink(np); }
+/* The player may have won the race and mounted a FAT/exFAT/NTFS drive itself (read-write, at /tmp/udisk<N>).
+ * The kernel then refuses our read-only mount of the same device (EBUSY), so take it back from the player. */
+static void release_player_mount(const char *dev){
+    char want[32]; snprintf(want, sizeof want, "/dev/%.15s", dev);
+    FILE *m = fopen("/proc/mounts", "r"); if(!m) return;
+    char l[512], src[256], dir[256], dirs[4][256]; int n = 0;
+    while(fgets(l, sizeof l, m) && n < 4)
+        if(sscanf(l, "%255s %255s", src, dir) == 2 && !strcmp(src, want) && !strncmp(dir, "/tmp/udisk", 10)) snprintf(dirs[n++], sizeof dirs[0], "%s", dir);
+    fclose(m);
+    for(int i = 0; i < n; i++){
+        int rc = umount(dirs[i]);
+        ud_log("%s: the player had mounted it at %s; unmount %s%s", dev, dirs[i], rc == 0 ? "ok" : "failed: ", rc == 0 ? "" : strerror(errno));
+        if(rc == 0) rmdir(dirs[i]);
+    }
+}
 static int try_mount(const char *dev, ud_vol_t *v){
-    char path[32]; snprintf(path, sizeof path, "/dev/%.15s", dev);
+    char path[48]; own_node(dev, path, sizeof path);
+    release_player_mount(dev);
     snprintf(v->mnt, sizeof v->mnt, UD_ROOT "/%.15s", dev);
     mkdir(UD_ROOT, 0755); mkdir(v->mnt, 0755);
     const unsigned long fl = MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC;
@@ -65,7 +109,7 @@ static int try_mount(const char *dev, ud_vol_t *v){
     if(udc_ext_label(path, label, sizeof label)){
         if(mount(path, v->mnt, "ext4", fl, NULL) == 0){ snprintf(v->fstype, sizeof v->fstype, "ext4"); snprintf(v->label, sizeof v->label, "%s", label); return 1; }
         ud_log("%s: ext superblock, mount failed: %s", dev, strerror(errno));
-        rmdir(v->mnt); return 0;
+        rmdir(v->mnt); unlink_own(dev); return 0;
     }
     static const char *const T[] = { "exfat", "vfat", "ntfs", "xfs" };
     for(unsigned k = 0; k < sizeof T / sizeof T[0]; k++){
@@ -75,7 +119,7 @@ static int try_mount(const char *dev, ud_vol_t *v){
         }
     }
     ud_log("%s: no file system diskOS can mount (last error: %s)", dev, strerror(errno));
-    rmdir(v->mnt); return 0;
+    rmdir(v->mnt); unlink_own(dev); return 0;
 }
 static void drop(ud_vol_t *v){
     if(umount(v->mnt) != 0){
@@ -84,6 +128,7 @@ static void drop(ud_vol_t *v){
         else ud_log("%s: busy (%s), detached", v->dev, strerror(e));
     }
     rmdir(v->mnt);
+    unlink_own(v->dev);
 }
 static void *worker(void *arg){
     (void)arg;
@@ -224,7 +269,7 @@ int usbdrive_set_rw(const char *dev, int rw){
     pthread_mutex_lock(&g_mu);
     for(int i = 0; i < g_nvol; i++){
         if(strcmp(g_vol[i].dev, dev)) continue;
-        char path[32]; snprintf(path, sizeof path, "/dev/%s", dev);
+        char path[48]; snprintf(path, sizeof path, UD_DEVDIR "/%.15s", dev);      /* ignored by MS_REMOUNT; kept consistent */
         if(!rw) sync();
         unsigned long fl = MS_REMOUNT | MS_NOSUID | MS_NODEV | MS_NOEXEC | (rw ? 0 : MS_RDONLY);
         int win = strcmp(g_vol[i].fstype, "ext4") && strcmp(g_vol[i].fstype, "xfs");
