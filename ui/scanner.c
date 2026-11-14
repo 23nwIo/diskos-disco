@@ -1619,6 +1619,10 @@ static void walk(const char *dir, int depth){
             if(wl<=0 || wl>=(int)sizeof path || lstat(path,&ds)!=0 || S_ISDIR(ds.st_mode)) g_prune_blocked = 1;
             continue;
         }
+        /* USB import/export (usbsync.c) keeps replaced files in _changedN/ and its logs in synclog/ at the card's root:
+         * not part of the library (a backup would show every replaced song twice) */
+        if(depth == 0 && (!strcmp(e->d_name, "synclog") ||
+           (!strncmp(e->d_name, "_changed", 8) && e->d_name[8] >= '0' && e->d_name[8] <= '9'))) continue;
         int w = snprintf(path,sizeof path,"%s/%s",dir,e->d_name);
         if(w<0 || w>=(int)sizeof path){ g_skipped++; g_prune_blocked=1; continue; }   /* overlong path unknowable -> can't preserve its row -> block the prune */
         struct stat st;

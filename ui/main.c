@@ -24,6 +24,7 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <poll.h>          /* main loop rest: sleep until a touch, player news or the next timer */
+#include "usbdrive.h"
 #include <sys/mount.h>     /* mount(): direct SD mount fallback when the player's uevent listener won't (V2.40) */
 #include <sys/stat.h>
 #include <dirent.h>      /* mkdir() for the SD mount point */
@@ -799,6 +800,10 @@ int ui_set_source_mode(int mode){
     if(modes_output_route()==OUT_USB){
         if(mode==0)return modes_output_mode_switch(OUT_INTERNAL);
         ui_toast("Return to playback before changing USB mode");return -1;
+    }
+    if(mode != 0 && mode != 6 && usbdrive_state() != UD_OFF){   /* every other mode drives the USB port: eject a USB drive first */
+        if(usbdrive_state() == UD_STOPPING || usbdrive_stop() != 0){ ui_toast("Eject the USB drive first"); return -1; }
+        ui_toast("USB drive ejected - switch again"); return -1;
     }
     if(mode != 5) ma_mode_leaving();                    /* MA Sendspin rides on AirPlay: another mode turns it off */
     if(mode != 6) radio_mode_leaving();                 /* the radio rides on the DLNA mode: another mode ends it */

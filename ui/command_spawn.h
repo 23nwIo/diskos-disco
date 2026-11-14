@@ -7,6 +7,8 @@
 int command_spawn(pid_t *pid, char *const argv[]);
 /* The same, with stdout dup'd from out_fd (-1: inherited) and pass_fd handed to the child as fd 3 (-1: none). */
 int command_spawn_io(pid_t *pid, char *const argv[], int out_fd, int pass_fd);
+/* stdout and stderr both into out_fd (a tool whose error lines the caller reports) */
+int command_spawn_out(pid_t *pid, char *const argv[], int out_fd);
 /* Worker-thread only: never call from LVGL. Kills timed-out commands and reaps
  * the direct child before returning; stuck kernel I/O keeps this worker busy. */
 int command_wait(char *const argv[], int timeout_ms);

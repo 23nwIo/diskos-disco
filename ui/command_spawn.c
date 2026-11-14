@@ -11,7 +11,10 @@
 #include <stdlib.h>
 extern char **environ;
 int command_spawn(pid_t *pid, char *const argv[]){ return command_spawn_io(pid, argv, -1, -1); }
-int command_spawn_io(pid_t *pid, char *const argv[], int out_fd, int pass_fd){
+static int spawn_fds(pid_t *pid, char *const argv[], int out_fd, int pass_fd, int err_too);
+int command_spawn_io(pid_t *pid, char *const argv[], int out_fd, int pass_fd){ return spawn_fds(pid, argv, out_fd, pass_fd, 0); }
+int command_spawn_out(pid_t *pid, char *const argv[], int out_fd){ return spawn_fds(pid, argv, out_fd, -1, 1); }
+static int spawn_fds(pid_t *pid, char *const argv[], int out_fd, int pass_fd, int err_too){
     posix_spawn_file_actions_t fa;
     posix_spawnattr_t at;
     int rc=posix_spawn_file_actions_init(&fa);
@@ -20,6 +23,7 @@ int command_spawn_io(pid_t *pid, char *const argv[], int out_fd, int pass_fd){
     if(rc){posix_spawn_file_actions_destroy(&fa);return rc;}
     rc=posix_spawn_file_actions_addopen(&fa,0,"/dev/null",O_RDONLY,0);
     if(!rc && out_fd>=0)rc=posix_spawn_file_actions_adddup2(&fa,out_fd,1);        /* stdout into the caller's pipe */
+    if(!rc && out_fd>=0 && err_too)rc=posix_spawn_file_actions_adddup2(&fa,out_fd,2);   /* and stderr with it */
     if(!rc && pass_fd>=0){                                                         /* handed over as fd 3 */
         if(pass_fd==3){ rc=posix_spawn_file_actions_adddup2(&fa,3,255);            /* dup2(3,3) would keep close-on-exec */
                         if(!rc)rc=posix_spawn_file_actions_adddup2(&fa,255,3); }

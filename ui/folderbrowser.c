@@ -13,6 +13,9 @@
 #include "musicdb.h"
 #include "scanner.h"
 #include "multipick.h"
+#include "usbdrive.h"
+#include "usbsync.h"
+#include "usbdrive_core.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +66,12 @@
 #define FB_K_AUDIO 0
 #define FB_K_ISO   1     /* SACD image the library has IS_ISO rows for: opens its tracks */
 #define FB_K_CUE   2     /* .cue sheet: opens the tracks of the file(s) it names */
+/* USB drive rows (usbdrive.h): never real files, never picked, no file menu */
+#define FB_K_USBROOT 3   /* "USB drive" at the top of the SD root: opens the drive list */
+#define FB_K_VOL     4   /* a mounted volume in the drive list (g_vols[] by row index) */
+#define FB_K_INFO    5   /* "Looking for a drive..." / "No drive found": not tappable */
+#define FB_K_EJECT   6   /* "Eject" at the end of the drive list */
+#define FB_USB "@usb"    /* g_dir of the drive list */
 typedef struct {
     char name[FB_NAMELEN];
     int  is_dir;
@@ -76,6 +85,19 @@ static lv_obj_t   *g_list;
 static lv_obj_t   *g_title;
 static lv_timer_t *g_fb_fill;              /* incremental row builder (avoids a long open stall) */
 static int         g_fb_i;                 /* next entry index to render */
+static ud_vol_t    g_vols[UD_MAX];         /* the drive list's volumes, by row */
+static char        g_info_detail[64];      /* the drive list's status row */
+
+static int fb_at_usb(void){ return !strcmp(g_dir, FB_USB); }
+static int fb_in_usb(void){ return !strncmp(g_dir, UD_ROOT "/", sizeof UD_ROOT); }   /* inside a mounted volume */
+/* the top of the tree g_dir is in: the SD root, or the volume's mount point (*on_vol = 1) */
+static const char *fb_root(char *buf, size_t cap, int *on_vol){
+    ud_vol_t v;
+    if(on_vol) *on_vol = 0;
+    if(fb_in_usb() && usbdrive_find(g_dir, &v) >= 0){ snprintf(buf, cap, "%s", v.mnt); if(on_vol) *on_vol = 1; return buf; }
+    return FB_ROOT;
+}
+static int fb_is_virtual(int i){ return g_ent[i].kind >= FB_K_USBROOT; }
 
 /* audio files diskOS can play - mirror scanner.c is_audio() exactly. */
 static int fb_has_ext(const char *name, const char *ext){
@@ -171,10 +193,45 @@ static void fb_scan_leased(void){
     if(g_nent > 1) qsort(g_ent, g_nent, sizeof g_ent[0], fb_cmp);
 }
 
+static int fb_grow(int need){
+    if(need <= g_ent_cap) return 1;
+    fb_entry_t *ne = realloc(g_ent, (size_t)(need < 128 ? 128 : need) * sizeof *g_ent);
+    if(!ne) return 0;
+    g_ent = ne; g_ent_cap = need < 128 ? 128 : need; return 1;
+}
+static void fb_virtual(const char *name, int kind){
+    if(!fb_grow(g_nent + 1)) return;
+    fb_entry_t *e = &g_ent[g_nent++];
+    snprintf(e->name, sizeof e->name, "%s", name); e->is_dir = 0; e->kind = kind;
+}
+/* the drive list: the mounted volumes, a status row while there are none, then Eject */
+static void fb_scan_usb(void){
+    fb_fill_stop(); g_nent = 0;
+    int n = usbdrive_count();
+    for(int i = 0; i < n && i < UD_MAX; i++){
+        if(!usbdrive_get(i, &g_vols[i])) break;
+        char nm[64]; fb_virtual(usbdrive_name(&g_vols[i], nm, sizeof nm), FB_K_VOL);
+    }
+    if(!g_nent){
+        int late = usbdrive_on_ms() > 10000;
+        snprintf(g_info_detail, sizeof g_info_detail, "%s", late ? "Check the cable, or replug" : "Plug in a stick, reader or Disc");
+        fb_virtual(late ? "No drive found" : "Looking for a drive...", FB_K_INFO);
+    }
+    fb_virtual("Eject", FB_K_EJECT);
+}
 static void fb_scan(void){
+    if(fb_at_usb()){ fb_scan_usb(); return; }
+    if(fb_in_usb()){ fb_scan_leased(); return; }     /* a USB volume: not the SD card, no SD lease */
     if(!sd_io_begin()){ fb_fill_stop(); g_nent = 0; return; }
     fb_scan_leased();
     sd_io_end();
+    if(!strcmp(g_dir, FB_ROOT) && (g_nent || usbdrive_state() == UD_ON)){   /* the card is there: USB drive goes first */
+        if(fb_grow(g_nent + 1)){
+            memmove(g_ent + 1, g_ent, sizeof *g_ent * (size_t)g_nent);
+            snprintf(g_ent[0].name, sizeof g_ent[0].name, "USB drive"); g_ent[0].is_dir = 0; g_ent[0].kind = FB_K_USBROOT;
+            g_nent++;
+        }
+    }
 }
 static const char *fb_basename(const char *p){
     const char *s = strrchr(p, '/');
@@ -225,7 +282,7 @@ static int fb_pick_count(void){ return g_nent; }
 static int fb_pick_full(int i, char *out, int cap){
     int n = snprintf(out, (size_t)cap, "%s/%s", g_dir, g_ent[i].name); return n > 0 && n < cap;
 }
-static int fb_pickable(int i){ return i >= 0 && i < g_nent && (g_ent[i].is_dir || fb_is_audio(g_ent[i].name)); }
+static int fb_pickable(int i){ return i >= 0 && i < g_nent && !fb_is_virtual(i) && !fb_in_usb() && (g_ent[i].is_dir || fb_is_audio(g_ent[i].name)); }
 /* The ticked entries as exact songs, in file order: a folder is every song under it, a file is that file's song(s)
  * (each CUE/ISO sub-track once). -1 when the list couldn't be built completely. */
 static int fb_pick_collect(const uint8_t *sel, int cap, int **out){
@@ -260,6 +317,7 @@ static void fb_ztitle_size(lv_event_t *e){
 }
 static void fb_add_row(int i){
         fb_entry_t *en = &g_ent[i];
+        char fmt[64] = "";                                              /* the detail line (kept: LONG_DOT rewrites a label's text) */
         lv_obj_t *r = lv_button_create(g_list);
         lv_obj_remove_style_all(r);
         lv_obj_set_size(r, FB_ROW_W, FB_ROW_H);
@@ -274,7 +332,8 @@ static void fb_add_row(int i){
         lv_obj_add_event_cb(r, fb_long_cb, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)i);
 
         lv_obj_t *ic = lv_label_create(r);
-        lv_label_set_text(ic, en->is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_AUDIO);
+        static const char *const VICON[] = { LV_SYMBOL_USB, LV_SYMBOL_DRIVE, LV_SYMBOL_REFRESH, LV_SYMBOL_EJECT };
+        lv_label_set_text(ic, en->kind >= FB_K_USBROOT ? VICON[en->kind - FB_K_USBROOT] : en->is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_AUDIO);
         lv_obj_set_pos(ic, 12, 17);
         lv_obj_set_style_text_font(ic, TF(UI_16), 0);
         lv_obj_set_style_text_color(ic, en->is_dir ? ui_current_accent() : TC(TEXT_DISABLED), 0);
@@ -294,9 +353,20 @@ static void fb_add_row(int i){
             lv_obj_set_style_text_font(ch, TF(UI_14), 0);
             lv_obj_set_style_text_color(ch, TC(TEXT_DISABLED), 0);
         } else {                                                    /* detail: the format */
-            const char *e = strrchr(en->name, '.'); char fmt[8] = "";
-            if(e){ int k = 0; for(e++; *e && k < 6; e++) fmt[k++] = (char)((*e >= 'a' && *e <= 'z') ? *e - 32 : *e); fmt[k] = 0; }
+            const char *e = strrchr(en->name, '.');
+            if(en->kind == FB_K_USBROOT){
+                int n = usbdrive_count();
+                if(usbdrive_state() != UD_ON) snprintf(fmt, sizeof fmt, "Copy music from or to a drive");
+                else if(n) snprintf(fmt, sizeof fmt, "%d drive%s connected", n, n == 1 ? "" : "s");
+                else snprintf(fmt, sizeof fmt, "Looking for a drive");
+            } else if(en->kind == FB_K_VOL){
+                char sz[24]; udc_fmt_size(g_vols[i].bytes, sz, sizeof sz);
+                snprintf(fmt, sizeof fmt, "%s \xC2\xB7 %s \xC2\xB7 %s", g_vols[i].fstype, sz, g_vols[i].dev);
+            } else if(en->kind == FB_K_INFO) snprintf(fmt, sizeof fmt, "%s", g_info_detail);
+            else if(en->kind == FB_K_EJECT) snprintf(fmt, sizeof fmt, "Unmount the drives");
+            else if(e){ int k = 0; for(e++; *e && k < 6; e++) fmt[k++] = (char)((*e >= 'a' && *e <= 'z') ? *e - 32 : *e); fmt[k] = 0; }
             lv_obj_t *dt = lv_label_create(r);
+            if(en->kind >= FB_K_USBROOT){ lv_label_set_long_mode(dt, LV_LABEL_LONG_DOT); lv_obj_set_size(dt, FB_ROW_W - 60, lv_font_get_line_height(TH_F_DETAIL)); }
             lv_label_set_text(dt, fmt[0] ? fmt : "Audio");
             lv_obj_set_pos(dt, 40, 30);
             lv_obj_set_style_text_font(dt, TH_F_DETAIL, 0);
@@ -315,8 +385,9 @@ static void fb_add_row(int i){
                 lv_obj_t *o = lv_obj_get_child(r, (int32_t)k);
                 if(o == ic || o == nm || !lv_obj_check_type(o, &lv_label_class)) continue;
                 if(en->is_dir){ lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); continue; }
-                char lo[16]; snprintf(lo, sizeof lo, "%s", lv_label_get_text(o)); for(char *c = lo; *c; c++) if(*c >= 'A' && *c <= 'Z') *c += 32;
+                char lo[64]; snprintf(lo, sizeof lo, "%s", en->kind >= FB_K_USBROOT ? fmt : lv_label_get_text(o)); for(char *c = lo; *c; c++) if(*c >= 'A' && *c <= 'Z') *c += 32;
                 lv_label_set_text(o, lo); lv_obj_set_style_text_font(o, zune_font(&font_zune_regular_16), 0);
+                if(en->kind >= FB_K_USBROOT) lv_obj_set_size(o, FB_ROW_W - 52, lv_font_get_line_height(zune_font(&font_zune_regular_16)));   /* one line, "..." */
                 lv_obj_set_style_text_color(o, TC(TEXT_MUTED), 0); lv_obj_set_pos(o, 42, 28); kit_keep(o);
             }
             if(en->is_dir){ lv_obj_t *d = lv_label_create(r); kit_keep(d); lv_label_set_text(d, "folder");
@@ -326,11 +397,13 @@ static void fb_add_row(int i){
         }
 }
 /* Zune: the path under the header ("sd card › music › aurora") and "play folder" beside it */
-static lv_obj_t *g_zcrumb;
+static lv_obj_t *g_zcrumb, *g_zplay;
 static void fb_play(const char *name);
 static void fb_zcrumb(void){
     if(!g_zcrumb) return;
-    const char *rel = g_dir + strlen(FB_ROOT); char b[160]; size_t n = (size_t)snprintf(b, sizeof b, "sd card");
+    char rb[64], vn[64]; const char *root = fb_root(rb, sizeof rb, NULL); ud_vol_t v;
+    const char *rel = fb_at_usb() ? "" : g_dir + strlen(root); char b[160];
+    size_t n = (size_t)snprintf(b, sizeof b, "%s", fb_at_usb() ? "usb drive" : fb_in_usb() && usbdrive_find(g_dir, &v) >= 0 ? usbdrive_name(&v, vn, sizeof vn) : "sd card");
     while(*rel == '/') rel++;
     const char *seg = rel;
     while(seg && *seg && n + 8 < sizeof b){
@@ -340,6 +413,7 @@ static void fb_zcrumb(void){
     }
     for(char *c = b; *c; c++) if(*c >= 'A' && *c <= 'Z') *c += 32;
     lv_label_set_text(g_zcrumb, b);
+    if(g_zplay){ if(fb_at_usb() || fb_in_usb()) lv_obj_add_flag(g_zplay, LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(g_zplay, LV_OBJ_FLAG_HIDDEN); }   /* drives don't play */
 }
 static void fb_zplay_cb(lv_event_t *e){
     (void)e;
@@ -359,8 +433,11 @@ static void fb_rebuild(void){
     mp_exit(&g_fmp);                                     /* another folder: picking ends */
     if(g_title){
         int at_root = (strcmp(g_dir, FB_ROOT) == 0);
-        theme_title_text(g_title, at_root ? "Files" : fb_basename(g_dir));
-        if(th_zune()){ char lo[128]; snprintf(lo, sizeof lo, "%s", at_root ? "folders" : fb_basename(g_dir));
+        char rb[64], vn[64]; ud_vol_t v; const char *t = at_root ? "Files" : fb_basename(g_dir);
+        if(fb_at_usb()) t = "USB drive";
+        else if(fb_in_usb() && !strcmp(g_dir, fb_root(rb, sizeof rb, NULL)) && usbdrive_find(g_dir, &v) >= 0) t = usbdrive_name(&v, vn, sizeof vn);
+        theme_title_text(g_title, t);
+        if(th_zune()){ char lo[128]; snprintf(lo, sizeof lo, "%s", at_root ? "folders" : t);
                        for(char *c = lo; *c; c++) if(*c >= 'A' && *c <= 'Z') *c += 32; lv_label_set_text(g_title, lo); fb_zcrumb(); }
     }
     if(!g_list) return;
@@ -369,6 +446,12 @@ static void fb_rebuild(void){
     azjump_show(&g_faz, g_nent > 12);                    /* worth it only once the folder is longer than a screen or two */
 
     /* opendir failed at scan time -> either no SD or an unreadable dir. */
+    if(g_nent == 0 && fb_in_usb()){
+        DIR *probe = opendir(g_dir);
+        if(probe) closedir(probe);
+        fb_empty_label(probe ? "Empty folder" : "Can't open folder");
+        return;
+    }
     if(g_nent == 0){
         int lease = sd_io_begin();
         DIR *probe = lease ? opendir(g_dir) : NULL;
@@ -409,11 +492,13 @@ static void fb_descend(const char *name){
  * parent is always a valid ancestor >= FB_ROOT. */
 static void fb_ascend(void){
     if(strcmp(g_dir, FB_ROOT) == 0){ screen_back(); return; }
-    char *slash = strrchr(g_dir, '/');
-    if(!slash || slash == g_dir || (size_t)(slash - g_dir) < strlen(FB_ROOT)){
-        snprintf(g_dir, sizeof g_dir, "%s", FB_ROOT);
-    } else {
-        *slash = 0;
+    char rb[64]; int on_vol; const char *root = fb_root(rb, sizeof rb, &on_vol);
+    if(fb_at_usb()) snprintf(g_dir, sizeof g_dir, "%s", FB_ROOT);            /* the drive list -> the SD root */
+    else if(fb_in_usb() && (!strcmp(g_dir, root) || !on_vol)) snprintf(g_dir, sizeof g_dir, FB_USB);   /* a volume's top (or a vanished volume) -> the drive list */
+    else {
+        char *slash = strrchr(g_dir, '/');
+        if(!slash || slash == g_dir || (size_t)(slash - g_dir) < strlen(root)) snprintf(g_dir, sizeof g_dir, "%s", root);
+        else *slash = 0;
     }
     fb_scan();
     fb_rebuild();
@@ -463,6 +548,14 @@ static void fb_row_cb(lv_event_t *e){
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     if(i < 0 || i >= g_nent) return;
     fb_entry_t *en = &g_ent[i];
+    if(en->kind == FB_K_USBROOT){
+        if(usbdrive_start() != 0) return;                     /* refused: the reason was toasted */
+        snprintf(g_dir, sizeof g_dir, FB_USB); fb_scan(); fb_rebuild(); return;
+    }
+    if(en->kind == FB_K_VOL){ snprintf(g_dir, sizeof g_dir, "%s", g_vols[i].mnt); fb_scan(); fb_rebuild(); return; }
+    if(en->kind == FB_K_EJECT){ if(usbdrive_stop() == 0){ snprintf(g_dir, sizeof g_dir, "%s", FB_ROOT); fb_scan(); fb_rebuild(); } return; }
+    if(en->kind == FB_K_INFO) return;
+    if(fb_in_usb() && !en->is_dir){ ui_toast("Import it to play it"); return; }   /* the library only knows the SD card */
     if(en->is_dir) fb_descend(en->name);
     else if(en->kind == FB_K_ISO) fb_play_iso(en->name);
     else if(en->kind == FB_K_CUE) fb_play_sheet(en->name);
@@ -479,6 +572,9 @@ static void fb_refresh(void){
 static void fb_long_cb(lv_event_t *e){          /* the long-press menu: queue actions + file operations */
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     if(i < 0 || i >= g_nent) return;
+    if(g_ent[i].kind == FB_K_VOL){ usbsync_volume_menu(g_vols[i].mnt, fb_refresh); return; }
+    if(fb_is_virtual(i)) return;
+    if(fb_in_usb()){ usbsync_import_open(g_dir, g_ent[i].name, fb_refresh); return; }   /* a USB folder or file: import it */
     if(g_ent[i].is_dir) songmenu_open_folder(g_dir, g_ent[i].name, fb_refresh);
     else if(fb_is_audio(g_ent[i].name)) songmenu_open_file(g_dir, g_ent[i].name, fb_refresh);
     else fileops_open(g_dir, g_ent[i].name, 0, fb_refresh);    /* other files: file operations only */
@@ -488,7 +584,9 @@ static void fb_header_back_cb(lv_event_t *e){
 }
 
 void folderbrowser_test_jump(char L){ fb_jump(L); }   /* host renders */
+void folderbrowser_test_dir(const char *d){ snprintf(g_dir, sizeof g_dir, "%s", d); fb_scan(); fb_rebuild(); }   /* host renders */
 void folderbrowser_create(lv_obj_t *root){
+    g_zcrumb = g_zplay = NULL;                                       /* Zune-only labels: none in the other themes */
     lv_obj_set_style_bg_color(root, TC(CANVAS), 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
 
@@ -500,7 +598,7 @@ void folderbrowser_create(lv_obj_t *root){
         lv_label_set_long_mode(g_zcrumb, LV_LABEL_LONG_DOT); lv_obj_set_width(g_zcrumb, 150);
         lv_obj_set_style_text_font(g_zcrumb, zune_font(&font_zune_regular_16), 0); lv_obj_set_style_text_color(g_zcrumb, TC(TEXT_MUTED), 0);
         lv_obj_set_pos(g_zcrumb, 52, 100);
-        lv_obj_t *pf = lv_label_create(root); kit_keep(pf); lv_label_set_text(pf, "play folder");
+        lv_obj_t *pf = g_zplay = lv_label_create(root); kit_keep(pf); lv_label_set_text(pf, "play folder");
         lv_obj_set_style_text_font(pf, zune_font(&font_zune_regular_13), 0); lv_obj_set_style_text_color(pf, TC(ACCENT_PRIMARY), 0);
         lv_obj_set_pos(pf, 214, 98); lv_obj_add_flag(pf, LV_OBJ_FLAG_CLICKABLE); lv_obj_set_ext_click_area(pf, 12);
         lv_obj_add_event_cb(pf, fb_zplay_cb, LV_EVENT_CLICKED, NULL);
@@ -530,7 +628,25 @@ void folderbrowser_create(lv_obj_t *root){
     snprintf(g_dir, sizeof g_dir, "%s", FB_ROOT);   /* first content built on open() */
 }
 
+/* volumes came or went (usbdrive.c, UI thread): redraw the drive list, the root's USB row, or leave a vanished volume */
+static void fb_usb_changed(void){
+    if(screen_current() != SCR_FOLDER || !g_list) return;
+    char rb[64]; int on_vol;
+    fb_root(rb, sizeof rb, &on_vol);
+    if(fb_in_usb() && !on_vol){ snprintf(g_dir, sizeof g_dir, "%s", usbdrive_state() == UD_ON ? FB_USB : FB_ROOT); fb_scan(); fb_rebuild(); return; }
+    if(fb_at_usb() && usbdrive_state() != UD_ON){ snprintf(g_dir, sizeof g_dir, "%s", FB_ROOT); fb_scan(); fb_rebuild(); return; }
+    if(fb_at_usb() || !strcmp(g_dir, FB_ROOT)) fb_refresh();
+}
+static lv_timer_t *g_usb_tm;
+static void fb_usb_tick(lv_timer_t *t){                /* the drive list's "Looking..." turns into "No drive found" */
+    (void)t;
+    if(screen_current() != SCR_FOLDER || !fb_at_usb() || g_nent != 2 || g_ent[0].kind != FB_K_INFO) return;
+    int late = usbdrive_on_ms() > 10000;
+    if(late != !strcmp(g_ent[0].name, "No drive found")) fb_refresh();
+}
 void folderbrowser_open(void){
+    usbdrive_on_change(fb_usb_changed);
+    if(!g_usb_tm) g_usb_tm = lv_timer_create(fb_usb_tick, 1000, NULL);
     snprintf(g_dir, sizeof g_dir, "%s", FB_ROOT);   /* always (re)enter at the SD root */
     fb_scan();
     fb_rebuild();

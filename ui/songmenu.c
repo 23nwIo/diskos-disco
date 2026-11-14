@@ -16,10 +16,12 @@
 #include "orbit.h"
 #include "musicdb.h"
 #include "ipc.h"
+#include "usbdrive.h"
+#include "usbsync.h"
 #include <stdio.h>
 #include <string.h>
 
-enum { A_QUEUE, A_PLAYLIST, A_FAV, A_ALBUM, A_ARTIST, A_INFO, A_TAGS, A_RENAME, A_COPYMOVE, A_DELETE, A_PLAY, A_SHUFFLE, A_MOOD, A_SELECT, A_LYRICS, A_VQUEUE, A_N };   /* LYRICS, VQUEUE: the song ring only */
+enum { A_QUEUE, A_PLAYLIST, A_FAV, A_ALBUM, A_ARTIST, A_INFO, A_TAGS, A_RENAME, A_COPYMOVE, A_DELETE, A_PLAY, A_SHUFFLE, A_MOOD, A_SELECT, A_LYRICS, A_VQUEUE, A_EXPORT, A_N };   /* EXPORT: a folder, while a USB drive is connected */   /* LYRICS, VQUEUE: the song ring only */
 static void (*g_sel_next)(void), (*g_sel)(void);   /* Zune: "Select" starts picking from this item (the Library sets it per hold) */
 void songmenu_offer_select(void (*fn)(void)){ g_sel_next = fn; }
 static lv_obj_t *g_ov;
@@ -81,6 +83,7 @@ static void pick(int i){
         case A_RENAME:   fileops_action(g_dir, g_name, g_is_dir, g_done, 0); break;
         case A_COPYMOVE: fileops_action(g_dir, g_name, g_is_dir, g_done, 1); break;
         case A_DELETE:   fileops_action(g_dir, g_name, g_is_dir, g_done, 2); break;
+        case A_EXPORT:   usbsync_export_open(g_dir, g_name, g_done); break;
         case A_PLAY:     if(g_gplay) g_gplay(0); break;
         case A_SHUFFLE:  if(g_gplay) g_gplay(1); break;
         case A_SELECT:   if(g_sel) g_sel(); break;
@@ -101,7 +104,7 @@ static void zune_menu(const char *title, const int *acts, int n){
     lv_obj_add_flag(g_ov, LV_OBJ_FLAG_CLICKABLE); lv_obj_clear_flag(g_ov, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(g_ov, hub_cb, LV_EVENT_CLICKED, NULL);
     static const char *const ZCAP[A_N] = { "add to queue", "add to playlist", "favourite", "go to album", "go to artist", "info", "edit tags",
-                                           "rename", "copy / move", "delete", "play", "shuffle", "mood", "select" };
+                                           "rename", "copy / move", "delete", "play", "shuffle", "mood", "select", [A_EXPORT] = "export to usb" };
     static char lab[10][24]; const char *lb[10];
     g_nact = n > 9 ? 9 : n;
     for(int i = 0; i < g_nact; i++) g_act[i] = acts[i];
@@ -148,8 +151,9 @@ static void open_menu(const char *title, const int *acts, int n){
     lv_obj_add_flag(g_ov, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(g_ov, LV_OBJ_FLAG_SCROLLABLE);
     static const char *const GLYPH[A_N] = { LV_SYMBOL_LIST, LV_SYMBOL_PLUS, TH_IC_HEART, LV_SYMBOL_IMAGE, LV_SYMBOL_HOME, LV_SYMBOL_FILE,
-                                           LV_SYMBOL_DOWNLOAD, LV_SYMBOL_EDIT, LV_SYMBOL_COPY, LV_SYMBOL_TRASH, LV_SYMBOL_PLAY, LV_SYMBOL_SHUFFLE, LV_SYMBOL_GPS, LV_SYMBOL_OK };
-    static const char *const CAP[A_N] = { "Queue", "Playlist", "Favourite", "Album", "Artist", "Info", "Tags", "Rename", "Copy/Move", "Delete", "Play", "Shuffle", "Mood", "Select" };
+                                           LV_SYMBOL_DOWNLOAD, LV_SYMBOL_EDIT, LV_SYMBOL_COPY, LV_SYMBOL_TRASH, LV_SYMBOL_PLAY, LV_SYMBOL_SHUFFLE, LV_SYMBOL_GPS, LV_SYMBOL_OK,
+                                           [A_EXPORT] = LV_SYMBOL_USB };
+    static const char *const CAP[A_N] = { "Queue", "Playlist", "Favourite", "Album", "Artist", "Info", "Tags", "Rename", "Copy/Move", "Delete", "Play", "Shuffle", "Mood", "Select", [A_EXPORT] = "Export" };
     orbit_item_t it[8];
     g_nact = n > 8 ? 8 : n;
     for(int i = 0; i < g_nact; i++){ g_act[i] = acts[i]; it[i].glyph = GLYPH[acts[i]]; it[i].cap = CAP[acts[i]]; }
@@ -224,8 +228,8 @@ void songmenu_open_folder(const char *dir, const char *name, void (*done)(void))
     snprintf(g_path, sizeof g_path, "%s/%s", dir, name);
     snprintf(g_dir, sizeof g_dir, "%s", dir); snprintf(g_name, sizeof g_name, "%s", name);
     g_gcol[0] = 0; g_is_dir = 1; g_done = done; g_have_song = 0; g_fav = 0;
-    static const int A[6] = { A_QUEUE, A_PLAYLIST, A_TAGS, A_RENAME, A_COPYMOVE, A_DELETE };
-    open_menu(name, A, 6);
+    static const int A[7] = { A_QUEUE, A_PLAYLIST, A_TAGS, A_RENAME, A_COPYMOVE, A_DELETE, A_EXPORT };
+    open_menu(name, A, usbdrive_state() == UD_ON && usbdrive_count() > 0 ? 7 : 6);   /* Export: only with a drive */
 }
 void songmenu_open_group(const char *col, const char *val, const char *title, void (*play)(int shuffle)){   /* Library: album / artist / genre */
     if(!col || !val || !val[0]) return;

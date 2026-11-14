@@ -378,6 +378,13 @@ static void modal_simple(const char *title, const char *body){          /* one "
     if(h > 190 && !th_zune()) { lv_obj_set_height(c, h > 300 ? 300 : h); lv_obj_center(c); }
     modal_pill(c, 0, "OK", THEME_CLR_ACCENT_EMPHASIS, cb_close, "system.ok");
 }
+/* the same dialogs for other modules (usbsync.c), sharing the one open modal */
+lv_obj_t *sys_modal_card(const char *title, int h){ return modal_card(title, h); }
+lv_obj_t *sys_modal_text(lv_obj_t *card, const char *txt, int y, theme_color_role_t col){ return modal_text(card, txt, y, col); }
+void sys_modal_pill(lv_obj_t *card, int x, const char *txt, theme_color_role_t col, lv_event_cb_t cb, const char *action){ modal_pill(card, x, txt, col, cb, action); }
+void sys_modal_simple(const char *title, const char *body){ modal_simple(title, body); }
+void sys_modal_close(void){ modal_close(); }
+int  sys_modal_open(void){ return g_m != NULL; }
 
 /* ---- About ---- */
 void system_about_open(int v){
