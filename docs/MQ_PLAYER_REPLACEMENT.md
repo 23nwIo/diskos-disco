@@ -171,7 +171,7 @@ bottleneck, because almost every step touches hardware.
 
 ## First building block: diskos-watchdog
 
-`ui/watchdog/` holds an open-source replacement for `cmd_watchdog` (2026-11-14, not yet device-tested):
+`ui/watchdog/` holds an open-source replacement for `cmd_watchdog` (2026-11-14):
 
 - `watchdog.c` / `watchdog.h`: `wd_open`, `wd_start`, `wd_stop`, `wd_feed`, `wd_reset` with the exact request numbers
   of the stock `libhardware2.so`. An own player links this file directly.
@@ -187,14 +187,15 @@ bottleneck, because almost every step touches hardware.
 - Build: `CROSS=<toolchain>/bin/mipsel-linux-musl- build/build-watchdog.sh` (static, about 42 KB). Host tests:
   `python3 -m unittest tests.test_watchdog`.
 
-**In use with the stock player (2026-11-14, not yet device-tested as a build).** mq_ui carries the binary (built from
+**In use with the stock player (2026-11-14, device-checked with build dev-20261114-622b003).** mq_ui carries the binary (built from
 `ui/watchdog` by ui/Makefile, embedded by ui/wd_blob.c) and at every start writes it to `/usr/data/diskos-watchdog`
 (only if the bytes differ), checks it byte for byte and with a `--help` run, and bind-mounts it over
 `/usr/bin/cmd_watchdog` (ui/wd_override.h, called from ui/main.c next to the wifi_up.sh override). Any failed check
 leaves the stock tool in place; `/usr/data/diskos-no-wd-override` switches it off. The bind is RAM-only, so the Vol-Up
 stock boot always keeps the original. The log line `watchdog: ... over /usr/bin/cmd_watchdog: <result>` goes to
 `/usr/data/diskos_boot.log` (mq_ui's stderr, ui/main.c:3554). A manual check on a Disc (`mount --bind`, build `b34fb6c4…`) ran with the stock player feeding through
-our tool without a reboot. An own player links `ui/watchdog/watchdog.c` directly instead. Replacing the file in the
+our tool without a reboot. Build dev-20261114-622b003 booted with the log line `... : applied` and
+`sha256sum /usr/bin/cmd_watchdog` = `b34fb6c4…` (device-checked 2026-11-14). An own player links `ui/watchdog/watchdog.c` directly instead. Replacing the file in the
 rootfs at a later flash is listed in todo.md.
 
 ## Open questions for a device session
