@@ -2327,7 +2327,7 @@ static void bootrestore_poll_cb(lv_timer_t *t){
         bt_reconnect_last();           /* and the Disc calls the last headphones itself */
         return;
     }
-    if(lv_tick_elaps(g_bootrestore_start) > 28000){       /* patchram + power-on settle */
+    if(lv_tick_elaps(g_bootrestore_start) > 40000){       /* patchram + power-on settle + up to 8 s for the player's bluetoothd */
         lv_timer_del(g_bootrestore_timer); g_bootrestore_timer = NULL;
     }
 }
