@@ -54,7 +54,11 @@ file systems not fully supported, use at your own risk": names and sizes the fil
 exit 23 ("Some files could not be copied"). Times are compared with a 2 s window, so FAT targets don't look changed on
 every run.
 
-The stock firmware's auto-mount uses `iocharset=utf8`, which ext4 rejects, so mq_ui mounts the drives itself.
+The stock player has its own USB disk automount (mq_player V2.57, disassembled): on every uevent
+`SUBSYSTEM=scsi_device ACTION=add` (one per LUN; a card reader sends four) it unmounts every mount whose source
+contains `/dev/sd`, runs `rm -rf` on that mount point, and mounts each `/dev/sd*` at `/tmp/udisk<N>` with
+`iocharset=utf8`, which ext4 rejects. diskOS therefore mounts from its own block node `/tmp/usbdrive/.blk/<dev>`,
+which that sweep does not match, and takes a FAT drive back if the player mounted it first.
 
 ## Host port
 
