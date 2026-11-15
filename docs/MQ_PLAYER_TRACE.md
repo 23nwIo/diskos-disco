@@ -159,8 +159,10 @@ the mark that follows it.
 - **Power off from the menu** (with charger): Bluetooth off, `ifconfig wlan0 down`, kill net tools, `_IO('M',48)` on
   `A`, `cmd_watchdog stop`, **`killall -9 fiio_init.sh`**, backlight 0, lcd `_IO(0xef,1)`, `killall -9 mq_ui`, rfkill 0,
   kill BT daemons, `poweroff -f`. The card stayed mounted; the log on the card reaches `poweroff -f`.
-- Not yet explained: `ioctl` with request 0x467f (`_IO('F',127)`, pointer argument) on a descriptor the library did not
-  see being opened (`?`), at every stream start and stop.
+- Request 0x467f on a descriptor the library did not see being opened (`?`), at every stream start and stop, is
+  `FIONREAD` (its MIPS value): "how many bytes are waiting" on a socket or pipe (the result was 0x70..0xe3 bytes).
+  Sockets are not opened with `open`, hence the `?`. Not hardware; most likely the player's message queue or socket
+  to the UI.
 - At boot, the player itself switches Bluetooth on (`/usr/project/bluetoothd`, bluealsa, bt-agent, D-Bus calls). In the
   boot after this run it crashed right after (SIGSEGV in libdbus at 26.7 s), and fiio_init's loop then killed the diskOS
   UI and started the stock UI. Fix attempt 54359e6 (not device-tested): diskOS leaves the boot Bluetooth bring-up to the player.
