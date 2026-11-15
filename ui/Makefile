@@ -50,8 +50,8 @@ $(APP)/wd_blob.o: $(WD_BIN)
 # inside mq_ui; the launcher writes it to /usr/data/diskos-player when /usr/data/diskos-own-player exists (own_player.h)
 APP_SRCS += $(APP)/pl_blob.c
 PL_BIN := $(APP)/player/diskos-player
-PL_SRCS := $(APP)/player/main.c $(APP)/player/core.c $(APP)/player/proto.c $(APP)/player/hw.c $(APP)/watchdog/watchdog.c
-$(PL_BIN): $(PL_SRCS) $(APP)/player/core.h $(APP)/player/proto.h $(APP)/player/hw.h $(APP)/own_player.h $(APP)/watchdog/watchdog.h
+PL_SRCS := $(APP)/player/main.c $(APP)/player/core.c $(APP)/player/proto.c $(APP)/player/hw.c $(APP)/player/sdcard.c $(APP)/watchdog/watchdog.c
+$(PL_BIN): $(PL_SRCS) $(APP)/player/core.h $(APP)/player/proto.h $(APP)/player/hw.h $(APP)/player/sdcard.h $(APP)/own_player.h $(APP)/watchdog/watchdog.h
 	$(CC) -Os -static -D_GNU_SOURCE -Wall -Wextra -Werror -ffile-prefix-map=$(APP)/= $(FP_FLAGS) -o $@ $(PL_SRCS) -lrt
 	$(CROSS)strip $@ || true
 $(APP)/pl_blob.o: CFLAGS += -DPL_BIN='"$(PL_BIN)"'

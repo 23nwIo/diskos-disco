@@ -10,6 +10,8 @@
  *     player did not crash early;
  *   - owns the keys (/dev/input/event0, grabbed like the stock player): Power toggles the screen, a held Power powers
  *     off, Volume up/down step the volume and tell the UI (a714);
+ *   - mounts the SD card when it is inserted and unmounts it when it is pulled (sdcard.c; the cold-boot mount is the
+ *     UI's);
  *   - runs the stock power off routine when the sleep timer (0806) runs out (hw.c);
  *   - logs every command to /tmp/diskos-player.log (RAM).
  * No sound yet.
@@ -22,6 +24,7 @@
 #include "core.h"
 #include "proto.h"
 #include "hw.h"
+#include "sdcard.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
 
@@ -30,6 +33,7 @@
 #include <linux/input.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <mqueue.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -147,11 +151,25 @@ int main(int argc, char **argv){
     else if(ioctl(keys, EVIOCGRAB, 1) != 0) logmsg("keys: grab %s: %s (keys still read)", keypath, strerror(errno));
     else logmsg("keys: %s grabbed", keypath);
 
+    int uev = use_wd ? sd_uevent_open() : -1;           /* host runs (-n) never mount anything */
+    if(use_wd && uev < 0) logmsg("sd: uevent socket: %s - no card hot-plug", strerror(errno));
+
     double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0;
     int stable = 0; unsigned sleep_seq = 0;
     while(!g_stop){
-        struct pollfd pf[2] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 } };   /* an mqd_t is a descriptor on Linux */
-        int pr = poll(pf, keys >= 0 ? 2 : 1, 250);
+        /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
+        struct pollfd pf[3] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 } };
+        int pr = poll(pf, 3, 250);
+        if(pr > 0 && uev >= 0 && (pf[2].revents & POLLIN)){
+            char ub[2048];
+            ssize_t un;
+            while((un = recv(uev, ub, sizeof ub - 1, 0)) > 0){
+                ub[un] = 0;
+                int k = sd_uevent_kind(ub, (size_t)un);
+                if(k == SDEV_ADD){ logmsg("sd: card inserted"); sd_mount(logmsg); }
+                else if(k == SDEV_REMOVE){ logmsg("sd: card pulled"); sd_unmount(logmsg); }
+            }
+        }
         if(pr < 0 && errno != EINTR){ logmsg("poll: %s", strerror(errno)); usleep(100000); }
         if(pr > 0 && (pf[0].revents & POLLIN)){
             ssize_t n = mq_receive(pl, buf, (size_t)msgsize, NULL);
@@ -218,6 +236,7 @@ int main(int argc, char **argv){
            core.unknown_tags);
     if(wd >= 0){ wd_stop(wd); wd_close(wd); }
     if(keys >= 0) close(keys);
+    if(uev >= 0) close(uev);
     mq_close(pl);
     if(g_ui != (mqd_t)-1) mq_close(g_ui);
     free(buf);
