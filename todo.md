@@ -14,6 +14,7 @@ Targets below are proposals or verification work, not shipped features. Work bel
 - Local song ratings and smart playlists using reliable listening data; not implemented as a 3.3.0 feature.
 - Optional dyslexia-friendly text font with preserved icon/clock/non-Latin rendering; requires layout and device evaluation.
 - Own player (docs/MQ_PLAYER_REPLACEMENT.md): make the headphone-unplug behaviour a setting (today: unplug pauses, re-plug stays paused, as stock). Not urgent (Jo, 2026-11-15).
+- Own player: the EQ presets (0689, software EQ in the stock player). Planned as an ALSA plugin behind the MPD audio core, about 3-5 days; not important for now (Jo, 2026-11-15).
 
 ## Engineering validation
 
