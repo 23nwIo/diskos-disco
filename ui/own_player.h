@@ -19,6 +19,7 @@
  * file calls only. */
 #ifndef OWN_PLAYER_H
 #define OWN_PLAYER_H
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,5 +99,25 @@ static inline int opl_prepare(const opl_paths_t *p, int *start_no){
     opl_write_int(p->starts, n + 1, 0);
     if(start_no) *start_no = n + 1;
     return OPL_ON;
+}
+/* 1 when the running player (the process named mq_player) is the own one: its executable is OPL_BIN (the stock one is
+ * /usr/bin/mq_player; ps shows "mq_player" for both). /proc reads only, no spawn; for the UI (Settings > About,
+ * Bluetooth at boot). */
+static inline int opl_running(void){
+    DIR *d = opendir("/proc"); if(!d) return 0;
+    struct dirent *e; int own = 0;
+    while(!own && (e = readdir(d))){
+        if(e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char p[64], c[32] = {0}, x[256];
+        snprintf(p, sizeof p, "/proc/%.40s/comm", e->d_name);
+        FILE *f = fopen(p, "r"); if(!f) continue;
+        char *r = fgets(c, sizeof c, f); fclose(f);
+        if(!r || strcmp(c, "mq_player\n") != 0) continue;
+        snprintf(p, sizeof p, "/proc/%.40s/exe", e->d_name);
+        ssize_t n = readlink(p, x, sizeof x - 1);
+        if(n > 0){ x[n] = 0; own = !strcmp(x, OPL_BIN); }
+    }
+    closedir(d);
+    return own;
 }
 #endif

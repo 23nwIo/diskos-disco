@@ -13,7 +13,7 @@
 #include "theme_kit.h"
 #include "config.h"       /* cfg_get_int/cfg_set_int: persist the BT on/off intent */
 #include "aptx_blob.h"    /* the aptX BlueALSA files carried inside mq_ui */
-#include "own_player.h"   /* OPL_BIN: the own player does no Bluetooth bring-up at boot */
+#include "own_player.h"   /* opl_running: the own player does no Bluetooth bring-up at boot */
 #include <sys/statvfs.h>
 #include <stdio.h>
 #include <spawn.h>
@@ -2329,25 +2329,6 @@ static int bt_player_bt_status(void){
     if((buf[0] == '0' || buf[0] == '1') && (buf[1] == '\n' || buf[1] == 0)) return buf[0] - '0';
     return -1;
 }
-/* 1 when the running player is diskOS's own (own_player.h): it does no Bluetooth bring-up of its own at boot, so
- * waiting for one only delays Bluetooth by BT_PLAYER_WAIT_MS. /proc reads only, no spawn. */
-static int own_player_running(void){
-    DIR *d = opendir("/proc"); if(!d) return 0;
-    struct dirent *e; int own = 0;
-    while(!own && (e = readdir(d))){
-        if(e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-        char p[64], c[32] = {0}, x[256];
-        snprintf(p, sizeof p, "/proc/%.40s/comm", e->d_name);
-        FILE *f = fopen(p, "r"); if(!f) continue;
-        char *r = fgets(c, sizeof c, f); fclose(f);
-        if(!r || strncmp(c, "mq_player", 9) != 0) continue;
-        snprintf(p, sizeof p, "/proc/%.40s/exe", e->d_name);
-        ssize_t n = readlink(p, x, sizeof x - 1);
-        if(n > 0){ x[n] = 0; own = !strcmp(x, OPL_BIN); }
-    }
-    closedir(d);
-    return own;
-}
 static void bootrestore_poll_cb(lv_timer_t *t){
     (void)t;
     if(bt_on()){
@@ -2358,7 +2339,7 @@ static void bootrestore_poll_cb(lv_timer_t *t){
         return;
     }
     if(g_bootrestore_player){
-        int own = own_player_running();
+        int own = opl_running();          /* the own player does no bring-up of its own */
         if(!own && lv_tick_elaps(g_bootrestore_start) <= BT_PLAYER_WAIT_MS) return;
         /* The player didn't bring Bluetooth up: do it ourselves (boot mode, no running daemon killed). */
         g_bootrestore_player = 0;

@@ -37,6 +37,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "command_spawn.h"
+#include "own_player.h"     /* opl_running: About > Player */
 #include "sdio.h"
 #include "art.h"
 #include "scanner.h"
@@ -1048,6 +1049,8 @@ static const setting_t TABLE[] = {
       "diskOS - a custom music player UI.", NULL },
     { "About",   "Device Info", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, system_about_open, 0,
       "Model, stock firmware, diskOS build, MAC addresses, storage and battery.", NULL },
+    { "About",   "Player",      ST_READONLY, NULL, 0,0,0, NULL,0, "@player", NULL, 0,
+      "The player behind diskOS: Stock is FiiO's, Own is diskOS's own player (switched on with /usr/data/diskos-own-player).", NULL },
     { "About",   "Temperature", ST_READONLY, NULL, 0,0,0, NULL,0, "@temp", NULL, 0,
       "Battery/board temperature from the fuel gauge (this SoC exposes no core sensor).", NULL },
     { "Volume Keys", "Press", ST_CYCLER, "key_single", 0,0,0, OPT_VOLKEY, 2, NULL, apply_key_single, CTL_ACT_VOLUME,
@@ -1199,6 +1202,7 @@ static const char *val_text_value(const setting_t *s, char *buf, int n){
         case ST_READONLY:
             if(s->ro_val && !strcmp(s->ro_val, "@temp")) read_batt_temp(buf, n);
             else if(s->ro_val && !strcmp(s->ro_val, "@about")) read_about(buf, n);
+            else if(s->ro_val && !strcmp(s->ro_val, "@player")) return tr(opl_running() ? "Own" : "Stock");
             else return tr(s->ro_val?s->ro_val:"");
             break;
         case ST_ACTION:   return tr((s->apply==apply_rescan && scanner_active()) ? "Stop" : (s->ro_val?s->ro_val:""));
