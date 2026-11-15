@@ -8,7 +8,8 @@
  *     only the first time per path, they are polled),
  *   - every ioctl with its request decoded and up to 64 argument bytes before (write) and after (read) the call,
  *   - write/fwrite/fputs/fputc/fprintf/vfprintf to those files,
- *   - system, popen and the exec family (the shell commands the player runs).
+ *   - system, popen and the exec family (the shell commands the player runs),
+ *   - the frames the player sends and receives on its message queues (the protocol with the UI).
  * Every line carries the time since boot, the pid (and thread), and the caller's return address, which points into
  * the player's code (the start header lists the code mappings).
  *
@@ -532,6 +533,98 @@ void sync(void)
     if (!get_sync()) return;
     if (!g_disabled) { static const char m[] = "sync"; emit(RA(), m, sizeof m - 1); }
     real_sync();
+}
+
+/* ---- message queues: the player's protocol with the UI (docs/PLAYER_PROTOCOL.md) ----
+ * Only in the player itself. Every frame sent or received is written in pieces of MQ_PIECE bytes (an a2 state frame can
+ * be several KiB), at most MQ_MAX bytes of it. Failed receives (timeouts of a polling loop) are not written. The
+ * buffers are the caller's own, valid for the size the call reports, so they are read directly. */
+#define MQ_PIECE 400
+#define MQ_MAX 8192
+struct timespec;
+struct mq_attr;
+REAL(int, mq_open, (const char *, int, ...))
+REAL(int, mq_close, (int))
+REAL(int, mq_send, (int, const char *, size_t, unsigned))
+REAL(int, mq_timedsend, (int, const char *, size_t, unsigned, const struct timespec *))
+REAL(long, mq_receive, (int, char *, size_t, unsigned *))
+REAL(long, mq_timedreceive, (int, char *, size_t, unsigned *, const struct timespec *))
+
+static void note_mq(void *ra, const char *fn, int q, const char *msg, size_t n, long r, int e)
+{
+    if (g_disabled || !g_main) return;
+    char name[FDPATH]; name[0] = 0;
+    { const char *p = fd_path(q); if (p) copy_path(name, p); }
+    size_t show = n < MQ_MAX ? n : MQ_MAX, off = 0;
+    do {
+        char ev[LINE_MAX_]; out_t o = { ev, 0, sizeof ev };
+        size_t k = show - off < MQ_PIECE ? show - off : MQ_PIECE;
+        o_s(&o, fn); o_ch(&o, ' ');
+        if (name[0]) o_qs(&o, name); else { o_s(&o, "mq "); o_i(&o, q); }
+        if (off == 0) { o_s(&o, " len "); o_u(&o, (unsigned long)n); }
+        else { o_s(&o, " +"); o_u(&o, (unsigned long)off); }
+        o_ch(&o, ' ');
+        if (msg) o_q(&o, msg + off, k, MQ_PIECE);
+        if (off + k >= show) { if (n > show) { o_s(&o, " (+"); o_u(&o, (unsigned long)(n - show)); o_s(&o, " not shown)"); } o_err(&o, r, e); }
+        emit_x(ra, ev, o.n, 1);
+        off += k;
+    } while (off < show);
+    flush(0);
+}
+
+int mq_open(const char *name, int flags, ...)
+{
+    va_list ap; va_start(ap, flags);
+    unsigned mode = va_arg(ap, unsigned); struct mq_attr *at = va_arg(ap, struct mq_attr *);
+    va_end(ap);
+    if (!get_mq_open()) { *__errno_location() = ENOSYS_; return -1; }
+    int r = real_mq_open(name, flags, mode, at); int e = *__errno_location();
+    if (!g_disabled && g_main) {
+        if (r >= 0 && r < NFD && name) copy_path(g_fdpath[r], name);
+        char ev[200]; out_t o = { ev, 0, sizeof ev };
+        o_s(&o, "mq_open "); o_qs(&o, name); o_s(&o, " flags 0x"); o_x(&o, (unsigned long)flags, 0); o_err(&o, r, e);
+        emit(RA(), ev, o.n);
+    }
+    *__errno_location() = e;
+    return r;
+}
+int mq_close(int q)
+{
+    if (!get_mq_close()) { *__errno_location() = ENOSYS_; return -1; }
+    if (q >= 0 && q < NFD) g_fdpath[q][0] = 0;
+    return real_mq_close(q);
+}
+int mq_send(int q, const char *m, size_t n, unsigned pr)
+{
+    if (!get_mq_send()) { *__errno_location() = ENOSYS_; return -1; }
+    int r = real_mq_send(q, m, n, pr); int e = *__errno_location();
+    note_mq(RA(), "mq_send", q, m, n, r, e);
+    *__errno_location() = e;
+    return r;
+}
+int mq_timedsend(int q, const char *m, size_t n, unsigned pr, const struct timespec *t)
+{
+    if (!get_mq_timedsend()) { *__errno_location() = ENOSYS_; return -1; }
+    int r = real_mq_timedsend(q, m, n, pr, t); int e = *__errno_location();
+    note_mq(RA(), "mq_send", q, m, n, r, e);
+    *__errno_location() = e;
+    return r;
+}
+long mq_receive(int q, char *m, size_t n, unsigned *pr)
+{
+    if (!get_mq_receive()) { *__errno_location() = ENOSYS_; return -1; }
+    long r = real_mq_receive(q, m, n, pr); int e = *__errno_location();
+    if (r >= 0) note_mq(RA(), "mq_receive", q, m, (size_t)r, r, e);
+    *__errno_location() = e;
+    return r;
+}
+long mq_timedreceive(int q, char *m, size_t n, unsigned *pr, const struct timespec *t)
+{
+    if (!get_mq_timedreceive()) { *__errno_location() = ENOSYS_; return -1; }
+    long r = real_mq_timedreceive(q, m, n, pr, t); int e = *__errno_location();
+    if (r >= 0) note_mq(RA(), "mq_receive", q, m, (size_t)r, r, e);
+    *__errno_location() = e;
+    return r;
 }
 
 static void note_data(void *ra, const char *fn, const char *path, const void *data, size_t n, long r, int e)

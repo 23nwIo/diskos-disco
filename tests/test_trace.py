@@ -22,6 +22,7 @@ PROG = r'''
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <mqueue.h>
 #define REQ_W 0x40014d29UL   /* _IOW('M', 41, unsigned char) on the host */
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "check failed line %d: %s\n", __LINE__, #c); return 1; } } while (0)
 int main(void)
@@ -52,6 +53,17 @@ int main(void)
     if (um) { unsigned char w = 0x77; system(um); ioctl(fd, REQ_W, &w); }
     const char *rm = getenv("TEST_REMOUNT");                        /* the player remounts the card at start */
     if (rm) { unsigned char w = 0x66; system(um ? "true" : getenv("TEST_UMOUNT2")); ioctl(fd, REQ_W, &w); system(rm); }
+    {   /* the protocol queues: a frame out and back in */
+        struct mq_attr a = { 0, 4, 1024, 0 }; char big[900], rb[1024];
+        mqd_t q = mq_open("/diskos-trace-test", O_CREAT | O_RDWR, 0600, &a);
+        CHECK(q != (mqd_t)-1);
+        CHECK(mq_send(q, "a1030010000003e8", 16, 0) == 0);
+        CHECK(mq_receive(q, rb, sizeof rb, 0) == 16);
+        memset(big, 'x', sizeof big); memcpy(big, "a2", 2);
+        CHECK(mq_send(q, big, sizeof big, 0) == 0);
+        CHECK(mq_receive(q, rb, sizeof rb, 0) == (ssize_t)sizeof big);
+        mq_close(q); mq_unlink("/diskos-trace-test");
+    }
     int d = dup2(fd, 20);                                           /* the shell's "> file" moves the fd */
     CHECK(d == 20 && write(20, "dup", 3) == -1);
     close(20);
@@ -74,7 +86,7 @@ class TraceTest(unittest.TestCase):
                         f'-DTRACE_OK_MARKER="{self.marker}"', '-o', str(self.lib), str(SRC), '-ldl'], check=True)
         (self.tmp / 'prog.c').write_text(PROG)
         self.prog = self.tmp / 'mq_player'
-        subprocess.run(['gcc', '-O1', '-fno-builtin', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-o', str(self.prog), str(self.tmp / 'prog.c')], check=True)
+        subprocess.run(['gcc', '-O1', '-fno-builtin', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-o', str(self.prog), str(self.tmp / 'prog.c'), '-lrt'], check=True)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -124,6 +136,11 @@ class TraceTest(unittest.TestCase):
         self.assertNotIn('/proc/self/stat"', log)                  # /proc in a helper program
         self.assertIn('close 3 "/dev/full"', log)
         self.assertIn('write "/dev/full" "dup"', log)
+        self.assertIn('mq_open "/diskos-trace-test"', log)
+        self.assertIn('mq_send "/diskos-trace-test" len 16 "a1030010000003e8" -> 0', log)
+        self.assertIn('mq_receive "/diskos-trace-test" len 16 "a1030010000003e8" -> 16', log)
+        self.assertIn('mq_send "/diskos-trace-test" len 900 "a2xx', log)               # a long frame in pieces
+        self.assertIn('mq_send "/diskos-trace-test" +800 "' + 'x' * 100 + '" -> 0', log)
 
     def test_unwritable_log_no_harm(self):
         blocker = self.tmp / 'file'

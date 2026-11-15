@@ -84,6 +84,10 @@ What is recorded:
   sockets, no exec of their own (the player's line already has the command), and their `=== trace start` line only
   once they record something. The once-a-second `cmd_watchdog feed` is recorded three times, then not any more.
 - Never recorded: `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/console`, `/dev/pts/*`.
+- The player's message queue traffic with the UI (since 2026-11-15): `mq_open`, and every frame sent
+  (`mq_send`/`mq_timedsend`) or received (`mq_receive`/`mq_timedreceive`) with its queue name, written in pieces of
+  400 bytes, at most 8 KiB per frame. Failed receives are not written. This shows the protocol of
+  [PLAYER_PROTOCOL.md](PLAYER_PROTOCOL.md) live, including the `a1`/`a2` replies.
 - `close` of `/dev` files; `sync`. `dup2`/`dup3` carry a file's path to the new descriptor, so the shell's
   `echo 0 > /sys/...` in a helper shows the written value.
 
