@@ -160,8 +160,8 @@ the mark that follows it.
   (0xfa). Every key arrives as press + release within microseconds, so the driver reports clicks, not hold times.
   The driver tells double clicks and long presses apart itself and sends own codes (own-player log 2026-11-15, Jo):
   Volume up held 263, Volume down held 262, Volume up double click 266, Volume down double click 267, Play double
-  click 269. A volume key held for 3 s gave one long-press event; whether its release comes when the key is let go is
-  being checked (the player now logs every event with the kernel time).
+  click 269. While a volume key is held, the driver repeats the long-press code as autorepeat events (value 2) every
+  40 ms, starting 250 ms after the long-press event.
   Short Power presses alternate between 265 and 259 (0x103): every second press comes as 259 (own-player log
   2026-11-15), so both mean "Power short".
 - **SD card out and in** (fourth run, 2026-11-15, log `player-trace-20261115-033139.log`, card with a file system on the
