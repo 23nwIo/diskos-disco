@@ -35,7 +35,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0201 | `0201000C000v` | Transport: 0 play/pause toggle, 1 next, 2 previous | ui.c, themes, remote.c | do |
 | 0202 | `02020008` | Request current state; the answer is an `a2` frame | main.c, wifi.c | do |
 | 0622 | `0622000C0001` | Rescan (stock: no-op on V2.09; diskOS scans itself, ui/scanner.c) | - | ack |
-| 0642 | `0642000C000v` | USB gadget selector: 0 none, 1 and 2 with the USB modes, 5 USB audio out | main.c, modes.c, usbdrive.c | ack |
+| 0642 | `0642000C000v` | USB gadget selector: 0 none, 1 and 2 with the USB modes, 5 USB audio out | main.c, modes.c, usbdrive.c | ack; 1 (USB storage) done, see MQ_PLAYER_TRACE.md run 5 |
 | 0645 / 0649 | `06xx000C000v` | Gain 0 low / 1 high (tag depends on firmware, ui/fwcaps.c) | main.c `ui_set_gain` | do |
 | 0646 | `0646000C000v` | Rotation/key layout option | controls.c | keep |
 | 0647 | `0647000C000v` | Gapless on/off | main.c | keep |

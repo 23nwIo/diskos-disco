@@ -22,6 +22,7 @@
 #define TOUCH_DEV       "/dev/cst816t"
 #define TOUCH_IOC_OFF   0x2000ef03UL      /* _IO(0xef,3) */
 #define TOUCH_IOC_ON    0x2000ef04UL      /* _IO(0xef,4) */
+#define RFKILL0         "/sys/class/rfkill/rfkill0/state"
 #define BL_STOCK_LEVEL  "31"              /* what the stock player writes; the UI then sets its own level */
 
 static void run(const char *cmd, int dry, hw_log_fn log){
@@ -60,6 +61,12 @@ void hw_power_off(int wd_fd, int dry, hw_log_fn log){
     }
     dev_ioctl(LCD_DEV, LCD_IOC_OFF, "display off", dry, log);
     run("killall -9 mq_ui", dry, log);
+    log("power off: rfkill0 state 0");             /* the stock player's "rfkill 0" (trace run 4: this sysfs file) */
+    if(!dry){
+        int fd = open(RFKILL0, O_WRONLY | O_CLOEXEC);
+        if(fd < 0 || write(fd, "0", 1) != 1) log("power off: rfkill0: %s", strerror(errno));
+        if(fd >= 0) close(fd);
+    }
     run("killall bluetoothd bluealsa brcm_patchram_plus", dry, log);
     if(!dry) sync();
     run("poweroff -f", dry, log);

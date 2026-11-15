@@ -85,6 +85,10 @@ static void test_core(void){
     unsigned sq = c.sleep_seq;
     CHECK(send1(&c, "0806000C0001") == 0 && c.sleep_s == 1 && c.sleep_seq == sq + 1);
     CHECK(send1(&c, "0806000C0000") == 0 && c.sleep_s == 0 && c.sleep_seq == sq + 2);
+    unsigned uq = c.usb_seq;                                      /* 0642: storage on/off; the USB audio gadgets not yet */
+    CHECK(send1(&c, "0642000C0001") == 0 && c.usb_gadget == 1 && c.usb_seq == uq + 1);
+    CHECK(send1(&c, "0642000C0005") == 0 && c.usb_gadget == 1 && c.usb_seq == uq + 1);
+    CHECK(send1(&c, "0642000C0000") == 0 && c.usb_gadget == 0 && c.usb_seq == uq + 2);
 
     /* work mode: 8 is announced once (as the stock player announces a change), other modes are not claimed */
     nsent = 0;
@@ -161,6 +165,8 @@ static void test_e2e(const char *bin){
     ev[0].code = ev[1].code = 259;                                /* the next short press comes as 259 */
     CHECK(write(kw, ev, sizeof ev) == (ssize_t)sizeof ev);
 
+    CHECK(mq_send(pl, "0642000C0001", 12, 0) == 0);           /* USB storage on and off: logged only (-n) */
+    CHECK(mq_send(pl, "0642000C0000", 12, 0) == 0);
     CHECK(mq_send(pl, "0806000C0001", 12, 0) == 0);           /* sleep timer 1 s: a dry-run power off (-n) */
     usleep(1600000);
 

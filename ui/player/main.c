@@ -12,6 +12,8 @@
  *     off, Volume up/down step the volume and tell the UI (a714);
  *   - mounts the SD card when it is inserted and unmounts it when it is pulled (sdcard.c, kernel uevents; the
  *     cold-boot mount is the UI's);
+ *   - USB storage mode (0642 1): hands the card to a USB host as a mass storage gadget, and back on 0642 0
+ *     (usbstorage.c);
  *   - runs the stock power off routine when the sleep timer (0806) runs out (hw.c);
  *   - logs every command to /tmp/diskos-player.log (RAM).
  * No sound yet.
@@ -25,6 +27,7 @@
 #include "proto.h"
 #include "hw.h"
 #include "sdcard.h"
+#include "usbstorage.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
 
@@ -156,7 +159,7 @@ int main(int argc, char **argv){
     else if(use_wd) logmsg("sd: listening for card events (fd %d)", uev);
 
     double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0;
-    int stable = 0; unsigned sleep_seq = 0;
+    int stable = 0; unsigned sleep_seq = 0, usb_seq = 0;
     while(!g_stop){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
         struct pollfd pf[3] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 } };
@@ -168,7 +171,9 @@ int main(int argc, char **argv){
                 ub[un] = 0;
                 if(strstr(ub, "mmc")) logmsg("sd: uevent %s (%zd bytes)", ub, un);   /* the header; diagnosis */
                 int k = sd_uevent_kind(ub, (size_t)un);
-                if(k == SDEV_ADD){ logmsg("sd: card inserted"); sd_mount(logmsg); }
+                if(k != SDEV_NONE && us_active()) logmsg("sd: card %s while exported over USB, left alone",
+                                                         k == SDEV_ADD ? "inserted" : "pulled");
+                else if(k == SDEV_ADD){ logmsg("sd: card inserted"); sd_mount(logmsg); }
                 else if(k == SDEV_REMOVE){ logmsg("sd: card pulled"); sd_unmount(logmsg); }
             }
             if(un < 0 && errno != EAGAIN && errno != EINTR) logmsg("sd: uevent recv: %s", strerror(errno));
@@ -217,6 +222,11 @@ int main(int argc, char **argv){
             int r = wd_feed(wd);
             if(r < 0) logmsg("watchdog: feed failed: %s", strerror(-r));
             last_feed = t;
+        }
+        if(core.usb_seq != usb_seq){                     /* 0642: the UI's "USB storage" source */
+            usb_seq = core.usb_seq;
+            if(core.usb_gadget == 1) us_start(!use_wd, logmsg);
+            else us_stop(!use_wd, logmsg);
         }
         if(core.sleep_seq != sleep_seq){                 /* 0806: the UI's "Shut down" sends 1 s */
             sleep_seq = core.sleep_seq;

@@ -29,6 +29,8 @@ typedef struct {
     int route;                     /* 0666 output route; -1 none yet */
     int idle_off_s, sleep_s;       /* 0 off */
     unsigned sleep_seq;            /* bumps on every 0806, so the main loop (re)starts or cancels the timer */
+    int usb_gadget;                /* 0642: 0 none, 1 USB storage (2 and 5, the USB audio gadgets, not yet) */
+    unsigned usb_seq;              /* bumps on every accepted 0642, so the main loop starts or stops the gadget */
     /* remembered only (Step 2 "keep") */
     int gapless, rotation, track_numbers, resume_mode, folder_play, replaygain, charge, key_action[3];
     /* counters, for the log and the tests */

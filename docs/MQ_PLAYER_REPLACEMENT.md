@@ -224,10 +224,11 @@ with `a607`, and runs the stock power off routine (ui/player/hw.c) when the slee
 the menu's "Shut down" works. It owns the keys like the stock player (grabs `/dev/input/event0`): Power toggles the screen (backlight,
 touch, panel, as traced), a held Power key powers off after 2 s (the stock delay is not measured), Volume up/down step
 the volume by 1 and report it with `a714`. It mounts the SD card when it is inserted and unmounts it when it is
-pulled (kernel uevents for `mmcblk0`, ui/player/sdcard.c; a dead mount left from a missed pull is detached first; vfat/exfat with iocharset=utf8 like the stock player, then ext4 without);
+pulled (kernel uevents for `mmcblk0`, ui/player/sdcard.c; a dead mount left from a missed pull is detached first; ext4 first, then vfat/exfat with iocharset=utf8 like the stock player);
+USB storage mode (`0642 1`/`0`) exports the card to a USB host with the stock player's configfs gadget (ui/player/usbstorage.c);
 the cold-boot mount stays the UI's. **No sound yet**: playback, the DAC sequences, the queue tables, the jack
 and the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off with the own player) come next.
-The stock power off also writes "rfkill 0", which is not copied yet (its exact target is not in the trace).
+The stock power off also writes "rfkill 0" (`/sys/class/rfkill/rfkill0/state`); copied.
 Host test: `make -C ui/tests player_test && ui/tests/player_test ui/tests/diskos-player-host`.
 
 ## Open questions for a device session

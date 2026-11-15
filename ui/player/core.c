@@ -136,7 +136,13 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         return set_(c, "key action", &c->key_action[f.tag - 0x0820], v, 0, 0xffff);
 
     /* accepted, belong to later steps */
-    case 0x0622: case 0x0642: case 0x06b3: case 0x06c1: case 0x0818:
+    case 0x0642:
+        if(v < 0){ c->bad_frames++; logf_(c, "usb gadget: bad frame"); return -1; }
+        if(v != 0 && v != 1){ logf_(c, "usb gadget %d: not supported by the own player yet, ignored", v); return 0; }
+        c->usb_gadget = v; c->usb_seq++;
+        logf_(c, "usb gadget = %d (%s)", v, v ? "USB storage" : "none");
+        return 0;
+    case 0x0622: case 0x06b3: case 0x06c1: case 0x0818:
         logf_(c, "%04x: not handled by the own player yet (%.*s)", f.tag, f.dlen > 48 ? 48 : f.dlen, f.data);
         return 0;
     }

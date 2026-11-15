@@ -172,6 +172,20 @@ the mark that follows it.
   `storage_demo` (idVendor 0x0525, idProduct 0xa4a5, mass_storage lun.0 file `/dev/mmcblk0`, removable 1, UDC
   `13500000.otg_new`). Leaving it: the DAC block, empty UDC, `umount /sys/kernel/config`, `mkdir -p /tmp/sdcard`,
   `blkid`.
+- **USB storage with a real host** (run 5, 2026-11-15, Linux PC). Frames: on: `0666 6`, `0642 1`, `0657 8`; off:
+  `0666 6`, `0642 0`, `0657 8`; both answered with `aa1c000C0000` and `a824000C0000`. The gadget setup writes, in
+  this order: role `device`, `mount -t configfs`, bDeviceClass/SubClass/Protocol `0x00`, bcdUSB `0x200`, bcdDevice
+  `0x100`, idVendor `0x0525`, idProduct `0xa4a5`, strings `ingenic` / `composite-storage` / `ingenic-storage`, c.1
+  MaxPower `50`, bmAttributes `0x80`, configuration `storage`, mass_storage.0 stall `0`, lun.0 cdrom `0`, file
+  `/dev/mmcblk0`, nofua `0`, removable `1`, ro `0`, then UDC `13500000.otg_new` (no mkdir or symlink seen: the gadget
+  directories already exist). Plugging into the host: one `/ui` frame `a60a000C0212` from a separate thread (most
+  likely the USB-C/charger watcher; the diskOS UI does not read `a60a`). Host mount, reading and writing a file,
+  sync, umount and unplugging: **no player activity at all**, no frame on unplug. Leaving: `aa1c`, mixer `LO3_MUX`,
+  `a824`, the DAC block (`M`56/60 3 then 0, 52/54 2, 41/50 0, volume 0x74/0x72 three times, `M`46), UDC opened for
+  writing **without a write**, `umount /sys/kernel/config`, `/ui` `a60a000C0213`, `sync`, `mkdir -p /tmp/sdcard`,
+  `blkid`, `mount -o iocharset=utf8 /dev/mmcblk0 /tmp/sdcard`, role `device` again, mixer `LO3_MUX` once more.
+  Own player (usbstorage.c): the same gadget values; unbinds with an explicit `\n` to UDC and clears lun.0/file
+  before the card is mounted again; no DAC, mixer or `a60a` yet (no audio, and the UI ignores `a60a`).
 - **EQ presets** (off, Pop, Hip-Hop, R&B, off; checked 2026-11-15): no DAC or mixer call at all, so the EQ is done in
   software on the samples (matches `eq.c` in the binary).
 - **Charger in/out**: no calls besides the reads of `/dev/aw35615` and `/dev/sgm41513` (reads are not recorded).
@@ -186,8 +200,7 @@ the mark that follows it.
   boot after this run it crashed right after (SIGSEGV in libdbus at 26.7 s), and fiio_init's loop then killed the diskOS
   UI and started the stock UI. Fix attempt 54359e6 (not device-tested): diskOS leaves the boot Bluetooth bring-up to the player.
 
-Still to record, each when its mode is ported (step 3 of the replacement plan): USB storage with a real USB host
-connected and disconnected (run 3 only switched the mode), USB DAC mode with a PC playing, Bluetooth receiver with a
+Still to record, each when its mode is ported (step 3 of the replacement plan): USB DAC mode with a PC playing, Bluetooth receiver with a
 phone sending music. The tracer was switched off after run 3 (2026-11-15).
 
 The caller address points into the code mapping listed in the `map` lines of the same start block. For
