@@ -143,8 +143,8 @@ the mark that follows it.
   stream `_IO('M',48)` on `A`; the menu power off sends it too.
 - **DAC filter** (`A` `M62` + `C` `M64`, same value): fast roll-off II = 0x00 (also the boot value), slow II = 0x80,
   slow PC = 0xc0, fast PC = 0x40, NOS = 0x20, wideband = 0x02. The first change also restarted the stream.
-- **DRE** (`A` `M70` only): the toggle wrote 1 and then 0. Which value means "on" is open: by the marks 1 = off,
-  but the player writes 1 at every start while the setting was on. Needs one more toggle with a mark right after it.
+- **DRE** (`A` `M70` only): 0 = on, 1 = off (checked 2026-11-15 with a mark right after each toggle); the player
+  writes the current setting at start.
 - **Headphone jack**: `/dev/gpio` `'G'` 122 (`pb20`) returns 1 with the plug in, 0 without. After plugging in again only
   the volume group was written (no stream restart); Jo heard no sound after the re-insert.
 - **Power key**: screen off = backlight "0", `/dev/cst816t` `_IO(0xef,3)` (touch off), `/dev/lcd_st77916`
