@@ -32,4 +32,11 @@ int hw_jack_read(int fd);
 #define KEYC_VOL_UP    251
 #define KEYC_VOL_DOWN  252
 #define KEYC_PLAY      250
+/* The driver tells a double click and a long press apart itself and sends own codes for them (device log 2026-11-15,
+ * Jo: Volume up/down held 3 s, double clicked; Play double clicked) */
+#define KEYC_VOL_UP_LONG     263
+#define KEYC_VOL_DOWN_LONG   262
+#define KEYC_VOL_UP_DOUBLE   266
+#define KEYC_VOL_DOWN_DOUBLE 267
+#define KEYC_PLAY_DOUBLE     269
 #endif

@@ -105,6 +105,25 @@ static void on_signal(int s){ (void)s; g_stop = 1; }
 static int core_transport(void *ctx, int op, long arg){ (void)ctx; return pb_transport(op, arg); }
 static int core_play(void *ctx, int type, int pos, const char *name){ (void)ctx; return pb_play_list(type, pos, name); }
 
+/* ---- volume keys: click, double click and long press each change the volume or switch track, as stored by the stock
+ * player in SYSCONFIG (set by 0820-0822, ui/controls.h): 1 = volume, anything else = track (up = next, down =
+ * previous). A long press that changes the volume keeps stepping until the key is let go. ---- */
+enum { KA_CLICK = 0, KA_DOUBLE = 1, KA_LONG = 2 };
+static const char *const KEY_COL[3] = { "KEY_SINGLE_CLICK_SLE", "KEY_DOUBLE_CLICK_SLE", "KEY_LONG_PRESS_SLE" };
+#define RAMP_STEP_S 0.15           /* one volume step this often while held (the stock rate is not measured) */
+#define RAMP_MAX_S  15.0           /* a release that never comes stops the ramp anyway */
+static int g_ramp_dir, g_ramp_code;
+static double g_ramp_next, g_ramp_end;
+static void vol_key(pl_core_t *c, int which, int dir, double t){
+    if(c->key_action[which] != 1){
+        logmsg("volume key: %s track", dir > 0 ? "next" : "previous");
+        pb_transport(dir > 0 ? PL_T_NEXT : PL_T_PREV, 0);
+        return;
+    }
+    pl_core_volume_step(c, dir);
+    if(which == KA_LONG){ g_ramp_dir = dir; g_ramp_next = t + RAMP_STEP_S; g_ramp_end = t + RAMP_MAX_S; }
+}
+
 int main(int argc, char **argv){
     int use_wd = 1; const char *logpath = LOG_DEFAULT, *qprefix = "/", *keypath = KEY_DEV;
     for(int i = 1; i < argc; i++){
@@ -163,6 +182,16 @@ int main(int argc, char **argv){
     core.transport = core_transport;
     core.play = core_play;
     pb_init(&core, QD_SONG_DB, QD_SYSCONFIG_DB, logmsg);
+    /* the key actions are kept in SYSCONFIG like the stock player keeps them; the UI sends them only when changed.
+     * Not stored: every press changes the volume. */
+    int key_saved[3];
+    for(int i = 0; i < 3; i++){
+        int v = use_wd ? qd_sys_get(QD_SYSCONFIG_DB, KEY_COL[i]) : -1;
+        core.key_action[i] = v < 0 ? 1 : v;
+        key_saved[i] = core.key_action[i];
+    }
+    logmsg("keys: click %d, double click %d, long press %d (1 volume, else track)",
+           core.key_action[0], core.key_action[1], core.key_action[2]);
 
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
@@ -187,7 +216,7 @@ int main(int argc, char **argv){
     while(!g_stop){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
         struct pollfd pf[4] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 } };
-        int pr = poll(pf, 4, 250);
+        int pr = poll(pf, 4, g_ramp_dir ? 30 : 250);
         if(pr > 0 && pf[3].fd >= 0 && (pf[3].revents & (POLLIN | POLLHUP | POLLERR))){
             int ev = eng_idle_event();
             if(ev > 0) pb_engine_event();
@@ -227,13 +256,16 @@ int main(int argc, char **argv){
             }
             for(ssize_t k = 0; r > 0 && k < r / (ssize_t)sizeof ev[0]; k++){
                 if(ev[k].type != EV_KEY) continue;
-                /* The driver reports a click as press + release microseconds apart (trace run 2026-11-15); what it sends
-                 * while a key is held is not known yet, so everything but a release is logged. An autorepeat (value 2)
-                 * of a volume key steps the volume like a press: the stock player keeps changing it while held. */
-                if(ev[k].value != 0) logmsg("key %u value %d at %ld.%06ld", (unsigned)ev[k].code, ev[k].value,
-                                            (long)ev[k].input_event_sec, (long)ev[k].input_event_usec);
+                double kt = now_s();
+                /* while a key is held the driver may only send its release later: logged with the kernel time */
+                logmsg("key %u value %d at %ld.%06ld", (unsigned)ev[k].code, ev[k].value,
+                       (long)ev[k].input_event_sec, (long)ev[k].input_event_usec);
+                if(ev[k].value == 0){
+                    if(g_ramp_dir && ev[k].code == (unsigned)g_ramp_code){ logmsg("volume key let go"); g_ramp_dir = 0; }
+                    continue;
+                }
                 if(ev[k].value == 2 && (ev[k].code == KEYC_VOL_UP || ev[k].code == KEYC_VOL_DOWN)){
-                    pl_core_volume_step(&core, ev[k].code == KEYC_VOL_UP ? +1 : -1);
+                    pl_core_volume_step(&core, ev[k].code == KEYC_VOL_UP ? +1 : -1);   /* an autorepeat, if any */
                     continue;
                 }
                 if(ev[k].value != 1) continue;
@@ -248,8 +280,13 @@ int main(int argc, char **argv){
                     logmsg("power key held: power off in 2 s");
                     power_at = now_s() + 2.0;
                     break;
-                case KEYC_VOL_UP:   pl_core_volume_step(&core, +1); break;
-                case KEYC_VOL_DOWN: pl_core_volume_step(&core, -1); break;
+                case KEYC_VOL_UP:          vol_key(&core, KA_CLICK, +1, kt); break;
+                case KEYC_VOL_DOWN:        vol_key(&core, KA_CLICK, -1, kt); break;
+                case KEYC_VOL_UP_DOUBLE:   vol_key(&core, KA_DOUBLE, +1, kt); break;
+                case KEYC_VOL_DOWN_DOUBLE: vol_key(&core, KA_DOUBLE, -1, kt); break;
+                case KEYC_VOL_UP_LONG:     g_ramp_code = KEYC_VOL_UP_LONG; vol_key(&core, KA_LONG, +1, kt); break;
+                case KEYC_VOL_DOWN_LONG:   g_ramp_code = KEYC_VOL_DOWN_LONG; vol_key(&core, KA_LONG, -1, kt); break;
+                case KEYC_PLAY_DOUBLE:     logmsg("play key double click (what the stock player does is not known yet)"); break;
                 case KEYC_PLAY:     logmsg("play key"); pb_transport(PL_T_TOGGLE, 0); break;
                 default:            logmsg("key %u pressed, not used", (unsigned)ev[k].code); break;
                 }
@@ -275,6 +312,13 @@ int main(int argc, char **argv){
             att_vol = core.volume; att_gain = core.gain; att_bal = core.balance;
         }
         pb_tick(t);
+        if(g_ramp_dir && t >= g_ramp_end){ logmsg("volume key: no release seen, ramp stopped"); g_ramp_dir = 0; }
+        if(g_ramp_dir && t >= g_ramp_next){ pl_core_volume_step(&core, g_ramp_dir); g_ramp_next += RAMP_STEP_S; if(g_ramp_next < t) g_ramp_next = t + RAMP_STEP_S; }
+        for(int i = 0; i < 3; i++) if(core.key_action[i] != key_saved[i]){   /* 0820-0822: kept like the stock player */
+            key_saved[i] = core.key_action[i];
+            if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, KEY_COL[i], core.key_action[i]) != 0)
+                logmsg("keys: can't store %s in %s", KEY_COL[i], QD_SYSCONFIG_DB);
+        }
         if(core.usb_seq != usb_seq){                     /* 0642: the UI's "USB storage" source */
             usb_seq = core.usb_seq;
             if(core.usb_gadget == 1) us_start(!use_wd, logmsg);
