@@ -3221,7 +3221,7 @@ static void player_launch_prepare(void){
      * missing note is the acceptable loss. alarm(0) happens in exec_stock_player(), not here. */
     launch_status_publish(guard, local);
     {   /* own player (own_player.h): only with /usr/data/diskos-own-player; the trace below is for the stock player */
-        const opl_paths_t op = { OPL_SWITCH, OPL_BIN, OPL_STARTS };
+        const opl_paths_t op = { OPL_SWITCH, OPL_BIN, OPL_STARTS, OPL_UNSTABLE };
         int no = 0, r = opl_prepare(&op, &no);
         if(r == OPL_ON) g_own_player = 1;
         if(r != OPL_OFF){
