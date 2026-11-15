@@ -14,6 +14,9 @@
 
 typedef void (*pl_send_fn)(void *ctx, const char *frame, int len);
 typedef void (*pl_log_fn)(void *ctx, const char *msg);
+/* Transport requests to the audio engine (main.c wires them to engine.c; NULL = no engine, logged only). */
+enum { PL_T_TOGGLE = 0, PL_T_NEXT = 1, PL_T_PREV = 2, PL_T_SEEK = 3 };
+typedef int (*pl_transport_fn)(void *ctx, int op, long arg);
 
 typedef struct {
     /* applied settings (Step 2 "do") */
@@ -38,6 +41,7 @@ typedef struct {
     unsigned frames, bad_frames, unknown_tags;
 
     pl_send_fn send; pl_log_fn log; void *ctx;
+    pl_transport_fn transport;     /* set after pl_core_init; may stay NULL */
 } pl_core_t;
 
 void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx);

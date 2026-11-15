@@ -6,6 +6,8 @@
 #include "../player/core.h"
 #include "../player/proto.h"
 #include "../player/sdcard.h"
+#include "../player/dac.h"
+#include "../player/mpdcli.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -199,8 +201,31 @@ static void test_uevent(void){
     CHECK(sd_uevent_kind(add, 10) == SDEV_NONE);                  /* cut short: no keys */
 }
 
+static void test_dac_mpd(void){
+    CHECK(dac_rate_code(44100) == 1 && dac_rate_code(48000) == 2 && dac_rate_code(96000) == 4 && dac_rate_code(192000) == 6);
+    CHECK(dac_rate_code(22050) == 0);
+    unsigned char a, c;
+    dac_attenuation(27, 1, 0x0102, &a, &c); CHECK(a == 0x68 && c == 0x66);  /* trace 02:41: volume 27, balance 0x0102 */
+    dac_attenuation(78, 1, 0, &a, &c);  CHECK(a == 0 && c == 0);           /* 0 dB */
+    dac_attenuation(120, 1, 0, &a, &c); CHECK(a == 0 && c == 0);           /* above: clamped */
+    dac_attenuation(27, 0, 0, &a, &c);  CHECK(a == 0x72 && c == 0x72);     /* gain low: 12 more */
+    dac_attenuation(78, 1, 0x0003, &a, &c); CHECK(a == 0 && c == 3);       /* 0x00NN: C down */
+    dac_attenuation(0, 1, 0, &a, &c);   CHECK(a == 0xff && c == 0xff);     /* 0 = mute */
+    char q[64];
+    CHECK(mc_quote(q, sizeof q, "file:///a \"b\"\\c") > 0 && !strcmp(q, "\"file:///a \\\"b\\\"\\\\c\""));
+    CHECK(mc_quote(q, 4, "abcdef") == -1);
+    const char *r = "volume: -1\nstate: play\nsong: 2\nelapsed: 12.345\naudio: 44100:16:2\n";
+    char v[32];
+    CHECK(mc_get(r, "state", v, sizeof v) && !strcmp(v, "play"));
+    CHECK(mc_get(r, "audio", v, sizeof v) && !strcmp(v, "44100:16:2"));
+    CHECK(mc_get(r, "song", v, sizeof v) && !strcmp(v, "2"));
+    CHECK(!mc_get(r, "songid", v, sizeof v));
+    CHECK(!mc_get(r, "stat", v, sizeof v));
+}
+
 int main(int argc, char **argv){
     test_proto();
+    test_dac_mpd();
     test_uevent();
     test_core();
     if(argc > 1) test_e2e(argv[1]);

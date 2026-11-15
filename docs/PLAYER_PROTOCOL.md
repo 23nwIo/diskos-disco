@@ -111,6 +111,15 @@ The UI decides "playing" from the `a1` position advancing (ui/playstate.c, 1.6 s
   `mdb_play_pos`, `MDB_FAV_ORDER`, the Up Next reader), so the own player must build them identically; `a2`
   `pos_id` is the `LIST_SONG_0.ID` playing. The player also keeps `MY_LOVE` (favourites), `CUSTOM_PLAYLIST` /
   `PLAYLIST_INFO` and `MEMORY_PLAY` (resume) there. All keyed by file path.
+- Queue table schema (V2.57, `sqlite3 .schema` on a Disc, 2026-11-15): `LIST_SONG_0 (ID INTEGER PRIMARY KEY
+  autoincrement, LIST_ID INT, POS_ID INT, PATH TEXT, NAME TEXT, TITLE TEXT, ALBUM TEXT, ARTIST TEXT, GENRE TEXT, DISC
+  INT, TRACK INT, IS_CUE INT, IS_ISO INT, OFFSET BIGINT, DURATION BIGINT, ADD_TIME INT8, IS_SELECT INT, SONG_TYPE INT,
+  ALBUM_ARTIST TEXT, IS_M3U INT, M3U_PATH TEXT)`; `LIST_SONG_3` (shuffle) only exists while shuffle is on and holds
+  `POS_ID` (`INSERT INTO LIST_SONG_%d (POS_ID) VALUES (?1)`). `MEMORY_PLAY (ID, MUSIC_ID, IS_PLAYING, POSITION, IS_CUE,
+  IS_ISO, TRACK, IS_NAS, IS_M3U)`. The stock fill statements (`strings mq_player`): `INSERT INTO LIST_SONG_%d (PATH,
+  NAME, TITLE, ALBUM, ARTIST, ALBUM_ARTIST, GENRE, DISC, TRACK, DURATION, IS_CUE, IS_ISO, OFFSET, IS_M3U, M3U_PATH)
+  SELECT ... FROM SONG WHERE <ARTIST=? | COALESCE(ALBUM_ARTIST, ARTIST)=? | ALBUM=? | GENRE=? | ...> <ORDER BY>`. A row
+  as written (example): ID 1, LIST_ID and POS_ID empty, DURATION in ms, ADD_TIME, SONG_TYPE 3.
 - `/usr/data/fiio/db/sysconfig.db`: settings (`SYSCONFIG`).
 - Custom PEQ bands for slots 11..20: stored by the UI's EQ editor (ui/eqcustom.c); where the player reads them from
   has to be checked before the EQ is built.

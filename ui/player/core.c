@@ -4,6 +4,7 @@
 #include "proto.h"
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void logf_(pl_core_t *c, const char *fmt, ...){
@@ -85,9 +86,19 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
     }
     case 0x0103:
         if(f.dlen != 8){ c->bad_frames++; logf_(c, "seek: bad frame"); return -1; }
-        logf_(c, "seek to %.*s ms (hex, playback not implemented yet)", 8, f.data);
+    {
+        char h[9]; memcpy(h, f.data, 8); h[8] = 0;
+        char *end; unsigned long ms = strtoul(h, &end, 16);
+        if(*end){ c->bad_frames++; logf_(c, "seek: bad frame"); return -1; }
+        logf_(c, "seek to %lu ms", ms);
+        if(c->transport) c->transport(c->ctx, PL_T_SEEK, (long)ms);
         return 0;
-    case 0x0201: logf_(c, "transport %d (0 play/pause, 1 next, 2 previous; playback not implemented yet)", v); return 0;
+    }
+    case 0x0201:
+        if(v < 0 || v > 2){ logf_(c, "transport %d: unknown, ignored", v); return -1; }
+        logf_(c, "transport %d (0 play/pause, 1 next, 2 previous)%s", v, c->transport ? "" : " - no engine");
+        if(c->transport) c->transport(c->ctx, v == 0 ? PL_T_TOGGLE : v == 1 ? PL_T_NEXT : PL_T_PREV, 0);
+        return 0;
     case 0x0104: logf_(c, "favourite %d (not implemented yet)", v); return 0;
     case 0x0102: return set_(c, "play mode", &c->play_mode, v, 0, 4);
     case 0x0648: return set_(c, "artist grouping", &c->artist_grouping, v, 0, 1);
