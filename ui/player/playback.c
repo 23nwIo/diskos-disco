@@ -62,13 +62,7 @@ static sqlite3 *db(void){
 static int artist_class(void){
     int cls = qd_artist_class(g_sys_db);
     if(C->artist_grouping >= 0 && C->artist_grouping != cls){
-        sqlite3 *s = NULL;
-        if(sqlite3_open_v2(g_sys_db, &s, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK){
-            sqlite3_busy_timeout(s, 1000);
-            char sql[96]; snprintf(sql, sizeof sql, "UPDATE SYSCONFIG SET ARTIST_CLASS_TYPE=%d WHERE ID=1;", C->artist_grouping);
-            if(sqlite3_exec(s, sql, NULL, NULL, NULL) != SQLITE_OK) L("queue: sysconfig: %s", sqlite3_errmsg(s));
-        }
-        if(s) sqlite3_close(s);
+        if(qd_sys_set(g_sys_db, "ARTIST_CLASS_TYPE", C->artist_grouping) != 0) L("queue: can't store the Artist grouping in %s", g_sys_db);
         cls = C->artist_grouping;
     }
     return cls < 0 ? 0 : cls;

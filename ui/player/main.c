@@ -226,7 +226,17 @@ int main(int argc, char **argv){
                 close(keys); keys = -1;
             }
             for(ssize_t k = 0; r > 0 && k < r / (ssize_t)sizeof ev[0]; k++){
-                if(ev[k].type != EV_KEY || ev[k].value != 1) continue;     /* presses only; releases follow at once */
+                if(ev[k].type != EV_KEY) continue;
+                /* The driver reports a click as press + release microseconds apart (trace run 2026-11-15); what it sends
+                 * while a key is held is not known yet, so everything but a release is logged. An autorepeat (value 2)
+                 * of a volume key steps the volume like a press: the stock player keeps changing it while held. */
+                if(ev[k].value != 0) logmsg("key %u value %d at %ld.%06ld", (unsigned)ev[k].code, ev[k].value,
+                                            (long)ev[k].input_event_sec, (long)ev[k].input_event_usec);
+                if(ev[k].value == 2 && (ev[k].code == KEYC_VOL_UP || ev[k].code == KEYC_VOL_DOWN)){
+                    pl_core_volume_step(&core, ev[k].code == KEYC_VOL_UP ? +1 : -1);
+                    continue;
+                }
+                if(ev[k].value != 1) continue;
                 switch(ev[k].code){
                 case KEYC_POWER: case KEYC_POWER_ALT:
                     logmsg("power key (%u)", (unsigned)ev[k].code);

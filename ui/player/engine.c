@@ -233,6 +233,12 @@ int eng_status(eng_status_t *st){
     if(mc_get(r, "song", v, sizeof v)) st->song = atoi(v);
     if(mc_get(r, "playlistlength", v, sizeof v)) st->songs = atoi(v);
     if(mc_get(r, "songid", v, sizeof v)) st->songid = atoi(v);
+    {   /* MPD's own error (e.g. the output could not be opened): logged once per new text */
+        static char last_err[256];
+        char e[256] = "";
+        mc_get(r, "error", e, sizeof e);
+        if(strcmp(e, last_err)){ if(e[0]) g_log("engine: MPD error: %s", e); snprintf(last_err, sizeof last_err, "%s", e); }
+    }
     if(mc_get(r, "bitrate", v, sizeof v)) st->kbps = atoi(v);
     if(mc_get(r, "audio", v, sizeof v)){
         char *p; st->rate = (unsigned)strtoul(v, &p, 10);

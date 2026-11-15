@@ -17,6 +17,10 @@ enum { QD_RESUME = 0, QD_ALL = 1, QD_ARTIST = 2, QD_ALBUM = 3, QD_PLAYLIST = 5, 
 /* Open song.db read-write with a busy timeout (the UI reads and writes it too). NULL on failure. */
 sqlite3 *qd_open(const char *path);
 
+/* An integer column of the single SYSCONFIG row (the stock player's settings): the value (>= 0), or -1 when it can't
+ * be read. qd_sys_set writes one (col is a constant, never user text): 0 or -1. */
+int qd_sys_get(const char *sysconfig_path, const char *col);
+int qd_sys_set(const char *sysconfig_path, const char *col, int v);
 /* SYSCONFIG.ARTIST_CLASS_TYPE (0 ARTIST, 1 album artist), -1 if it can't be read. */
 int qd_artist_class(const char *sysconfig_path);
 

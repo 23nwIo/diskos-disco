@@ -29,21 +29,38 @@ sqlite3 *qd_open(const char *path){
     return d;
 }
 
-int qd_artist_class(const char *sysconfig_path){
+int qd_sys_get(const char *sysconfig_path, const char *col){
     sqlite3 *c = NULL; int v = -1;
+    char sql[128]; snprintf(sql, sizeof sql, "SELECT %s FROM SYSCONFIG WHERE ID=1;", col);
     if(sqlite3_open_v2(sysconfig_path, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
         sqlite3_busy_timeout(c, 500);
         sqlite3_stmt *st;
-        if(sqlite3_prepare_v2(c, "SELECT ARTIST_CLASS_TYPE FROM SYSCONFIG WHERE ID=1;", -1, &st, NULL) == SQLITE_OK){
+        if(sqlite3_prepare_v2(c, sql, -1, &st, NULL) == SQLITE_OK){
             if(sqlite3_step(st) == SQLITE_ROW && sqlite3_column_type(st, 0) == SQLITE_INTEGER){
                 int x = sqlite3_column_int(st, 0);
-                if(x == 0 || x == 1) v = x;
+                if(x >= 0) v = x;
             }
             sqlite3_finalize(st);
         }
     }
     if(c) sqlite3_close(c);
     return v;
+}
+
+int qd_sys_set(const char *sysconfig_path, const char *col, int v){
+    sqlite3 *c = NULL; int rc = -1;
+    char sql[128]; snprintf(sql, sizeof sql, "UPDATE SYSCONFIG SET %s=%d WHERE ID=1;", col, v);
+    if(sqlite3_open_v2(sysconfig_path, &c, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK){
+        sqlite3_busy_timeout(c, 1000);
+        if(sqlite3_exec(c, sql, NULL, NULL, NULL) == SQLITE_OK && sqlite3_changes(c) == 1) rc = 0;
+    }
+    if(c) sqlite3_close(c);
+    return rc;
+}
+
+int qd_artist_class(const char *sysconfig_path){
+    int v = qd_sys_get(sysconfig_path, "ARTIST_CLASS_TYPE");
+    return (v == 0 || v == 1) ? v : -1;
 }
 
 static int has_col(sqlite3 *d, const char *table, const char *col){
