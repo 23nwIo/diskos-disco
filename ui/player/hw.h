@@ -52,4 +52,5 @@ int hw_debounce(int *state, int *count, int level);
 #define KEYC_VOL_UP_DOUBLE   266
 #define KEYC_VOL_DOWN_DOUBLE 267
 #define KEYC_PLAY_DOUBLE     269
+#define KEYC_PLAY_LONG       268         /* Play held (Jo 2026-11-15); a Power double click sends no code at all */
 #endif

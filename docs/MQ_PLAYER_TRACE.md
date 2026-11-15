@@ -160,11 +160,12 @@ the mark that follows it.
   (0xfa). Every key arrives as press + release within microseconds, so the driver reports clicks, not hold times.
   The driver tells double clicks and long presses apart itself and sends own codes (own-player log 2026-11-15, Jo):
   Volume up held 263, Volume down held 262, Volume up double click 266, Volume down double click 267, Play double
-  click 269. While a volume key is held, the driver repeats the long-press code as autorepeat events (value 2) every
+  click 269, Play held 268. A Power double click sends no code at all (Jo, 2026-11-15). While a volume key is held, the driver repeats the long-press code as autorepeat events (value 2) every
   40 ms, starting 250 ms after the long-press event. The stock player ignores a Play double click and a held Play
   key; only a short Play press toggles play and pause (Jo, 2026-11-15). The own player does the same.
   Short Power presses alternate between 265 and 259 (0x103): every second press comes as 259 (own-player log
-  2026-11-15), so both mean "Power short".
+  2026-11-15), so both mean "Power short". Complete table (every key, click / double click / held):
+  Power 265 or 259 / none / 264; Volume up 251 / 266 / 263; Volume down 252 / 267 / 262; Play 250 / 269 / 268.
 - **SD card out and in** (fourth run, 2026-11-15, log `player-trace-20261115-033139.log`, card with a file system on the
   whole `/dev/mmcblk0`). At start the player itself mounts the card: `umount /tmp/sdcard`, `rm -rf /tmp/sdcard`,
   `mkdir -p /tmp/sdcard`, `blkid | grep /dev/mmcblk0`, then `mount -o iocharset=utf8 /dev/mmcblk0 /tmp/sdcard` from a

@@ -347,6 +347,7 @@ int main(int argc, char **argv){
                 case KEYC_VOL_UP_LONG:     vol_key(&core, KA_LONG, +1, kt); break;
                 case KEYC_VOL_DOWN_LONG:   vol_key(&core, KA_LONG, -1, kt); break;
                 case KEYC_PLAY_DOUBLE:     break;  /* ignored like in the stock player (docs/MQ_PLAYER_TRACE.md) */
+                case KEYC_PLAY_LONG:       break;  /* the same: a held Play does nothing on the stock player */
                 case KEYC_PLAY:     logmsg("play key"); pb_transport(PL_T_TOGGLE, 0); break;
                 default:            logmsg("key %u pressed, not used", (unsigned)ev[k].code); break;
                 }
