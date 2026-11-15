@@ -59,8 +59,13 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   change, `aa1c`, the full `a2` with the song JSON and `pos_id` = `LIST_SONG_0.ID`, `aa05`, `aa1c`, `{"state":0}`
   twice); `0202` with a track loaded is answered with the full `a2`.
 - **Resume** (`MEMORY_PLAY`, mode `0684`): see docs/MQ_PLAYER_REPLACEMENT.md, "Resume (MEMORY_PLAY)".
-- Not yet: CUE and ISO tracks (a part of a bigger file; skipped with a log line), Previous restarting the song after a
-  few seconds (stock behaviour not measured).
+- **CUE tracks** (2026-11-15): a row with `IS_CUE=1` is the part of its file (`PATH`) from `OFFSET` for `DURATION`
+  (both ms, ui/scanner.c "CUE sheets"); the engine adds the file and limits it with `rangeid ID start:end` (open end
+  when the duration is 0). MPD then counts elapsed time, duration and seeks from the part's start (checked with MPD
+  0.23 on a PC), so `a1`, `a2` and `0103` need no conversion. Consecutive tracks of one file queue gaplessly like
+  any two songs.
+- **SACD ISO tracks** (`IS_ISO=1`) are skipped with a log line: MPD has no decoder for disc images.
+- Not yet: Previous restarting the song after a few seconds (stock behaviour not measured).
 
 ## Next
 

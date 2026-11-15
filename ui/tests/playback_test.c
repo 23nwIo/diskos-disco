@@ -23,20 +23,21 @@ static int fails;
 /* ---- stand-in engine: two slots like MPD with our window ---- */
 static char e_cur[1024], e_next[1024], e_missing[1024];
 static int e_cur_id = -1, e_next_id = -1, e_ids = 1, e_state = ENG_STOP, e_armed, e_loads;
-static long e_ms;
+static long e_ms, e_off, e_len, e_next_off, e_next_len;
 static unsigned rate_of(const char *p){ return strstr(p, "96k") ? 96000 : 44100; }
 static eng_prepare_fn e_prepare;
 void eng_set_prepare(eng_prepare_fn fn){ e_prepare = fn; }
 int eng_ready(void){ return 1; }
-int eng_load(const char *p, long ms, int paused){
+int eng_load(const char *p, long off, long len, long ms, int paused){
     if(e_missing[0] && !strcmp(p, e_missing)) return -1;
     snprintf(e_cur, sizeof e_cur, "%s", p); e_cur_id = e_ids++; e_next[0] = 0; e_next_id = -1; e_ms = ms; e_loads++;
+    e_off = off; e_len = len;
     e_armed = paused; e_state = paused ? ENG_PAUSE : ENG_PLAY;
     if(!paused && e_prepare) e_prepare(rate_of(p));          /* as engine.c: the DAC before MPD opens the PCM */
     return 0;
 }
-int eng_set_next(const char *p, unsigned must_rate){
-    e_next[0] = 0; e_next_id = -1;
+int eng_set_next(const char *p, long off, long len, unsigned must_rate){
+    e_next[0] = 0; e_next_id = -1; e_next_off = off; e_next_len = len;
     if(!p) return 0;
     if(e_missing[0] && !strcmp(p, e_missing)) return -1;
     if(must_rate && rate_of(p) != must_rate) return 1;
@@ -57,7 +58,7 @@ int eng_status(eng_status_t *s){
 }
 /* the current song ends: MPD moves on to the next slot, or stops */
 static void e_song_ends(void){
-    if(e_next_id >= 0){ memcpy(e_cur, e_next, sizeof e_cur); e_cur_id = e_next_id; e_next[0] = 0; e_next_id = -1; e_advanced_flag = 1; }
+    if(e_next_id >= 0){ memcpy(e_cur, e_next, sizeof e_cur); e_cur_id = e_next_id; e_off = e_next_off; e_len = e_next_len; e_next[0] = 0; e_next_id = -1; e_advanced_flag = 1; }
     else e_state = ENG_STOP;
     e_ms = 0;
     pb_engine_event();
@@ -287,8 +288,15 @@ static void test_playback(void){
     /* type 0 jumps by LIST_SONG_0 position, also in shuffle */
     CHECK(pb_play_list(QD_RESUME, 0, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));
     c.play_mode = PQ_IN_ORDER; pb_mode_changed();
-    /* the CUE row is skipped (not supported yet); a missing file is skipped too */
-    CHECK(pb_play_list(QD_ALL, 8, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));   /* wrapped past the CUE row */
+    /* a CUE track plays the part of its file from OFFSET for DURATION; a whole file has no part */
+    sql(d, "UPDATE SONG SET OFFSET=30000 WHERE PATH='/s/cue.flac';");
+    CHECK(pb_play_list(QD_ALL, 8, "") == 0 && !strcmp(e_cur, "/s/cue.flac") && e_off == 30000 && e_len == 60000);
+    CHECK(e_next[0] == 0);                                    /* the last song, in order: nothing after it */
+    CHECK(pb_play_list(QD_ALL, 7, "") == 0 && e_off == 0 && e_len == 0 && !strcmp(e_next, "/s/cue.flac") && e_next_off == 30000);
+    /* a SACD ISO track is skipped (MPD has no decoder for disc images); a missing file is skipped too */
+    sql(d, "UPDATE SONG SET IS_CUE=0, IS_ISO=1 WHERE PATH='/s/cue.flac';");
+    CHECK(pb_play_list(QD_ALL, 8, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));   /* wrapped past the ISO row */
+    sql(d, "UPDATE SONG SET IS_CUE=1, IS_ISO=0 WHERE PATH='/s/cue.flac';");
     snprintf(e_missing, sizeof e_missing, "/s/b1.flac");
     CHECK(pb_play_list(QD_ALL, 0, "") == 0 && !strcmp(e_next, "/s/b2.flac"));
     CHECK(pb_play_list(QD_ALL, 1, "") == 0 && !strcmp(e_cur, "/s/b2.flac"));

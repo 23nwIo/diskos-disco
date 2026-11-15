@@ -97,14 +97,16 @@ static int artist_class(void){
     return cls < 0 ? 0 : cls;
 }
 
-/* A row MPD can play as a whole file. CUE and ISO tracks (a part of a bigger file) are not supported yet. */
+/* A row MPD can play: a file, or a CUE track (the part of the file from OFFSET for DURATION, both ms, as the scanner
+ * writes them; ui/scanner.c "CUE sheets"). SACD ISO tracks are not supported: MPD has no decoder for disc images. */
 static int playable(sqlite3 *d, int idx, qd_row_t *r){
     int id = pq_id(&Q, idx);
     int x = qd_row(d, id, r);
     if(x != 1){ L("queue: row %d: %s", id, x == 0 ? "gone" : sqlite3_errmsg(d)); return 0; }
-    if(r->is_cue || r->is_iso){ L("queue: row %d is a %s track, not supported yet - skipped", id, r->is_cue ? "CUE" : "ISO"); return 0; }
+    if(r->is_iso){ L("queue: row %d is a SACD ISO track, not supported - skipped", id); return 0; }
     return 1;
 }
+#define PART(r) ((r)->is_cue ? (long)(r)->offset : 0L), ((r)->is_cue ? (long)(r)->duration_ms : 0L)
 
 /* Queue the song that follows the current one when it ends (by the play mode); skips rows MPD can't take. */
 static void queue_next(sqlite3 *d){
@@ -113,7 +115,7 @@ static void queue_next(sqlite3 *d){
     qd_row_t *r = malloc(sizeof *r);
     g_next = g_pending = -1;
     for(int tries = 0; r && ni >= 0 && tries < Q.n; tries++){
-        int x = playable(d, ni, r) ? eng_set_next(r->path, dac_current_rate()) : -1;
+        int x = playable(d, ni, r) ? eng_set_next(r->path, PART(r), dac_current_rate()) : -1;
         if(x == 0){ g_next = ni; break; }
         if(x == 1){ g_pending = ni; L("queue: next song has another sample rate, started after this one (no gapless)"); break; }
         Q.cur = ni;                               /* look past it; repeat one moves on like repeat all */
@@ -123,7 +125,7 @@ static void queue_next(sqlite3 *d){
     }
     Q.cur = save;
     free(r);
-    if(g_next < 0) eng_set_next(NULL, 0);
+    if(g_next < 0) eng_set_next(NULL, 0, 0, 0);
 }
 
 /* Start order index idx (dir +1/-1: where to look when it can't be played). 0 or -1. */
@@ -132,7 +134,7 @@ static int start_at(sqlite3 *d, int idx, int dir, long ms, int paused){
     if(!r) return -1;
     int ok = -1;
     for(int tries = 0; idx >= 0 && tries < Q.n; tries++){
-        if(playable(d, idx, r) && eng_load(r->path, ms, paused) == 0){ ok = 0; break; }
+        if(playable(d, idx, r) && eng_load(r->path, PART(r), ms, paused) == 0){ ok = 0; break; }
         idx = (idx + dir + Q.n) % Q.n;
         ms = 0;
     }

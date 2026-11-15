@@ -229,8 +229,9 @@ It reads the headphone jack as the stock player does (`/dev/gpio` `pb20`, polled
 USB storage mode (`0642 1`/`0`) exports the card to a USB host with the stock player's configfs gadget (ui/player/usbstorage.c);
 the cold-boot mount stays the UI's. Playback goes through MPD ([MPD_CORE.md](MPD_CORE.md)): the DAC sequences, the
 queue tables for `0100`, the play modes and the track frames are in place (2026-11-15, audible on a Disc after the
-mixer fix cfac7ae); resume is in place (host-tested, see below); CUE/ISO tracks and the boot-time Bluetooth bring-up
-(done by the stock player, so Bluetooth stays off with the own player) come next.
+mixer fix cfac7ae); resume and CUE tracks are in place (host-tested; SACD ISO tracks are skipped, MPD can't decode
+disc images); the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off with the own player)
+comes next.
 
 ### Resume (MEMORY_PLAY)
 

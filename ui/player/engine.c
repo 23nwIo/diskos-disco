@@ -154,14 +154,30 @@ int eng_cmd(const char *c, char *out, unsigned cap){
  * is ours (queue.c, LIST_SONG_0/3 in song.db); g_cur/g_next are the MPD song ids of the two slots. A paused start
  * (resume) does not touch MPD at all until play is pressed ("armed"), so nothing is heard and the DAC stays idle. */
 
-static int addid(const char *path){
+/* Add a file, or the part of it from off_ms for len_ms (a CUE track; len_ms 0 = to the end) with MPD's rangeid. In a
+ * part MPD counts elapsed time, duration and seeks from the part's start (checked with MPD 0.23 on a PC, 2026-11-15). */
+static int addid(const char *path, long off_ms, long len_ms){
     char uri[1060], q[1100], line[1200], r[256], v[32];
     snprintf(uri, sizeof uri, "file://%s", path);
     if(mc_quote(q, sizeof q, uri) < 0){ g_log("engine: path too long: %s", path); return -1; }
     snprintf(line, sizeof line, "addid %s", q);
     int x = xcmd(line, r, sizeof r);
     if(x != 0){ g_log("engine: add %s: %s", path, x > 0 ? r : "no answer"); return -1; }
-    return mc_get(r, "Id", v, sizeof v) ? atoi(v) : -1;
+    int id = mc_get(r, "Id", v, sizeof v) ? atoi(v) : -1;
+    if(id < 0 || (off_ms <= 0 && len_ms <= 0)) return id;
+    if(off_ms < 0) off_ms = 0;
+    if(len_ms > 0){
+        long end = off_ms + len_ms;
+        snprintf(line, sizeof line, "rangeid %d %ld.%03ld:%ld.%03ld", id, off_ms / 1000, off_ms % 1000, end / 1000, end % 1000);
+    } else snprintf(line, sizeof line, "rangeid %d %ld.%03ld:", id, off_ms / 1000, off_ms % 1000);
+    x = xcmd(line, r, sizeof r);
+    if(x != 0){
+        g_log("engine: range %ld+%ld ms of %s: %s", off_ms, len_ms, path, x > 0 ? r : "no answer");
+        snprintf(line, sizeof line, "deleteid %d", id);
+        xcmd(line, r, sizeof r);
+        return -1;
+    }
+    return id;
 }
 
 static eng_prepare_fn g_prepare;
@@ -188,17 +204,17 @@ static int start_cur(long ms){
     return cmd(line);
 }
 
-int eng_load(const char *path, long start_ms, int paused){
+int eng_load(const char *path, long off_ms, long len_ms, long start_ms, int paused){
     if(!eng_ready()) return -1;
     g_armed = 0; g_cur = g_next = -1;
     if(cmd("clear")) return -1;
-    g_cur = addid(path);
+    g_cur = addid(path, off_ms, len_ms);
     if(g_cur < 0) return -1;
     if(paused){ g_armed = 1; g_armed_ms = start_ms > 0 ? start_ms : 0; return 0; }
     return start_cur(start_ms);
 }
 
-int eng_set_next(const char *path, unsigned must_rate){
+int eng_set_next(const char *path, long off_ms, long len_ms, unsigned must_rate){
     if(!eng_ready()) return -1;
     if(g_next >= 0){
         char line[48]; snprintf(line, sizeof line, "deleteid %d", g_next);
@@ -206,7 +222,7 @@ int eng_set_next(const char *path, unsigned must_rate){
         g_next = -1;
     }
     if(!path) return 0;
-    g_next = addid(path);
+    g_next = addid(path, off_ms, len_ms);
     if(g_next < 0) return -1;
     if(must_rate){
         unsigned rate = song_rate(g_next);

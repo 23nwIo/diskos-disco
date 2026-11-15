@@ -40,12 +40,14 @@ int eng_ready(void);
 /* MPD holds the current song and the next one (for gapless); the queue is the player's (queue.c).
  * eng_load: replace both slots with path and start it at start_ms; paused = load only, play starts on eng_toggle (a
  *           resume). 0, or -1 (the file can't be added: missing, not readable, or no engine).
+ *           off_ms / len_ms: play only that part of the file (a CUE track; len_ms 0 = to the end; both 0 = all of it);
+ *           start_ms, elapsed time and seeks then count from the part's start.
  * eng_set_next: the song to follow the current one (NULL = none, playback stops after it). must_rate (0 = any): it is
  *           queued only when its sample rate is that one. 0 queued, 1 not queued (another rate), -1 not added.
  * eng_advanced: after an event, 1 when MPD has moved on to that next song (it is now the current one; the caller then
  *           sets a new next), else 0. */
-int eng_load(const char *path, long start_ms, int paused);
-int eng_set_next(const char *path, unsigned must_rate);
+int eng_load(const char *path, long off_ms, long len_ms, long start_ms, int paused);
+int eng_set_next(const char *path, long off_ms, long len_ms, unsigned must_rate);
 /* Called with the stream's sample rate right before MPD starts a song (opens the PCM): the player starts the DAC. */
 typedef void (*eng_prepare_fn)(unsigned rate);
 void eng_set_prepare(eng_prepare_fn fn);
