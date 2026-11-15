@@ -146,7 +146,8 @@ the mark that follows it.
 - **DRE** (`A` `M70` only): 0 = on, 1 = off (checked 2026-11-15 with a mark right after each toggle); the player
   writes the current setting at start.
 - **Headphone jack**: `/dev/gpio` `'G'` 122 (`pb20`) returns 1 with the plug in, 0 without. After plugging in again only
-  the volume group was written (no stream restart); Jo heard no sound after the re-insert.
+  the volume group was written. Unplugging pauses playback and plugging in again leaves it paused (intended, Jo
+  2026-11-15); an own player should do the same.
 - **Power key**: screen off = backlight "0", `/dev/cst816t` `_IO(0xef,3)` (touch off), `/dev/lcd_st77916`
   `_IO(0xef,1)`; screen on = lcd `_IO(0xef,2)`, backlight "31", touch `_IO(0xef,4)`. The player does this itself.
 - **USB storage mode**: stop the stream, mixer write (control `LO3_MUX`), the DAC block above, `sync`, `umount
