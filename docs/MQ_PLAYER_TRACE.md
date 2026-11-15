@@ -162,7 +162,7 @@ the mark that follows it.
   see being opened (`?`), at every stream start and stop.
 - At boot, the player itself switches Bluetooth on (`/usr/project/bluetoothd`, bluealsa, bt-agent, D-Bus calls). In the
   boot after this run it crashed right after (SIGSEGV in libdbus at 26.7 s), and fiio_init's loop then killed the diskOS
-  UI and started the stock UI; fixed separately in 54359e6 (diskOS no longer starts Bluetooth itself at boot).
+  UI and started the stock UI. Fix attempt 54359e6 (not device-tested): diskOS leaves the boot Bluetooth bring-up to the player.
 
 The caller address points into the code mapping listed in the `map` lines of the same start block. For
 `/usr/bin/mq_player` it is the plain address in the binary (not position independent), so it can be looked up in a
