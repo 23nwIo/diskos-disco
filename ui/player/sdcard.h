@@ -28,8 +28,8 @@ int sd_is_mounted(void);
 
 /* Card inserted: mount it. A mount left over from before the card was pulled (the pull was missed, or its unmount
  * failed) is dead - reading it fails with EIO - and is detached first; a working mount is kept. The file system is on mmcblk0p1 when that exists, else on the
- * whole card. Tried in order: vfat and exfat with iocharset=utf8 (as the stock player), then ext4 without (ext4 does
- * not take iocharset; the stock player cannot mount it). 0 = mounted (or already), -1 = not. */
+ * whole card. Tried in order: ext4 (without iocharset, which ext4 does not take; the stock player cannot mount it),
+ * then vfat and exfat with iocharset=utf8 as the stock player. 0 = mounted (or already), -1 = not. */
 int sd_mount(sd_log_fn log);
 
 /* Card pulled: sync, then unmount (lazily if busy, so the dead card cannot hold the mountpoint). */

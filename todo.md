@@ -32,3 +32,7 @@ Rootfs changes are deferred for now (Jo, 2026-11-06). Collect here what a future
 - Early-boot clock is ahead by the UTC offset: the RTC holds local time but the kernel loads it as UTC (hctosys), and nothing corrects it before mq_ui/mq_player run `hwclock -s`, so S96/S97 log stamps are 1 h (CET) / 2 h (CEST) late. No fix is possible without a flash: `/var/lib/hwclock` is on the read-only rootfs and no early hook runs from `/usr/data`. Options: (a) run `hwclock -s` (local time) as the first init step before S96, keeping the stock convention, with no migration; (b) switch the RTC to UTC by shipping `/var/lib/hwclock/adjtime` (or a symlink into `/usr/data`) with `UTC`. Stock mq_player's flagless `hwclock` calls and the Vol-Up fallback then follow it, and the kernel is right from the first second, but mq_ui needs a one-time migration (rewrite the RTC as UTC on the first boot of the new rootfs) or the clock is off by the offset once. See docs/HARDWARE.md (Misc, RTC).
 
 No dates, performance improvements or completion status are promised by this list. Previous checkpoint lists are available in Git history.
+
+- Own player, SD hot-plug (side note, Jo 2026-11-15, not urgent): the first uevent listener (d342e43) received nothing
+  on the Disc; b3822cf (256 KiB receive buffer, POLLERR also read) works. Which of the two changes fixed it was not
+  investigated, since swapping the card is not a usual scenario.

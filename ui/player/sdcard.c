@@ -72,7 +72,7 @@ int sd_mount(sd_log_fn log){
     const char *dev = stat("/sys/class/block/mmcblk0p1", &sb) == 0 ? "/dev/mmcblk0p1" : "/dev/mmcblk0";
     if(mkdir(SD_MOUNTPOINT, 0755) != 0 && errno != EEXIST){ log("sd: mkdir %s: %s", SD_MOUNTPOINT, strerror(errno)); return -1; }
     static const struct { const char *type, *opts; } fs[] = {
-        { "vfat", "iocharset=utf8" }, { "exfat", "iocharset=utf8" }, { "ext4", "" },
+        { "ext4", "" }, { "vfat", "iocharset=utf8" }, { "exfat", "iocharset=utf8" },   /* ext4 first (Jo 2026-11-15) */
     };
     for(unsigned i = 0; i < sizeof fs / sizeof fs[0]; i++){
         if(mount(dev, SD_MOUNTPOINT, fs[i].type, MS_NOATIME, fs[i].opts) == 0){
