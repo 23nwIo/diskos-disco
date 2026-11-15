@@ -3,7 +3,7 @@
 Step 0 of [MQ_PLAYER_REPLACEMENT.md](MQ_PLAYER_REPLACEMENT.md): record what the stock FiiO player
 (`/usr/bin/mq_player`) does to the hardware, so an own player can do the same. Nothing about the player changes; it
 only runs with a recording library preloaded. Built 2026-11-14. First device run 2026-11-14 (build 4cefebb7): loads
-and records; argument bytes were missing in that build (`in ?`), fixed since, the fix is not device-tested yet.
+and records; argument bytes were missing in that build (`in ?`), fixed since and device-checked in the second and third runs.
 
 ## Switch it on and off
 
@@ -122,6 +122,47 @@ Second run (2026-11-14/15, build 19ca546, with argument bytes; idle, then the pl
   diskOS UI before power off.
 - Battery and charger: `/dev/sgm41513` `_IO('I',40)` and `/dev/aw35615` are opened and closed several times a second.
 - Backlight: `fwrite` of the brightness value ("31", "0") to the pwm-backlight sysfs file.
+
+Third run (2026-11-15, build dd5de8e, the test programme with time marks; log `player-trace-20261115-010953.log`).
+`A` = `/dev/cs43131`, `C` = `/dev/cs43131c`. Marks were written by hand right after each step, so a value belongs to
+the mark that follows it.
+
+- **Volume** (`A` `M45`+`M66`, `C` `M47`+`M68`, one byte, the same value in both requests of a chip) is an
+  attenuation: smaller = louder. One key press = 2 units (0x66 → 0x64 → 0x62 → 0x60 louder). If a unit is the CS43131's
+  0.5 dB step, a key press is 1 dB (unverified). Playback started at 0x66.
+- **Balance** changes only one chip, 1 unit per balance step: balance left 1..10 raises `A` from 0x66 to 0x70, balance
+  right 1..10 raises `C` from 0x66 to 0x70. So `A` drives the right channel and `C` the left one.
+- **Gain** is not a hardware switch: "low" adds 12 units (6 dB if 0.5 dB steps) to both chips' volume values
+  (0x68/0x66 → 0x74/0x72), "high" takes them off again. No other call.
+- **Sample rate**: `A` `M52` + `C` `M54` before every stream: 44.1 kHz = 1, 48 kHz = 2, 96 kHz = 4, 192 kHz = 6
+  (88.2/176.4 kHz probably 3/5, not tested). Then `M41`/`M50` = 0, the volume group, then ALSA `pcmC0D3p`
+  (hw_params, sw_params, start). sw_params: start threshold 2 periods; period 3528 frames at 44.1 kHz, 960 at 48 kHz,
+  1920 at 96 kHz, 3840 at 192 kHz.
+- First stream after boot only: `M56`/`M60` = 3, then `M56`/`M60` = 0 (the `A` call returns an odd value with errno 2,
+  as in run 1), then `_IO('M',46)` on `A`. The same block runs when USB storage mode starts and ends. Before the very first
+  stream `_IO('M',48)` on `A`; the menu power off sends it too.
+- **DAC filter** (`A` `M62` + `C` `M64`, same value): fast roll-off II = 0x00 (also the boot value), slow II = 0x80,
+  slow PC = 0xc0, fast PC = 0x40, NOS = 0x20, wideband = 0x02. The first change also restarted the stream.
+- **DRE** (`A` `M70` only): the toggle wrote 1 and then 0. Which value means "on" is open: by the marks 1 = off,
+  but the player writes 1 at every start while the setting was on. Needs one more toggle with a mark right after it.
+- **Headphone jack**: `/dev/gpio` `'G'` 122 (`pb20`) returns 1 with the plug in, 0 without. After plugging in again only
+  the volume group was written (no stream restart); Jo heard no sound after the re-insert.
+- **Power key**: screen off = backlight "0", `/dev/cst816t` `_IO(0xef,3)` (touch off), `/dev/lcd_st77916`
+  `_IO(0xef,1)`; screen on = lcd `_IO(0xef,2)`, backlight "31", touch `_IO(0xef,4)`. The player does this itself.
+- **USB storage mode**: stop the stream, mixer write (control `LO3_MUX`), the DAC block above, `sync`, `umount
+  /tmp/sdcard`, `rm -rf /tmp/sdcard`, `echo device > .../13500000.otg_new-role-switch/role`, configfs gadget
+  `storage_demo` (idVendor 0x0525, idProduct 0xa4a5, mass_storage lun.0 file `/dev/mmcblk0`, removable 1, UDC
+  `13500000.otg_new`). Leaving it: the DAC block, empty UDC, `umount /sys/kernel/config`, `mkdir -p /tmp/sdcard`,
+  `blkid`.
+- **Charger in/out**: no calls besides the reads of `/dev/aw35615` and `/dev/sgm41513` (reads are not recorded).
+- **Power off from the menu** (with charger): Bluetooth off, `ifconfig wlan0 down`, kill net tools, `_IO('M',48)` on
+  `A`, `cmd_watchdog stop`, **`killall -9 fiio_init.sh`**, backlight 0, lcd `_IO(0xef,1)`, `killall -9 mq_ui`, rfkill 0,
+  kill BT daemons, `poweroff -f`. The card stayed mounted; the log on the card reaches `poweroff -f`.
+- Not yet explained: `ioctl` with request 0x467f (`_IO('F',127)`, pointer argument) on a descriptor the library did not
+  see being opened (`?`), at every stream start and stop.
+- At boot, the player itself switches Bluetooth on (`/usr/project/bluetoothd`, bluealsa, bt-agent, D-Bus calls). In the
+  boot after this run it crashed right after (SIGSEGV in libdbus at 26.7 s), and fiio_init's loop then killed the diskOS
+  UI and started the stock UI; fixed separately in 54359e6 (diskOS no longer starts Bluetooth itself at boot).
 
 The caller address points into the code mapping listed in the `map` lines of the same start block. For
 `/usr/bin/mq_player` it is the plain address in the binary (not position independent), so it can be looked up in a
