@@ -28,6 +28,7 @@ typedef struct {
     int work_mode;                 /* last mode set; -1 none yet */
     int route;                     /* 0666 output route; -1 none yet */
     int idle_off_s, sleep_s;       /* 0 off */
+    unsigned sleep_seq;            /* bumps on every 0806, so the main loop (re)starts or cancels the timer */
     /* remembered only (Step 2 "keep") */
     int gapless, rotation, track_numbers, resume_mode, folder_play, replaygain, charge, key_action[3];
     /* counters, for the log and the tests */

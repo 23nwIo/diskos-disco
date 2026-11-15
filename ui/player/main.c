@@ -8,15 +8,17 @@
  *   - creates the /player queue, opens (or creates) /ui, and answers the UI as docs/PLAYER_PROTOCOL.md says (core.c);
  *   - deletes /usr/data/diskos-own-player.unstable after OPL_STABLE_S seconds, which tells the launcher that this
  *     player did not crash early;
+ *   - runs the stock power off routine when the sleep timer (0806) runs out (hw.c);
  *   - logs every command to /tmp/diskos-player.log (RAM).
  * No sound yet.
  *
  *   diskos-player [-n] [-l <log>] [-q <prefix>]
- *     -n           do not touch the hardware watchdog (host runs)
+ *     -n           do not touch the hardware watchdog, power off only as a logged dry run (host runs)
  *     -l <log>     log file instead of /tmp/diskos-player.log ("-" = stderr)
  *     -q <prefix>  queue names <prefix>player and <prefix>ui instead of /player and /ui (host runs, tests) */
 #include "core.h"
 #include "proto.h"
+#include "hw.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
 
@@ -131,8 +133,8 @@ int main(int argc, char **argv){
     pl_core_t core;
     pl_core_init(&core, core_send, core_log, NULL);
 
-    double t0 = now_s(), last_feed = t0;
-    int stable = 0;
+    double t0 = now_s(), last_feed = t0, sleep_at = 0;
+    int stable = 0; unsigned sleep_seq = 0;
     while(!g_stop){
         struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl);
         dl.tv_nsec += 250 * 1000000L;
@@ -151,6 +153,16 @@ int main(int argc, char **argv){
             int r = wd_feed(wd);
             if(r < 0) logmsg("watchdog: feed failed: %s", strerror(-r));
             last_feed = t;
+        }
+        if(core.sleep_seq != sleep_seq){                 /* 0806: the UI's "Shut down" sends 1 s */
+            sleep_seq = core.sleep_seq;
+            sleep_at = core.sleep_s > 0 ? t + core.sleep_s : 0;
+        }
+        if(sleep_at > 0 && t >= sleep_at){
+            sleep_at = 0;
+            logmsg("sleep timer ran out: power off%s", use_wd ? "" : " (dry run, -n)");
+            hw_power_off(wd, !use_wd, logmsg);
+            if(use_wd) logmsg("power off did not happen");
         }
         if(!stable && t - t0 >= OPL_STABLE_S){
             stable = 1;

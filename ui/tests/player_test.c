@@ -79,6 +79,9 @@ static void test_core(void){
     CHECK(send1(&c, "0102000C0001") == 0 && c.play_mode == 1);
     CHECK(send1(&c, "0664000C012c") == 0 && c.idle_off_s == 300);
     CHECK(send1(&c, "0821000C0003") == 0 && c.key_action[1] == 3);
+    unsigned sq = c.sleep_seq;
+    CHECK(send1(&c, "0806000C0001") == 0 && c.sleep_s == 1 && c.sleep_seq == sq + 1);
+    CHECK(send1(&c, "0806000C0000") == 0 && c.sleep_s == 0 && c.sleep_seq == sq + 2);
 
     /* work mode: 8 is announced once (as the stock player announces a change), other modes are not claimed */
     nsent = 0;
@@ -133,6 +136,9 @@ static void test_e2e(const char *bin){
     CHECK(mq_send(pl, "0657000C0008", 12, 0) == 0);
     n = RECV();
     CHECK(n == 12 && !strncmp(buf, "a607000C0008", 12));
+
+    CHECK(mq_send(pl, "0806000C0001", 12, 0) == 0);           /* sleep timer 1 s: a dry-run power off (-n) */
+    usleep(1600000);
 
     kill(pid, SIGTERM);
     int st = 0; waitpid(pid, &st, 0);

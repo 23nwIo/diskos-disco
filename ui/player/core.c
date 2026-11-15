@@ -110,7 +110,10 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         c->route = v; logf_(c, "output route = %d", v); return 0;
 
     case 0x0664: return set_(c, "idle power off s", &c->idle_off_s, v, 0, 0xffff);
-    case 0x0806: return set_(c, "sleep timer s (power off not implemented yet)", &c->sleep_s, v, 0, 0xffff);
+    case 0x0806:
+        if(set_(c, "sleep timer s (power off when it runs out, 0 cancels)", &c->sleep_s, v, 0, 0xffff)) return -1;
+        c->sleep_seq++;
+        return 0;
 
     /* remembered only */
     case 0x0647: return set_(c, "gapless", &c->gapless, v, 0, 1);
