@@ -39,6 +39,7 @@
 #include "wd_override.h"   /* own cmd_watchdog bound over the stock tool */
 #include "trace_blob.h"
 #include "trace_launch.h"  /* player trace switch (docs/MQ_PLAYER_TRACE.md) */
+#include "own_player.h"    /* own player switch (development phase, docs/MQ_PLAYER_REPLACEMENT.md) */
 #include "screens.h"
 #include "npshade.h"
 #include "ma.h"
@@ -3172,11 +3173,13 @@ static void handoff_signal_reset(void){
 /* The ONE place that hands off to the stock player. Kills any preparation child first: a shell or
  * sqlite left running would otherwise keep mutating state after stock has started. */
 static char **volatile g_trace_env;       /* set by player_launch_prepare when the player trace is switched on */
+static volatile int g_own_player;         /* set by player_launch_prepare: exec the own player (own_player.h) first */
 static void exec_stock_player(void){
     if(g_bounded_pgid > 0) kill(-(pid_t)g_bounded_pgid, SIGKILL);
     if(g_bounded_pid > 0) kill((pid_t)g_bounded_pid, SIGKILL);   /* the child itself, grouped or not */
     handoff_signal_reset();
     char *pa[2]; pa[0] = (char*)"mq_player"; pa[1] = NULL;
+    if(g_own_player) execv(OPL_BIN, pa);   /* same name, so fiio_init's pgrep finds it; on failure: the stock player */
     char **te = g_trace_env;
     if(te) execve("/usr/bin/mq_player", pa, te);   /* LD_PRELOAD=diskos-trace.so (trace_launch.h); falls through on failure */
     execv("/usr/bin/mq_player", pa);
@@ -3217,7 +3220,18 @@ static void player_launch_prepare(void){
      * never reaches the stock player. If the alarm fires during them, the handler execs stock and the
      * missing note is the acceptable loss. alarm(0) happens in exec_stock_player(), not here. */
     launch_status_publish(guard, local);
-    {   /* player trace (docs/MQ_PLAYER_TRACE.md): only with /usr/data/diskos-trace-player */
+    {   /* own player (own_player.h): only with /usr/data/diskos-own-player; the trace below is for the stock player */
+        const opl_paths_t op = { OPL_SWITCH, OPL_BIN, OPL_STARTS };
+        int no = 0, r = opl_prepare(&op, &no);
+        if(r == OPL_ON) g_own_player = 1;
+        if(r != OPL_OFF){
+            char m[220];
+            if(r == OPL_ON) snprintf(m, sizeof m, "launcher: own player on (start %d of at most %d this boot)", no, OPL_MAX_STARTS);
+            else snprintf(m, sizeof m, "launcher: own player %s", opl_reason(r));
+            boot_note(m);
+        }
+    }
+    if(!g_own_player){   /* player trace (docs/MQ_PLAYER_TRACE.md): only with /usr/data/diskos-trace-player */
         static const char *const libdl[] = { "/lib/libdl.so.2", "/usr/lib/libdl.so.2", NULL };
         const trl_paths_t tp = { TRL_SWITCH, TRL_LIB, TRL_OK, TRL_PENDING, TRL_LOGDIR, TRL_LOGDIR_RAM, libdl };
         char **te = NULL;

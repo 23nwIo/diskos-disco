@@ -37,6 +37,8 @@ wd_override_test: wd_override_test.c ../wd_override.h
 	$(CC) $(CFLAGS) -I.. wd_override_test.c -o $@
 trace_launch_test: trace_launch_test.c ../trace_launch.h ../wd_override.h
 	$(CC) $(CFLAGS) -I.. trace_launch_test.c -o $@
+own_player_test: own_player_test.c ../own_player.h
+	$(CC) $(CFLAGS) -I.. own_player_test.c -o $@
 
 radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. radio_test.c ../radio_core.c -o $@
@@ -47,7 +49,7 @@ review: fileops_test apps_shortcut_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test usbsync_core_test
+run: config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test usbsync_core_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -64,11 +66,12 @@ run: config_test playstate_test remote_test mpd_test radio_test wifi_reco_test w
 	@echo "--- cmd_watchdog override ---"
 	./wd_override_test
 	./trace_launch_test
+	./own_player_test
 	@echo "--- USB import/export (USC_TEST_RSYNC=path also runs a real rsync) ---"
 	./usbsync_core_test
 
 clean:
-	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test usbsync_core_test
+	rm -f config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test usbsync_core_test
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
