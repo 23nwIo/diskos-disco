@@ -2318,25 +2318,59 @@ void bt_init_intent(void){
 }
 static lv_timer_t *g_bootrestore_timer;
 static uint32_t    g_bootrestore_start;
+static int         g_bootrestore_player;   /* 1 = the stock player brings Bluetooth up itself; we only wait */
+#define BT_PLAYER_WAIT_MS 45000            /* trace: player's hci0 + bluetoothd + agent ready ~26 s after boot */
+/* Stock SYSCONFIG.BT_STATUS: 1/0, -1 = unread. Bounded, like wifi.c's read_saved_radios(). */
+static int bt_player_bt_status(void){
+    char buf[16] = {0};
+    run_cap_bounded("sqlite3 /usr/data/fiio/db/sysconfig.db \"SELECT BT_STATUS FROM SYSCONFIG WHERE ID=1\" 2>&1",
+                    buf, sizeof buf, 1000);
+    if((buf[0] == '0' || buf[0] == '1') && (buf[1] == '\n' || buf[1] == 0)) return buf[0] - '0';
+    return -1;
+}
 static void bootrestore_poll_cb(lv_timer_t *t){
     (void)t;
     if(bt_on()){
-        lv_timer_del(g_bootrestore_timer); g_bootrestore_timer = NULL;
+        lv_timer_del(g_bootrestore_timer); g_bootrestore_timer = NULL; g_bootrestore_player = 0;
         bt_ensure_services();
         bt_autoroute_start();          /* speaker auto-reconnects -> auto-route routes it */
         bt_reconnect_last();           /* and the Disc calls the last headphones itself */
+        return;
+    }
+    if(g_bootrestore_player){
+        if(lv_tick_elaps(g_bootrestore_start) <= BT_PLAYER_WAIT_MS) return;
+        /* The player didn't bring Bluetooth up: do it ourselves (boot mode, no running daemon killed). */
+        g_bootrestore_player = 0;
+        fprintf(stderr, "bt: player brought no Bluetooth up within %d s, starting our own bring-up\n", BT_PLAYER_WAIT_MS / 1000);
+        g_bt_enable_boot = 1;
+        bt_enable();
+        g_bootrestore_start = lv_tick_get();
         return;
     }
     if(lv_tick_elaps(g_bootrestore_start) > 40000){       /* patchram + power-on settle + up to 8 s for the player's bluetoothd */
         lv_timer_del(g_bootrestore_timer); g_bootrestore_timer = NULL;
     }
 }
+/* Boot: two bring-ups must never run at once. Player trace on dd5de8e (2026-11-15, docs/MQ_PLAYER_TRACE.md): with its
+ * SYSCONFIG Bluetooth on, the stock mq_player does a full bring-up of its own at boot (killall brcm_patchram_plus,
+ * rfkill cycle, patchram, bluetoothd, bluealsa, Adapter1 props, bt-agent) and died with SIGSEGV in libdbus at 26.7 s
+ * while ours ran beside it (rfkill block / patchram kill in the middle of its D-Bus work); the stock watchdog then
+ * restarted everything = two UIs. Not killing its daemons (a95d203) was not enough. So when the player's own
+ * BT_STATUS is 1 we start nothing and only wait for its stack, then add our services (BlueALSA codec, auto-route,
+ * reconnect). Only if nothing comes up within BT_PLAYER_WAIT_MS do we bring it up ourselves. Assumption (not proven
+ * from the binary): the player's boot bring-up follows BT_STATUS; with BT_STATUS 0 we bring it up as before. */
 void bt_boot_restore(void){
     bt_init_intent();
     if(cfg_get_int("bt_on", 0) != 1) return;              /* was off -> stay off */
     if(bt_on()){ bt_ensure_services(); bt_autoroute_start(); return; }   /* already up (UI restart) */
-    g_bt_enable_boot = 1;                                  /* no daemon killed; the player's bluetoothd goes first */
-    bt_enable();
+    int sys_bt = bt_player_bt_status();
+    g_bootrestore_player = sys_bt != 0;                   /* 1 or unread: let the player go first */
+    fprintf(stderr, "bt: boot restore, player BT_STATUS=%d -> %s\n", sys_bt,
+                g_bootrestore_player ? "waiting for the player's bring-up" : "own bring-up");
+    if(!g_bootrestore_player){
+        g_bt_enable_boot = 1;                              /* no daemon killed; the player's bluetoothd goes first */
+        bt_enable();
+    }
     g_bootrestore_start = lv_tick_get();
     if(g_bootrestore_timer) lv_timer_del(g_bootrestore_timer);
     g_bootrestore_timer = lv_timer_create(bootrestore_poll_cb, 1000, NULL);
