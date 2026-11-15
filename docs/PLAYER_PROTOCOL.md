@@ -74,15 +74,20 @@ example `BT_STATUS`, `MAX_VOL`).
 | `a714000C00<VV 2h>...` | Volume level 0..120 (hex chars 10-11) | ipc.c |
 | `a607000C<mode 4h>` | Work mode, announced after a `0657` change (8 = local playback) | ipc.c |
 
-The values of `state` (playing/paused/stopped) and the exact `a2` field set the stock player sends still have to be
-captured from a live `/ui` stream (the tracer does not see message queues); planned as a small read-only listener
-before the own player sends its first `a2`.
+The UI does not trust `state` (the stock player reports 0 while playing). It decides "playing" from the `a1`
+position advancing (ui/playstate.c, 1.6 s window), so the player has to send `a1` regularly while playing (at least
+about once a second) and stop sending while paused. Which `a2` fields the stock player sends when, and at what rate
+`a1` comes, still have to be measured on a live stream before the own player sends its first `a2`.
 
 ## Shared data the player uses
 
-- `/usr/data/fiio/db/song.db`: the library. diskOS writes the `SONG` table itself (ui/scanner.c, stock schema), the
-  player reads it to build the play queue (`0100`) and keeps `MY_LOVE` (favourites), `CUSTOM_PLAYLIST` /
-  `PLAYLIST_INFO` and `MEMORY_PLAY` (resume) in it. All keyed by file path.
+- `/usr/data/fiio/db/song.db`: the library. diskOS writes the `SONG` table itself (ui/scanner.c, stock schema). On
+  `0100` the player rebuilds the queue table `LIST_SONG_0` from `SONG` (or `MY_LOVE`, or a custom playlist) with
+  fixed `ORDER BY` clauses, and in shuffle a permutation `LIST_SONG_3`; it copies `SONG.DURATION` into the rows. The
+  UI reads these tables for Up Next and to land on the tapped song, and copies the exact orderings (ui/musicdb.c:
+  `mdb_play_pos`, `MDB_FAV_ORDER`, the Up Next reader), so the own player must build them identically; `a2`
+  `pos_id` is the `LIST_SONG_0.ID` playing. The player also keeps `MY_LOVE` (favourites), `CUSTOM_PLAYLIST` /
+  `PLAYLIST_INFO` and `MEMORY_PLAY` (resume) there. All keyed by file path.
 - `/usr/data/fiio/db/sysconfig.db`: settings (`SYSCONFIG`).
 - Custom PEQ bands for slots 11..20: stored by the UI's EQ editor (ui/eqcustom.c); where the player reads them from
   has to be checked before the EQ is built.
