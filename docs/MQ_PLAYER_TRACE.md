@@ -185,7 +185,8 @@ the mark that follows it.
   writing **without a write**, `umount /sys/kernel/config`, `/ui` `a60a000C0213`, `sync`, `mkdir -p /tmp/sdcard`,
   `blkid`, `mount -o iocharset=utf8 /dev/mmcblk0 /tmp/sdcard`, role `device` again, mixer `LO3_MUX` once more.
   Own player (usbstorage.c): the same gadget values; unbinds with an explicit `\n` to UDC and clears lun.0/file
-  before the card is mounted again; no DAC, mixer or `a60a` yet (no audio, and the UI ignores `a60a`).
+  before the card is mounted again; no DAC, mixer or `a60a` yet (no audio, and the UI ignores `a60a`). Device-checked
+  2026-11-15 with an ext4 card: PC mounted, read and wrote it; back to playback the card was mounted again (ext4).
 - **EQ presets** (off, Pop, Hip-Hop, R&B, off; checked 2026-11-15): no DAC or mixer call at all, so the EQ is done in
   software on the samples (matches `eq.c` in the binary).
 - **Charger in/out**: no calls besides the reads of `/dev/aw35615` and `/dev/sgm41513` (reads are not recorded).
