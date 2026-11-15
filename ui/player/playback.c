@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 #include "playback.h"
 #include "dac.h"
+#include "mixer.h"
 #include "proto.h"
 #include "queue.h"
 #include "queuedb.h"
@@ -44,6 +45,7 @@ static void tell_state(int state, int force){
 }
 /* before MPD opens the PCM: the DAC start sequence for this rate (eng_set_prepare) */
 static void prepare(unsigned rate){
+    mix_route_dac(L);                        /* DMA3 -> DAC; without it hw_params fails (mixer.h) */
     if(rate == dac_current_rate()) return;
     unsigned char a, l; dac_attenuation(C->volume, C->gain, C->balance, &a, &l);
     dac_start(rate, a, l, L);

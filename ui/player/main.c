@@ -34,6 +34,7 @@
 #include "sdcard.h"
 #include "usbstorage.h"
 #include "dac.h"
+#include "mixer.h"
 #include "engine.h"
 #include "mpdcli.h"
 #include "playback.h"
@@ -193,6 +194,7 @@ int main(int argc, char **argv){
            core.key_action[0], core.key_action[1], core.key_action[2]);
 
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
+    if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     int att_vol = -1, att_gain = -1, att_bal = -1;
 

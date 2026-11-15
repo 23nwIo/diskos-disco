@@ -61,6 +61,7 @@ static void e_song_ends(void){
     e_ms = 0;
     pb_engine_event();
 }
+int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(const char *, ...)){ (void)dev; (void)name; (void)value; (void)log; return 0; }
 static unsigned d_rate; static int d_starts;
 unsigned dac_current_rate(void){ return d_rate; }
 void dac_attenuation(int v, int g, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)b; *a = *c = 0; }

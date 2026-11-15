@@ -19,7 +19,12 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
 - The stock player always opens `hw:0,3` as **S32_LE** (trace: format mask bit 10; `/proc/asound/card0/pcm3p/sub0/hw_params`
   while it plays: S32_LE, 48000 Hz, period 1920, buffer 3840 frames). It played a 44.1 kHz FLAC at 48 kHz, so it seems
   to resample to 48 kHz (to be checked with other files). MPD config: `format "*:32:*"`.
-- The mixer does not change between idle and playing (`LO3_MUX` = LI11 stays); no mixer write is needed for the DAC.
+- **The mixer route `LO3_MUX` = 12 (item `LI11`) must be set**, or `hw:0,3` has no backend: the kernel logs
+  "DMA3 playback: ASoC: no backend DAIs enabled for DMA3 playback" and `snd_pcm_hw_params()` fails with EINVAL (also
+  for `aplay`). The stock player sets it (mixer_set_dma) at start and around USB storage mode, and it then stays set
+  between idle and playing; after a boot straight into the own player it is unset. Confirmed 2026-11-15:
+  `amixer -c 0 cset name='LO3_MUX' 12` made aplay and the own player audible. The player sets it itself (`mixer.c`,
+  at start and before every stream).
 - **The DAC must be started and its devices kept open.** Without the stock start sequence the output is silent; with
   it but the devices closed again, there is only a hum and the DMA runs far faster than real time (no I2S clock). With
   the sequence and `/dev/cs43131` + `/dev/cs43131c` held open (`mpd/dacstart.c`), MPD plays in real time and is
@@ -30,9 +35,8 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   exempt; checked against MPD 0.23.14 on a PC). The player's command connection is reopened whenever it is found
   closed (engine.c `xcmd`). Before that fix (7372509) the player lost MPD a minute after boot and never started the
   DAC: no sound (Jo, 2026-11-15).
-- **The DAC start sequence has to run before MPD opens `hw:0,3`**: with the devices open but not started, the driver
-  refuses `snd_pcm_hw_params()` with EINVAL and MPD pauses with "Failed to open dac" (device log 2026-11-15). The
-  player therefore reads the song's rate from MPD (`playlistid`, `Format`) and starts the DAC right before `playid`
+- The DAC start sequence runs before MPD opens `hw:0,3` (an EINVAL from `snd_pcm_hw_params()` seen on 2026-11-15
+  was first put down to a missing start; the real cause was the missing mixer route above). The player reads the song's rate from MPD (`playlistid`, `Format`) and starts the DAC right before `playid`
   (engine.c `eng_set_prepare`). A next song with another rate is not queued in MPD; it starts after the current one
   ends, with the DAC started for its rate (no gapless change across rates).
 - The volume is the DAC's: the stock UI's volume does nothing to MPD's stream, the own player writes the volume bytes.
