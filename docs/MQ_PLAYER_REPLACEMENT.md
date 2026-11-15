@@ -109,8 +109,9 @@ route, for example by making the stock USB automount's `system("mount …")` cal
    `cmd_watchdog` is and whether `/dev/spidev0.0` talks to anything. Result: a documented hardware interface in
    HARDWARE.md and RE_CATALOGUE.md. This step is useful even if we never replace the player. Built 2026-11-14:
    [MQ_PLAYER_TRACE.md](MQ_PLAYER_TRACE.md) (`touch /usr/data/diskos-trace-player`, log on the SD card).
-1. **Backend seam in diskOS (1 week).** Put the ~33 command tags diskOS sends behind one player-backend interface,
-   so the UI can talk to either the stock player or ours. The stock path stays the default.
+1. **Protocol instead of a seam (changed 2026-11-15).** Instead of a backend interface inside the UI, the own player
+   speaks the same message queue protocol as the stock player ([PLAYER_PROTOCOL.md](PLAYER_PROTOCOL.md)), so the UI
+   stays unchanged and the launcher alone decides which player runs (switch file, no UI setting; Jo 2026-11-15).
 2. **Own player, local playback only (3 to 4 weeks).** A new `diskos-player` daemon in `/usr/data`, started by the
    launcher instead of the stock player when an experimental setting is on, with automatic fallback to stock after
    a failed start or a crash loop (same fail-closed idea as the UI). Scope: FFmpeg decode, ALSA output, DAC

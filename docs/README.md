@@ -26,6 +26,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [Hardware](HARDWARE.md), [IPC commands](COMMAND_MAP.md), [reverse engineering](RE_CATALOGUE.md).
 - [Replacing mq_player with own code](MQ_PLAYER_REPLACEMENT.md): assessment, inventory, strategy and effort; diskos-watchdog.
 - [Tracing the stock player](MQ_PLAYER_TRACE.md): step 0, the LD_PRELOAD recorder, how to switch it on and the test programme.
+- [Player protocol](PLAYER_PROTOCOL.md): the message queue commands and replies diskOS uses, the interface an own player has to speak.
 - [Audiobook speed](AUDIOBOOK_SPEED.md): why there is no playback-speed control (investigated, not planned).
 
 ## Release and provenance
