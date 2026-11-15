@@ -192,7 +192,10 @@ int main(int argc, char **argv){
             for(ssize_t k = 0; r > 0 && k < r / (ssize_t)sizeof ev[0]; k++){
                 if(ev[k].type != EV_KEY || ev[k].value != 1) continue;     /* presses only; releases follow at once */
                 switch(ev[k].code){
-                case KEYC_POWER: hw_screen_toggle(!use_wd, logmsg); break;
+                case KEYC_POWER: case KEYC_POWER_ALT:
+                    logmsg("power key (%u)", (unsigned)ev[k].code);
+                    hw_screen_toggle(!use_wd, logmsg);
+                    break;
                 case KEYC_POWER_LONG:
                     /* Give the UI a moment: it sees the held key on the GPIO and flushes before the player's power off
                      * (ui/main.c, "power key held"). The stock player's delay is not measured; 2 s is a guess. */

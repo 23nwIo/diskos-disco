@@ -158,6 +158,8 @@ the mark that follows it.
   stock player grabs the device): Power short = 265 (0x109), Power held about 3 s = 264 (0x108, its own key code, sent
   by the driver as press and release 14 µs apart), Volume up = 251 (0xfb), Volume down = 252 (0xfc), Play/Pause = 250
   (0xfa). Every key arrives as press + release within microseconds, so the driver reports clicks, not hold times.
+  Short Power presses alternate between 265 and 259 (0x103): every second press comes as 259 (own-player log
+  2026-11-15), so both mean "Power short".
 - **SD card out and in** (fourth run, 2026-11-15, log `player-trace-20261115-033139.log`, card with a file system on the
   whole `/dev/mmcblk0`). At start the player itself mounts the card: `umount /tmp/sdcard`, `rm -rf /tmp/sdcard`,
   `mkdir -p /tmp/sdcard`, `blkid | grep /dev/mmcblk0`, then `mount -o iocharset=utf8 /dev/mmcblk0 /tmp/sdcard` from a

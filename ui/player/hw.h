@@ -18,6 +18,7 @@ int hw_screen_toggle(int dry_run, hw_log_fn log);
  * arrive together, and a held Power key comes as its own code. */
 #define KEY_DEV        "/dev/input/event0"
 #define KEYC_POWER     265
+#define KEYC_POWER_ALT 259               /* every second short press comes as 259 (device log 2026-11-15) */
 #define KEYC_POWER_LONG 264
 #define KEYC_VOL_UP    251
 #define KEYC_VOL_DOWN  252

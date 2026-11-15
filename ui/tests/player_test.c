@@ -158,6 +158,8 @@ static void test_e2e(const char *bin){
     CHECK(n == 12 && !strncmp(buf, "a714000C0030", 12));
     ev[0].code = ev[1].code = 265;                                /* Power: screen toggle (dry run on the host) */
     CHECK(write(kw, ev, sizeof ev) == (ssize_t)sizeof ev);
+    ev[0].code = ev[1].code = 259;                                /* the next short press comes as 259 */
+    CHECK(write(kw, ev, sizeof ev) == (ssize_t)sizeof ev);
 
     CHECK(mq_send(pl, "0806000C0001", 12, 0) == 0);           /* sleep timer 1 s: a dry-run power off (-n) */
     usleep(1600000);
