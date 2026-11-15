@@ -1,0 +1,49 @@
+diff --git a/src/lib/alsa/HwSetup.cxx b/src/lib/alsa/HwSetup.cxx
+index b254595..5e5d102 100644
+--- a/src/lib/alsa/HwSetup.cxx
++++ b/src/lib/alsa/HwSetup.cxx
+@@ -250,10 +250,34 @@ SetupHw(snd_pcm_t *pcm,
+ 		 period_time_min, period_time_max);
+ 
+ 	if (buffer_time > 0) {
++		/* Some drivers (the Snowsky Disc's x2000 DAC at 44.1 kHz/16 bit) refuse every buffer_time when it is set
++		   before the period, but accept the same values the other way round; so on failure, retry with the
++		   period first (period_time, or buffer_time/4 as below) and then the buffer. */
++		snd_pcm_hw_params_t *saved;
++		snd_pcm_hw_params_alloca(&saved);
++		snd_pcm_hw_params_copy(saved, hwparams);
++		const unsigned wanted_buffer_time = buffer_time;
+ 		err = snd_pcm_hw_params_set_buffer_time_near(pcm, hwparams,
+ 							     &buffer_time, nullptr);
+-		if (err < 0)
+-			throw Alsa::MakeError(err, "snd_pcm_hw_params_set_buffer_time_near() failed");
++		if (err < 0) {
++			snd_pcm_hw_params_copy(hwparams, saved);
++			buffer_time = wanted_buffer_time;
++			unsigned first_period = period_time_ro > 0
++				? period_time_ro : buffer_time / 4;
++			err = snd_pcm_hw_params_set_period_time_near(pcm, hwparams,
++								     &first_period, nullptr);
++			if (err >= 0)
++				err = snd_pcm_hw_params_set_buffer_time_near(pcm, hwparams,
++									     &buffer_time, nullptr);
++			if (err < 0)
++				throw Alsa::MakeError(err, "snd_pcm_hw_params_set_buffer_time_near() failed");
++			FmtDebug(alsa_output_domain,
++				 "buffer_time refused before the period; set period {} us first, buffer {} us",
++				 first_period, buffer_time);
++			period_time_ro = 0;	/* the period is set already */
++			period_time = first_period;
++			goto period_done;
++		}
+ 	} else {
+ 		err = snd_pcm_hw_params_get_buffer_time(hwparams, &buffer_time,
+ 							nullptr);
+@@ -277,6 +301,7 @@ SetupHw(snd_pcm_t *pcm,
+ 			throw Alsa::MakeError(err, "snd_pcm_hw_params_set_period_time_near() failed");
+ 	}
+ 
++period_done:
+ 	err = snd_pcm_hw_params(pcm, hwparams);
+ 	if (err < 0)
+ 		throw Alsa::MakeError(err, "snd_pcm_hw_params() failed");

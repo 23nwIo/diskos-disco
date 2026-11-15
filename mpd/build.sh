@@ -58,6 +58,10 @@ cmake_lib "$SRC/fmt" -DFMT_DOC=OFF -DFMT_TEST=OFF
 
 # boost: header-only use; meson's boost lookup does not find headers in a cross sysroot, so MPD gets a plain dependency
 mkdir -p "$SYS/usr/include" && cp -r /usr/include/boost "$SYS/usr/include/"
+# our patches to MPD (patches/*.patch, applied once)
+for p in "$(dirname "$(realpath "$0")")"/patches/*.patch; do
+    (cd "$SRC/MPD" && { git apply --check "$p" 2>/dev/null && git apply "$p"; } || git apply --reverse --check "$p")
+done
 sed -i "s/^boost_dep = dependency('boost', version: '>= 1.58')/boost_dep = declare_dependency(version: '1.83')/" "$SRC/MPD/meson.build"
 
 cat > "$W/cross.ini" <<INI
