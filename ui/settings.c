@@ -139,6 +139,29 @@ static void apply_open_colorpick(int v){
     colorpick_open();
 }   /* seed sliders from cfg + open */
 static void apply_debug_mode(int v){ (void)v; debug_open(); }           /* Settings -> System -> Debug Mode */
+/* Settings -> System -> Maintenance -> Boot to Stock Player: on = no own-player switch file, so the next boot starts
+ * FiiO's player; off = the switch file (own_player.h), with the fail-safe counters reset (a .failed switch and the
+ * crash counter from earlier tries). Takes effect at the next boot only: nothing restarts now. The row's value is the
+ * file itself, not a saved setting. */
+static int boot_stock_now(void){ return access(OPL_SWITCH, F_OK) != 0; }
+static void apply_boot_stock(int v){
+    int fail = 0;
+    if(v){
+        if(unlink(OPL_SWITCH) != 0 && errno != ENOENT) fail = errno;
+    } else {
+        int fd = open(OPL_SWITCH, O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+        if(fd < 0) fail = errno; else { fsync(fd); close(fd); }
+        if(!fail){ unlink(OPL_SWITCH ".failed"); unlink(OPL_UNSTABLE); }
+    }
+    sync();
+    if(fail){
+        fprintf(stderr, "settings: boot to stock player = %d: %s: %s\n", v, OPL_SWITCH, strerror(fail)); fflush(stderr);
+        ui_toast("Couldn't change the player for the next boot");
+        return;
+    }
+    fprintf(stderr, "settings: next boot starts the %s player\n", v ? "stock" : "own"); fflush(stderr);
+    ui_toast(v ? "Next boot: stock player" : "Next boot: own player");
+}
 static void apply_artcache(int v){ ui_set_prewarm_mode(v); }   /* every mode preloads album covers; the mode picks the per-track sweep */
 void ui_sd_quiesce_begin(void); int ui_sd_quiesce_drained(void); void ui_sd_quiesce_end(void);   /* main.c: Restart card drain */
 
@@ -1045,6 +1068,8 @@ static const setting_t TABLE[] = {
       "Reset UI appearance/behaviour. Keep music, Wi-Fi, Bluetooth, Last.fm, EQ and audio settings.", NULL },
     { "Maintenance",   "Debug Mode",  ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_debug_mode, 0,
       "Enable temporary SSH over Wi-Fi (fresh random password) for debugging. Off by default.", NULL },
+    { "Maintenance",   "Boot to Stock Player", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_boot_stock, 0,
+      "On: the next boot starts FiiO's stock player. Off: diskOS's own player (in development). Nothing restarts now.", NULL },
     { "About",   "About",       ST_READONLY, NULL, 0,0,0, NULL,0, "diskOS beta", NULL, 0,
       "diskOS - a custom music player UI.", NULL },
     { "About",   "Device Info", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, system_about_open, 0,
@@ -1114,7 +1139,7 @@ static const char *setting_key(const setting_t *s){
     if(th_simple()&&s->cfg_key&&!strcmp(s->cfg_key,"np_font"))return "simple_track_font";
     return th_null() && s->cfg_key && !strcmp(s->cfg_key,"disco_hints")?"null_hints":s->cfg_key;
 }
-static int get_val(const setting_t *s){const char *key=setting_key(s);return key?simple_cfg_get_int(key,th_simple()&&s->cfg_key&&!strcmp(s->cfg_key,"np_font")?2:s->def):0;}
+static int get_val(const setting_t *s){if(s->apply==apply_boot_stock)return boot_stock_now();const char *key=setting_key(s);return key?simple_cfg_get_int(key,th_simple()&&s->cfg_key&&!strcmp(s->cfg_key,"np_font")?2:s->def):0;}
 static void set_val(const setting_t *s, int v){
     /* EQ selection persists in SCR_EQ. These rows retain their existing saved keys. */
     if(display_blocked(s))return;
