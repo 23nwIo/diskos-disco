@@ -74,10 +74,33 @@ example `BT_STATUS`, `MAX_VOL`).
 | `a714000C00<VV 2h>...` | Volume level 0..120 (hex chars 10-11) | ipc.c |
 | `a607000C<mode 4h>` | Work mode, announced after a `0657` change (8 = local playback) | ipc.c |
 
-The UI does not trust `state` (the stock player reports 0 while playing). It decides "playing" from the `a1`
-position advancing (ui/playstate.c, 1.6 s window), so the player has to send `a1` regularly while playing (at least
-about once a second) and stop sending while paused. Which `a2` fields the stock player sends when, and at what rate
-`a1` comes, still have to be measured on a live stream before the own player sends its first `a2`.
+### Measured on a live stream (protocol capture, stock player, 2026-11-15)
+
+Recorded by the player trace (`mq_send`/`mq_receive` hooks) while playing, pausing, resuming, seeking and with
+natural track changes. Hex in the stock player's frames is upper case (`a20202A2`, `a10300100002BB38`).
+
+- **`a1` position**: from its own thread once a second (1.000 s apart) while playing, nothing while paused.
+- **`state`**: `0` = playing, `1` = paused, `2` = a new track is being loaded (only inside the full `a2` frame at a
+  track start). Pause and resume send the partial frame `a2020013{"state":1}` / `{"state":0}` twice.
+- **Full `a2`** at every track start, tag `a202`: `{"song":"<song JSON as a string>","love":false,"playerflag":3,
+  "state":2,"playing_num":"1/8","work_mode":"LOCAL"}`. The song JSON has, in this order: `id` (SONG.ID), `pos_id`
+  (LIST_SONG_0.ID), `song_name`, `song_duration_time` (ms), `song_file_path` (`/` written as `\/`),
+  `song_sample_rate`, `song_encoding_rate` (bits), `song_bit_rate` (kbit/s), `song_artist_name`, `song_album_name`,
+  `song_style_name` (`"(null)"` when empty), `song_track`, `song_channel`, `is_sacd`, `is_cue`, `is_dsd`, `is_m3u`,
+  `m3u_file_path` (`"(null)"`).
+- **Play `0100`**: `a102000C<mode>` (the play mode), `aa1c000C0000`, the full `a2`, `aa05000C0001`, `aa1c000C0000`,
+  then `{"state":0}` twice. A natural track change: `{"state":1}`, the full `a2`, `aa1c`, `aa05`, `aa1c`,
+  `{"state":0}` twice. `aa1c` and `aa05` are not used by the UI; their meaning is open.
+- **Seek `0103`**: answered only with `{"state":0}`; the next `a1` carries the new position.
+- **`0202` while idle** (no track loaded): no answer. At start, before any command, the player sends `aa1d000C0061`
+  (twice), `a634000C0000`, `aa24` with all its settings as JSON (`volume`, `balance` 258 = `0x0102`, `gain`,
+  `dac_filter`, `dre_status`, `eq_type`, `play_mode`, `input_mode` 8, ...), `a102000C0000`, `a712000C<balance>`, and
+  after opening `/player` `a620` with `SN`, `NB` and `WIFI_MAC`. After the first `0657`: `aa1c`, `a824000C0000`,
+  `a607000C0008`.
+- Not seen in this capture: `a714` (no volume change was made), Next/Previous (see below).
+
+The UI decides "playing" from the `a1` position advancing (ui/playstate.c, 1.6 s window), so an own player has to send
+`a1` once a second while playing and stop while paused, as the stock player does.
 
 ## Shared data the player uses
 

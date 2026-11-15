@@ -24,12 +24,13 @@ void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx){
 }
 
 void pl_core_send_state(pl_core_t *c){
-    /* No playback yet: no current track. Field set as docs/PLAYER_PROTOCOL.md "Replies"; the exact set and order the
-     * stock player uses are checked against the protocol capture before the first real track is announced. */
-    char json[256], f[300];
-    snprintf(json, sizeof json, "{\"state\":0,\"playing_num\":\"0/0\",\"work_mode\":%d,\"love\":false,\"song\":\"\"}",
-             c->work_mode < 0 ? PL_WORK_LOCAL : c->work_mode);
-    send_(c, f, pp_fmt_a2(f, sizeof f, json));
+    /* No playback yet. The stock player answers 0202 only while a track is loaded; when idle it sends nothing, but it
+     * has already sent its start-up frames (settings, serial number), and the UI takes any frame as "the player is
+     * up". This player has no start-up frames yet, so it answers with the partial state frame the stock player sends
+     * on pause: {"state":1} (0 = playing, 1 = paused; capture 2026-11-15). A partial frame leaves the UI's track as is. */
+    (void)c;
+    char f[32];
+    send_(c, f, pp_fmt_a2(f, sizeof f, "{\"state\":1}"));
 }
 
 static void send_volume(pl_core_t *c){ char f[16]; send_(c, f, pp_fmt_a714(f, sizeof f, c->volume)); }

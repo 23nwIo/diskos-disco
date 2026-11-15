@@ -39,9 +39,9 @@ static void test_proto(void){
 
     char o[64];
     CHECK(pp_fmt_a1(o, sizeof o, 0x1234) == 16 && !strcmp(o, "a103001000001234"));
-    CHECK(pp_fmt_a714(o, sizeof o, 120) == 12 && !strcmp(o, "a714000C0078"));
+    CHECK(pp_fmt_a714(o, sizeof o, 120) == 12 && !strcmp(o, "a714000C0078") && pp_fmt_a1(o, sizeof o, 0xabc) == 16 && !strcmp(o, "a103001000000ABC"));
     CHECK(pp_fmt_a607(o, sizeof o, 8) == 12 && !strcmp(o, "a607000C0008"));
-    CHECK(pp_fmt_a2(o, sizeof o, "{}") == 10 && !strcmp(o, "a202000a{}"));
+    CHECK(pp_fmt_a2(o, sizeof o, "{}") == 10 && !strcmp(o, "a202000A{}"));
     CHECK(pp_fmt_a2(o, 8, "{}") == -1);
     CHECK(pp_fmt_a1(o, 4, 1) == -1);
 
@@ -57,7 +57,7 @@ static void test_core(void){
     CHECK(c.volume == 20 && c.max_volume == 120);
 
     CHECK(send1(&c, "02020008") == 0 && nsent == 1);
-    CHECK(!strncmp(sent[0], "a202", 4) && strstr(sent[0], "\"song\":\"\"") && strstr(sent[0], "\"work_mode\":8"));
+    CHECK(!strcmp(sent[0], "a2020013{\"state\":1}"));
     { pp_frame_t f; CHECK(pp_parse(sent[0], strlen(sent[0]), &f) == 0 && f.dlen == (int)strlen(sent[0]) - 8); }
 
     nsent = 0;

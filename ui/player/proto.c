@@ -35,21 +35,21 @@ int pp_class1(const pp_frame_t *f){
 static int fit(int r, size_t cap){ return (r < 0 || (size_t)r >= cap) ? -1 : r; }
 
 int pp_fmt_a1(char *out, size_t cap, unsigned long ms){
-    return fit(snprintf(out, cap, "a1030010%08lx", ms & 0xffffffffUL), cap);
+    return fit(snprintf(out, cap, "a1030010%08lX", ms & 0xffffffffUL), cap);
 }
 int pp_fmt_a714(char *out, size_t cap, int volume){
     if(volume < 0) volume = 0;
     if(volume > 0xff) volume = 0xff;
-    return fit(snprintf(out, cap, "a714000C00%02x", volume), cap);
+    return fit(snprintf(out, cap, "a714000C00%02X", volume), cap);
 }
 int pp_fmt_a607(char *out, size_t cap, int mode){
-    return fit(snprintf(out, cap, "a607000C%04x", mode & 0xffff), cap);
+    return fit(snprintf(out, cap, "a607000C%04X", mode & 0xffff), cap);
 }
 int pp_fmt_a2(char *out, size_t cap, const char *json){
     size_t jl = strlen(json);
     if(jl + 8 > 0xffff || jl + 8 >= cap) return -1;
-    /* "a202" as ui/mqfeed.c sends it; the stock player's exact tag is checked against the protocol capture */
-    return fit(snprintf(out, cap, "a202%04x%s", (unsigned)(jl + 8), json), cap);
+    /* "a202" + LEN in upper case hex, as the stock player sends it (protocol capture 2026-11-15) */
+    return fit(snprintf(out, cap, "a202%04X%s", (unsigned)(jl + 8), json), cap);
 }
 
 int pp_json_escape(char *out, size_t cap, size_t len, const char *s){
