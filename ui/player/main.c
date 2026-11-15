@@ -285,7 +285,7 @@ int main(int argc, char **argv){
                 case KEYC_VOL_DOWN_DOUBLE: vol_key(&core, KA_DOUBLE, -1, kt); break;
                 case KEYC_VOL_UP_LONG:     vol_key(&core, KA_LONG, +1, kt); break;
                 case KEYC_VOL_DOWN_LONG:   vol_key(&core, KA_LONG, -1, kt); break;
-                case KEYC_PLAY_DOUBLE:     logmsg("play key double click (what the stock player does is not known yet)"); break;
+                case KEYC_PLAY_DOUBLE:     break;  /* ignored like in the stock player (docs/MQ_PLAYER_TRACE.md) */
                 case KEYC_PLAY:     logmsg("play key"); pb_transport(PL_T_TOGGLE, 0); break;
                 default:            logmsg("key %u pressed, not used", (unsigned)ev[k].code); break;
                 }

@@ -161,7 +161,8 @@ the mark that follows it.
   The driver tells double clicks and long presses apart itself and sends own codes (own-player log 2026-11-15, Jo):
   Volume up held 263, Volume down held 262, Volume up double click 266, Volume down double click 267, Play double
   click 269. While a volume key is held, the driver repeats the long-press code as autorepeat events (value 2) every
-  40 ms, starting 250 ms after the long-press event.
+  40 ms, starting 250 ms after the long-press event. The stock player ignores a Play double click and a held Play
+  key; only a short Play press toggles play and pause (Jo, 2026-11-15). The own player does the same.
   Short Power presses alternate between 265 and 259 (0x103): every second press comes as 259 (own-player log
   2026-11-15), so both mean "Power short".
 - **SD card out and in** (fourth run, 2026-11-15, log `player-trace-20261115-033139.log`, card with a file system on the
