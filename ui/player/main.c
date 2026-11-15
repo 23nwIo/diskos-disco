@@ -10,8 +10,8 @@
  *     player did not crash early;
  *   - owns the keys (/dev/input/event0, grabbed like the stock player): Power toggles the screen, a held Power powers
  *     off, Volume up/down step the volume and tell the UI (a714);
- *   - mounts the SD card when it is inserted and unmounts it when it is pulled (sdcard.c, sysfs polled once a second;
- *     the cold-boot mount is the UI's);
+ *   - mounts the SD card when it is inserted and unmounts it when it is pulled (sdcard.c, kernel uevents; the
+ *     cold-boot mount is the UI's);
  *   - runs the stock power off routine when the sleep timer (0806) runs out (hw.c);
  *   - logs every command to /tmp/diskos-player.log (RAM).
  * No sound yet.
@@ -33,6 +33,7 @@
 #include <linux/input.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <mqueue.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -150,14 +151,28 @@ int main(int argc, char **argv){
     else if(ioctl(keys, EVIOCGRAB, 1) != 0) logmsg("keys: grab %s: %s (keys still read)", keypath, strerror(errno));
     else logmsg("keys: %s grabbed", keypath);
 
-    int card = sd_card_present();                    /* the card as the kernel has it at start; edges are acted on */
-    logmsg("sd: card %s at start", card ? "present" : "absent");
+    int uev = use_wd ? sd_uevent_open() : -1;           /* host runs (-n) never mount anything */
+    if(use_wd && uev < 0) logmsg("sd: uevent socket: %s - no card hot-plug", strerror(errno));
+    else if(use_wd) logmsg("sd: listening for card events (fd %d)", uev);
 
-    double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0, last_card = 0;
+    double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0;
     int stable = 0; unsigned sleep_seq = 0;
     while(!g_stop){
-        struct pollfd pf[2] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 } };   /* an mqd_t is a descriptor on Linux */
-        int pr = poll(pf, 2, 250);                                             /* a negative fd is skipped */
+        /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
+        struct pollfd pf[3] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 } };
+        int pr = poll(pf, 3, 250);
+        if(pr > 0 && uev >= 0 && (pf[2].revents & (POLLIN | POLLERR))){
+            char ub[2048];
+            ssize_t un;
+            while((un = recv(uev, ub, sizeof ub - 1, 0)) > 0){
+                ub[un] = 0;
+                if(strstr(ub, "mmc")) logmsg("sd: uevent %s (%zd bytes)", ub, un);   /* the header; diagnosis */
+                int k = sd_uevent_kind(ub, (size_t)un);
+                if(k == SDEV_ADD){ logmsg("sd: card inserted"); sd_mount(logmsg); }
+                else if(k == SDEV_REMOVE){ logmsg("sd: card pulled"); sd_unmount(logmsg); }
+            }
+            if(un < 0 && errno != EAGAIN && errno != EINTR) logmsg("sd: uevent recv: %s", strerror(errno));
+        }
         if(pr < 0 && errno != EINTR){ logmsg("poll: %s", strerror(errno)); usleep(100000); }
         if(pr > 0 && (pf[0].revents & POLLIN)){
             ssize_t n = mq_receive(pl, buf, (size_t)msgsize, NULL);
@@ -207,15 +222,6 @@ int main(int argc, char **argv){
             sleep_seq = core.sleep_seq;
             sleep_at = core.sleep_s > 0 ? t + core.sleep_s : 0;
         }
-        if(use_wd && t - last_card >= 1.0){              /* SD card pulled / inserted (host runs never mount) */
-            last_card = t;
-            int now = sd_card_present();
-            if(now != card){
-                card = now;
-                logmsg("sd: card %s", now ? "inserted" : "pulled");
-                if(now) sd_mount(logmsg); else sd_unmount(logmsg);
-            }
-        }
         if(power_at > 0 && t >= power_at){ power_at = 0; sleep_at = t; }   /* the same routine as the sleep timer */
         if(sleep_at > 0 && t >= sleep_at){
             sleep_at = 0;
@@ -236,6 +242,7 @@ int main(int argc, char **argv){
            core.unknown_tags);
     if(wd >= 0){ wd_stop(wd); wd_close(wd); }
     if(keys >= 0) close(keys);
+    if(uev >= 0) close(uev);
     mq_close(pl);
     if(g_ui != (mqd_t)-1) mq_close(g_ui);
     free(buf);

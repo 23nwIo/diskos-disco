@@ -4,15 +4,41 @@
 
 #include <errno.h>
 #include <dirent.h>
+#include <linux/netlink.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-int sd_card_present(void){
-    struct stat sb;
-    return stat("/sys/block/mmcblk0", &sb) == 0;
+int sd_uevent_kind(const char *msg, size_t len){
+    int kind = SDEV_NONE, is_card = 0, is_disk = 0, is_block = 0;
+    size_t i = 0;
+    /* header "add@/devices/.../mmcblk0" */
+    if(len >= 4 && !strncmp(msg, "add@", 4)) kind = SDEV_ADD;
+    else if(len >= 7 && !strncmp(msg, "remove@", 7)) kind = SDEV_REMOVE;
+    else return SDEV_NONE;
+    while(i < len){
+        const char *s = msg + i;
+        size_t l = strnlen(s, len - i);
+        if(l == 15 && !strncmp(s, "DEVNAME=mmcblk0", 15)) is_card = 1;
+        else if(l == 12 && !strncmp(s, "DEVTYPE=disk", 12)) is_disk = 1;
+        else if(l == 15 && !strncmp(s, "SUBSYSTEM=block", 15)) is_block = 1;
+        i += l + 1;
+    }
+    return (is_card && is_disk && is_block) ? kind : SDEV_NONE;
+}
+
+int sd_uevent_open(void){
+    int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, NETLINK_KOBJECT_UEVENT);
+    if(fd < 0) return -1;
+    struct sockaddr_nl a; memset(&a, 0, sizeof a);
+    a.nl_family = AF_NETLINK; a.nl_groups = 1;     /* kernel uevents */
+    int rcv = 256 * 1024;                          /* as busybox uevent: room for a burst (card + bdi + mmc events) */
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv);
+    if(bind(fd, (struct sockaddr *)&a, sizeof a) != 0){ close(fd); return -1; }
+    return fd;
 }
 
 /* 1 if the mounted card can be read: a mount whose card has gone returns EIO */

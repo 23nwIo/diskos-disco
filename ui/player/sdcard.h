@@ -2,17 +2,24 @@
 /* Copyright (C) 2026 diskOS contributors */
 /* The SD card: mount it when it is inserted, unmount it when it is pulled. The stock player does this (trace run 4,
  * docs/MQ_PLAYER_TRACE.md) and the UI relies on it for hot-insert; the cold-boot mount is done by the UI itself
- * (ui/main.c coldplug). */
+ * (ui/main.c coldplug). The kernel announces the card with uevents on a netlink socket. */
 #ifndef DISKOS_PLAYER_SDCARD_H
 #define DISKOS_PLAYER_SDCARD_H
 #include <stddef.h>
 
 #define SD_MOUNTPOINT "/tmp/sdcard"
 
-/* 1 if the kernel currently has the card (/sys/block/mmcblk0 exists). The player polls this once a second: on the
- * Disc the kernel notices a pulled or inserted card ("mmc1: card aaaa removed"), but the netlink uevent listener of
- * d342e43 logged nothing in the device test 2026-11-15 (cause not found), so the edge is taken from sysfs instead. */
-int sd_card_present(void);
+enum { SDEV_NONE = 0, SDEV_ADD, SDEV_REMOVE };
+
+/* Classify one uevent message (NUL separated "key=value" strings after a "action@devpath" header): SDEV_ADD or
+ * SDEV_REMOVE for the whole card (block device mmcblk0, DEVTYPE=disk), SDEV_NONE for anything else (partitions,
+ * other devices, change events). Pure, for the host test. Format checked on a Disc with `busybox uevent`
+ * (2026-11-15): "remove@/devices/platform/md_ingenic,sdhci.2/mmc_host/mmc1/mmc1:aaaa/block/mmcblk0", SUBSYSTEM=block,
+ * DEVNAME=mmcblk0, DEVTYPE=disk. */
+int sd_uevent_kind(const char *msg, size_t len);
+
+/* Open the kernel uevent socket; returns the descriptor or -1 (errno set). */
+int sd_uevent_open(void);
 
 typedef void (*sd_log_fn)(const char *fmt, ...);
 
