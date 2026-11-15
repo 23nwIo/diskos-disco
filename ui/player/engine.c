@@ -47,6 +47,26 @@ static void disconnect(void){
     g_cmd = g_idle = -1;
 }
 
+/* MPD closes a client connection that has been silent for connection_timeout (60 s by default; a connection in "idle"
+ * is exempt). The command connection is silent most of the time, so it is opened again whenever it is found closed. */
+static int reconnect_cmd(void){
+    if(g_pid <= 0) return -1;
+    if(g_cmd >= 0) close(g_cmd);
+    g_cmd = mc_connect(ENG_SOCK, ENG_TIMEOUT_MS);
+    if(g_cmd < 0) g_log("engine: reconnect %s: %s", ENG_SOCK, strerror(errno));
+    return g_cmd >= 0 ? 0 : -1;
+}
+/* every command goes through here: one retry on a fresh connection when the old one was closed */
+static int xcmd(const char *c, char *out, size_t cap){
+    if(g_cmd < 0 && reconnect_cmd() != 0) return -1;
+    int x = mc_cmd(g_cmd, c, out, cap);
+    if(x >= 0) return x;
+    if(reconnect_cmd() != 0) return -1;
+    x = mc_cmd(g_cmd, c, out, cap);
+    if(x < 0){ g_log("engine: \"%s\": no answer from MPD", c); close(g_cmd); g_cmd = -1; }
+    return x;
+}
+
 static int spawn(void){
     if(mkdir(ENG_RUN_DIR, 0755) != 0 && errno != EEXIST){ g_log("engine: mkdir %s: %s", ENG_RUN_DIR, strerror(errno)); return -1; }
     FILE *f = fopen(ENG_CONF, "we");
@@ -71,8 +91,8 @@ static int spawn(void){
     g_idle = mc_connect(ENG_SOCK, ENG_TIMEOUT_MS);
     if(g_idle < 0 || mc_idle_begin(g_idle) != 0){ g_log("engine: idle connection: %s", strerror(errno)); disconnect(); return -1; }
     char r[256];
-    mc_cmd(g_cmd, "consume 0", r, sizeof r);
-    mc_cmd(g_cmd, "single 0", r, sizeof r);
+    xcmd("consume 0", r, sizeof r);
+    xcmd("single 0", r, sizeof r);
     g_log("engine: connected");
     return 0;
 }
@@ -89,13 +109,21 @@ void eng_stop(void){
     if(g_pid > 0){ kill(g_pid, SIGTERM); waitpid(g_pid, NULL, 0); g_pid = -1; }
 }
 
-int eng_ready(void){ return g_cmd >= 0; }
+int eng_ready(void){ return g_pid > 0 && g_idle >= 0; }
 int eng_idle_fd(void){ return g_idle; }
 
 int eng_idle_event(void){
     if(g_idle < 0) return -1;
     int ev = mc_idle_end(g_idle);
-    if(ev < 0 || mc_idle_begin(g_idle) != 0){ g_log("engine: idle connection lost"); disconnect(); return -1; }
+    if(ev < 0 || mc_idle_begin(g_idle) != 0){
+        /* open it again; MPD itself going away is noticed by eng_check */
+        g_log("engine: idle connection lost, reconnecting");
+        close(g_idle);
+        g_idle = mc_connect(ENG_SOCK, ENG_TIMEOUT_MS);
+        if(g_idle >= 0 && mc_idle_begin(g_idle) != 0){ close(g_idle); g_idle = -1; }
+        if(g_idle < 0){ g_log("engine: idle connection: %s - no engine from now on", strerror(errno)); return -1; }
+        return MC_EV_PLAYER;                     /* something may have changed meanwhile */
+    }
     return ev;
 }
 
@@ -112,19 +140,14 @@ void eng_check(void){
 }
 
 static int cmd(const char *c){
-    if(g_cmd < 0) return -1;
     char r[512];
-    int x = mc_cmd(g_cmd, c, r, sizeof r);
-    if(x != 0) g_log("engine: \"%s\": %s", c, x > 0 ? r : "no answer");
-    if(x < 0) disconnect();
+    int x = xcmd(c, r, sizeof r);
+    if(x > 0) g_log("engine: \"%s\": %s", c, r);
     return x == 0 ? 0 : -1;
 }
 
 int eng_cmd(const char *c, char *out, unsigned cap){
-    if(g_cmd < 0) return -1;
-    int x = mc_cmd(g_cmd, c, out, cap);
-    if(x < 0) disconnect();
-    return x;
+    return xcmd(c, out, cap);
 }
 
 /* MPD holds at most two songs: the current one and, so that it can play gaplessly, the one after it. The queue itself
@@ -136,8 +159,8 @@ static int addid(const char *path){
     snprintf(uri, sizeof uri, "file://%s", path);
     if(mc_quote(q, sizeof q, uri) < 0){ g_log("engine: path too long: %s", path); return -1; }
     snprintf(line, sizeof line, "addid %s", q);
-    int x = mc_cmd(g_cmd, line, r, sizeof r);
-    if(x != 0){ g_log("engine: add %s: %s", path, x > 0 ? r : "no answer"); if(x < 0) disconnect(); return -1; }
+    int x = xcmd(line, r, sizeof r);
+    if(x != 0){ g_log("engine: add %s: %s", path, x > 0 ? r : "no answer"); return -1; }
     return mc_get(r, "Id", v, sizeof v) ? atoi(v) : -1;
 }
 
@@ -149,7 +172,7 @@ static int start_cur(long ms){
 }
 
 int eng_load(const char *path, long start_ms, int paused){
-    if(g_cmd < 0) return -1;
+    if(!eng_ready()) return -1;
     g_armed = 0; g_cur = g_next = -1;
     if(cmd("clear")) return -1;
     g_cur = addid(path);
@@ -159,10 +182,10 @@ int eng_load(const char *path, long start_ms, int paused){
 }
 
 int eng_set_next(const char *path){
-    if(g_cmd < 0) return -1;
+    if(!eng_ready()) return -1;
     if(g_next >= 0){
         char line[48]; snprintf(line, sizeof line, "deleteid %d", g_next);
-        char r[256]; mc_cmd(g_cmd, line, r, sizeof r);         /* already gone is fine */
+        char r[256]; xcmd(line, r, sizeof r);                   /* already gone is fine */
         g_next = -1;
     }
     if(!path) return 0;
@@ -174,7 +197,7 @@ int eng_advanced(const eng_status_t *s){
     if(g_next < 0 || s->songid != g_next) return 0;
     if(g_cur >= 0){
         char line[48], r[256]; snprintf(line, sizeof line, "deleteid %d", g_cur);
-        mc_cmd(g_cmd, line, r, sizeof r);
+        xcmd(line, r, sizeof r);
     }
     g_cur = g_next; g_next = -1;
     return 1;
@@ -201,9 +224,9 @@ int eng_seek_ms(long ms){
 int eng_status(eng_status_t *st){
     memset(st, 0, sizeof *st);
     st->song = st->songid = -1;
-    if(g_cmd < 0) return -1;
-    char r[MC_RESP_MAX], v[1100];
-    if(mc_cmd(g_cmd, "status", r, sizeof r) != 0){ disconnect(); return -1; }
+    if(!eng_ready()) return -1;
+    char r[MC_RESP_MAX] = "", v[1100];
+    if(xcmd("status", r, sizeof r) != 0){ g_log("engine: status: %s", r[0] ? r : "no answer"); return -1; }
     if(mc_get(r, "state", v, sizeof v)) st->state = !strcmp(v, "play") ? ENG_PLAY : !strcmp(v, "pause") ? ENG_PAUSE : ENG_STOP;
     if(mc_get(r, "elapsed", v, sizeof v)) st->elapsed_ms = (long)(atof(v) * 1000.0 + 0.5);
     if(mc_get(r, "duration", v, sizeof v)) st->duration_ms = (long)(atof(v) * 1000.0 + 0.5);
@@ -215,7 +238,7 @@ int eng_status(eng_status_t *st){
         char *p; st->rate = (unsigned)strtoul(v, &p, 10);
         if(*p == ':'){ st->bits = (int)strtol(p + 1, &p, 10); if(*p == ':') st->channels = (int)strtol(p + 1, NULL, 10); }
     }
-    if(st->song >= 0 && mc_cmd(g_cmd, "currentsong", r, sizeof r) == 0 && mc_get(r, "file", v, sizeof v)){
+    if(st->song >= 0 && xcmd("currentsong", r, sizeof r) == 0 && mc_get(r, "file", v, sizeof v)){
         const char *p = !strncmp(v, "file://", 7) ? v + 7 : v;
         snprintf(st->file, sizeof st->file, "%s", p);
         if(!st->rate && mc_get(r, "Format", v, sizeof v)) st->rate = (unsigned)strtoul(v, NULL, 10);

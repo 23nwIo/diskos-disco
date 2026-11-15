@@ -26,6 +26,10 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   audible. Sequence (trace run 1, 578 s): `_IO('M',48)` on A once, A M56 = 3, C M60 = 3, 0.4 s, both 0, A M52 / C M54 =
   rate code (1 = 44.1 kHz, 2 = 48, 4 = 96, 6 = 192), A M41 / C M50 = 0, volume A M45 + M66 / C M47 + M68 (attenuation
   byte), A `_IO('M',46)`; then the PCM is opened.
+- MPD closes a client connection that has been silent for 60 s (`connection_timeout`; a connection in `idle` is
+  exempt; checked against MPD 0.23.14 on a PC). The player's command connection is reopened whenever it is found
+  closed (engine.c `xcmd`). Before that fix (7372509) the player lost MPD a minute after boot and never started the
+  DAC: no sound (Jo, 2026-11-15).
 - The volume is the DAC's: the stock UI's volume does nothing to MPD's stream, the own player writes the volume bytes.
 
 ## In the own player (ui/player)
