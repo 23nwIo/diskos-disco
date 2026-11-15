@@ -154,6 +154,10 @@ the mark that follows it.
   2026-11-15); an own player should do the same.
 - **Power key**: screen off = backlight "0", `/dev/cst816t` `_IO(0xef,3)` (touch off), `/dev/lcd_st77916`
   `_IO(0xef,1)`; screen on = lcd `_IO(0xef,2)`, backlight "31", touch `_IO(0xef,4)`. The player does this itself.
+- **Keys** (`/dev/input/event0`, name `x2000_key`; read on a Disc 2026-11-15 with the own player running, since the
+  stock player grabs the device): Power short = 265 (0x109), Power held about 3 s = 264 (0x108, its own key code, sent
+  by the driver as press and release 14 µs apart), Volume up = 251 (0xfb), Volume down = 252 (0xfc), Play/Pause = 250
+  (0xfa). Every key arrives as press + release within microseconds, so the driver reports clicks, not hold times.
 - **USB storage mode**: stop the stream, mixer write (control `LO3_MUX`), the DAC block above, `sync`, `umount
   /tmp/sdcard`, `rm -rf /tmp/sdcard`, `echo device > .../13500000.otg_new-role-switch/role`, configfs gadget
   `storage_demo` (idVendor 0x0525, idProduct 0xa4a5, mass_storage lun.0 file `/dev/mmcblk0`, removable 1, UDC

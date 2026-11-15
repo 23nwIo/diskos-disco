@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 /* Own player switch (docs/MQ_PLAYER_REPLACEMENT.md, development phase). When /usr/data/diskos-own-player exists, the
- * launcher (mq_ui started as /usr/data/mq_player) execs /usr/data/diskos-player instead of the stock
- * /usr/bin/mq_player, under the name "mq_player" so fiio_init's `pgrep -x mq_player` still finds it. The own player
+ * launcher (mq_ui started as /usr/data/mq_player) execs /usr/data/diskos-own/mq_player instead of the stock
+ * /usr/bin/mq_player, so the process is named "mq_player" like the stock one (see OPL_BIN). The own player
  * speaks the stock protocol (docs/PLAYER_PROTOCOL.md), so the UI does not change. Without the switch file nothing
  * changes at all.
  *
@@ -27,7 +27,13 @@
 #include <unistd.h>
 
 #define OPL_SWITCH "/usr/data/diskos-own-player"
-#define OPL_BIN    "/usr/data/diskos-player"
+/* The file itself is named mq_player: the kernel takes a process's name (/proc/<pid>/comm) from the executed file, not
+ * from argv[0], and both the UI's launch verdict (launch_status_get, PLAYER_COMM_NAME) and fiio_init's pgrep compare
+ * that name. Named diskos-player, the player ran but the UI never accepted the verdict: no card access, "Return to
+ * local playback first" (device test 2026-11-15). */
+#define OPL_DIR    "/usr/data/diskos-own"
+#define OPL_BIN    OPL_DIR "/mq_player"
+#define OPL_OLD_BIN "/usr/data/diskos-player"            /* where 0b45afa..52b9909 put it; removed */
 #define OPL_STARTS "/tmp/.diskos_own_player_starts"   /* tmpfs: counts this boot only */
 #define OPL_UNSTABLE "/usr/data/diskos-own-player.unstable"   /* NAND: survives a reboot the player caused */
 #define OPL_MAX_STARTS 3

@@ -207,8 +207,9 @@ on the stock player, without any UI change:
 
 - On: `touch /usr/data/diskos-own-player`, reboot. Off: `busybox rm /usr/data/diskos-own-player`, reboot.
 - The binary is `ui/player` (`diskos-player`), built with mq_ui and carried inside it (ui/pl_blob.c), so it comes with
-  the signed SD update. With the switch on, the launcher writes it to `/usr/data/diskos-player` (only when the bytes
-  differ) and execs it as `mq_player` instead of the stock player.
+  the signed SD update. With the switch on, the launcher writes it to `/usr/data/diskos-own/mq_player` (only when the
+  bytes differ) and execs it instead of the stock player. The file has to be named `mq_player`: the process name
+  (`/proc/<pid>/comm`) comes from the file, and the UI's launch verdict and fiio_init's `pgrep` check it.
 - Fail-safe (ui/own_player.h): at most 3 starts per boot, and at most 2 starts in a row that did not run for 60 s
   (the player deletes `/usr/data/diskos-own-player.unstable` after 60 s; the count survives a reboot the player
   caused through the watchdog). When either runs out the switch file is renamed to `diskos-own-player.failed` and the

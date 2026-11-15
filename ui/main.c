@@ -3225,7 +3225,9 @@ static void player_launch_prepare(void){
         const opl_paths_t op = { OPL_SWITCH, OPL_BIN, OPL_STARTS, OPL_UNSTABLE };
         /* The player runs from the copy carried in this (signed) mq_ui, never from a file someone else put there:
          * refresh it when it differs, and when that fails remove it, so opl_prepare falls back to stock. */
-        if(access(OPL_SWITCH, F_OK) == 0 && !wdo_same_bytes(OPL_BIN, pl_blob_data(), pl_blob_size())
+        unlink(OPL_OLD_BIN);
+        if(access(OPL_SWITCH, F_OK) == 0 && (mkdir(OPL_DIR, 0755) == 0 || errno == EEXIST)
+           && !wdo_same_bytes(OPL_BIN, pl_blob_data(), pl_blob_size())
            && wdo_write(OPL_BIN, pl_blob_data(), pl_blob_size()) != 0){
             unlink(OPL_BIN);
             boot_note("launcher: own player binary could not be written");
