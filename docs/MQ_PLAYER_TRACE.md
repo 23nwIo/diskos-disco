@@ -155,6 +155,8 @@ the mark that follows it.
   `storage_demo` (idVendor 0x0525, idProduct 0xa4a5, mass_storage lun.0 file `/dev/mmcblk0`, removable 1, UDC
   `13500000.otg_new`). Leaving it: the DAC block, empty UDC, `umount /sys/kernel/config`, `mkdir -p /tmp/sdcard`,
   `blkid`.
+- **EQ presets** (off, Pop, Hip-Hop, R&B, off; checked 2026-11-15): no DAC or mixer call at all, so the EQ is done in
+  software on the samples (matches `eq.c` in the binary).
 - **Charger in/out**: no calls besides the reads of `/dev/aw35615` and `/dev/sgm41513` (reads are not recorded).
 - **Power off from the menu** (with charger): Bluetooth off, `ifconfig wlan0 down`, kill net tools, `_IO('M',48)` on
   `A`, `cmd_watchdog stop`, **`killall -9 fiio_init.sh`**, backlight 0, lcd `_IO(0xef,1)`, `killall -9 mq_ui`, rfkill 0,
