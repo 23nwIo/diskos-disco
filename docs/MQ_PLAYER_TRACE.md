@@ -169,6 +169,10 @@ the mark that follows it.
   boot after this run it crashed right after (SIGSEGV in libdbus at 26.7 s), and fiio_init's loop then killed the diskOS
   UI and started the stock UI. Fix attempt 54359e6 (not device-tested): diskOS leaves the boot Bluetooth bring-up to the player.
 
+Still to record, each when its mode is ported (step 3 of the replacement plan): USB storage with a real USB host
+connected and disconnected (run 3 only switched the mode), USB DAC mode with a PC playing, Bluetooth receiver with a
+phone sending music. The tracer was switched off after run 3 (2026-11-15).
+
 The caller address points into the code mapping listed in the `map` lines of the same start block. For
 `/usr/bin/mq_player` it is the plain address in the binary (not position independent), so it can be looked up in a
 disassembly directly.
