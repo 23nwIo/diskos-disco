@@ -4,7 +4,10 @@
  *   dacstart [-r] <rate code> <volume byte>
  *     rate code: 1 = 44.1 kHz, 2 = 48 kHz, 4 = 96 kHz, 6 = 192 kHz (M52/M54, run 3)
  *     volume byte: attenuation, 0x72 = the stock start value; larger = quieter
- *     -r: first _IO('M',48) on A, as the stock player does before its very first stream */
+ *     -r: first _IO('M',48) on A, as the stock player does before its very first stream
+ * Keeps both DAC devices open until it is killed: the stock player holds them open all the time, and closing them may
+ * switch the DAC off again (test 2026-11-15: the data ran through far faster than real time after dacstart had exited). */
+#include <signal.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +34,7 @@ int main(int argc, char **argv){
     w1(a, "A", 41, 0); w1(c, "C", 50, 0);
     w1(a, "A", 45, vol); w1(a, "A", 66, vol); w1(c, "C", 47, vol); w1(c, "C", 68, vol);
     printf("A M46 -> %d\n", ioctl(a, 0x20004d2eUL, 0));
-    close(a); close(c);
-    return 0;
+    printf("holding /dev/cs43131 and /dev/cs43131c open; kill to release\n");
+    fflush(stdout);
+    for(;;) pause();
 }
