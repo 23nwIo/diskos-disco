@@ -7,6 +7,7 @@
  *   GET  /<token>/api/state        playback state as JSON
  *   POST /<token>/api/<command>    play_pause | play | pause | next | previous
  *                                  volume (value=0..120 or step=-120..120) | seek (position_ms=N) | play_mode (mode=0..4)
+ *                                  balance (value=-10..10: 0 centred, negative left, positive right)
  * Parameters come from the query string or an application/x-www-form-urlencoded body. Commands are POST only, so a
  * link preview or prefetch can never press a button. Anything without the exact token is a plain 404. */
 #ifndef DISKOS_REMOTE_CORE_H
@@ -37,7 +38,8 @@ typedef enum {
     RMT_CMD_REBOOT,          /* restart the Disc (as Settings > Restart) */
     RMT_CMD_RADIO_FAV,       /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
     RMT_CMD_SCREEN,          /* the screen as it looks now (binary answer: BMP) */
-    RMT_CMD_TOUCH            /* a finger on the screen: pos,id = x,y down; offset,limit = x,y up; arg = ms down */
+    RMT_CMD_TOUCH,           /* a finger on the screen: pos,id = x,y down; offset,limit = x,y up; arg = ms down */
+    RMT_CMD_BALANCE          /* left/right balance arg -10..10 (as Settings > Audio > Balance) */
 } rmt_cmd_kind_t;
 /* POST api/touch x, y (0..359), optional x2, y2 (where it lifts; default x, y) and ms (0..3000, default 100). */
 #define RMT_SCREEN_PX 360
@@ -113,6 +115,7 @@ typedef struct {
     int  has_track, playing;
     long position_ms, duration_ms;
     int  volume, volume_max;
+    int  balance;            /* -10..10, 0 centred (the saved setting) */
     int  play_mode;          /* 0..4, -1 unknown */
     int  work_mode;          /* the source mode, 0..6 (6 web radio), -1 unknown */
     int  controllable;       /* 1 if transport commands can reach a player now */

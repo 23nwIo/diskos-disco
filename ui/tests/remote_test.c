@@ -108,6 +108,10 @@ static void test_core(void){
     CHECK(req("POST", p("/api/seek"), "").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/play_mode"), "mode=3"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PLAY_MODE && r.cmd.arg == 3);
     CHECK(req("POST", p("/api/play_mode"), "mode=5").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/balance"), "value=-10"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BALANCE && r.cmd.arg == -10);
+    r = req("POST", p("/api/balance"), "value=10"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BALANCE && r.cmd.arg == 10);
+    CHECK(req("POST", p("/api/balance"), "value=11").kind == RMT_R_BAD_PARAM && req("POST", p("/api/balance"), "").kind == RMT_R_BAD_PARAM);
+    CHECK(req("GET", p("/api/balance"), NULL).kind == RMT_R_BAD_METHOD && !strcmp(rmt_cmd_name(RMT_CMD_BALANCE), "balance"));
     /* library */
     r = req("GET", p("/api/library/albums"), NULL);
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BROWSE && r.cmd.sub == RMT_L_ALBUMS && r.cmd.offset == 0 && r.cmd.limit == RMT_LIMIT_DEF);
@@ -234,7 +238,7 @@ static void test_core(void){
     char js[14000]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strstr(js, "\"radio_state\":\"off\"") && strstr(js, "\"station\":\"\""));
     CHECK(strstr(js, "\"title\":\"Song \\\"1\\\"\"") != NULL);
-    CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"source\":\"local\""));
+    CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"balance\":0,") && strstr(js, "\"source\":\"local\""));
     s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Radio <%s>", "X");
     snprintf(s.station_url, sizeof s.station_url, "https://radio.example/stream?a=1&b=\"2\"");
     CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"source\":\"radio\"") && strstr(js, "\"station\":\"Radio \\u003cX>\""));
@@ -381,6 +385,7 @@ static void *emu(void *a){
                     }
                     rsrv_done_blob((char *)b, n, "image/bmp");
                 }
+                else if(c.kind == RMT_CMD_BALANCE){ s.balance = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_TOUCH){ g_touch_n++; g_touch_x = (int)c.offset; g_touch_y = (int)c.limit; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_COVER){                       /* a 16x16 24-bit BMP, a colour gradient */
                     size_t n = 54 + 16 * 16 * 3; unsigned char *b = calloc(1, n);

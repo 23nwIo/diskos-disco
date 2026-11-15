@@ -281,6 +281,7 @@ static const struct { const char *name; rmt_cmd_kind_t kind; } CMDS[] = {
     { "play_pause", RMT_CMD_PLAY_PAUSE }, { "play", RMT_CMD_PLAY }, { "pause", RMT_CMD_PAUSE },
     { "next", RMT_CMD_NEXT }, { "previous", RMT_CMD_PREV },
     { "volume", RMT_CMD_VOLUME }, { "seek", RMT_CMD_SEEK }, { "play_mode", RMT_CMD_PLAY_MODE },
+    { "balance", RMT_CMD_BALANCE },
     { "radio_stop", RMT_CMD_RADIO_STOP },
 };
 const char *rmt_cmd_name(rmt_cmd_kind_t k){
@@ -434,6 +435,9 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         case RMT_CMD_PLAY_MODE:
             if(param(r, "mode", &v) || v < 0 || v > 4) rt.kind = RMT_R_BAD_PARAM;
             break;
+        case RMT_CMD_BALANCE:
+            if(param(r, "value", &v) || v < -10 || v > 10) rt.kind = RMT_R_BAD_PARAM;
+            break;
         default: break;
         }
         rt.cmd.arg = v;
@@ -472,12 +476,12 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
-        "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"play_mode\":%d,\"work_mode\":%d,"
+        "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"play_mode\":%d,\"work_mode\":%d,"
         "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"bt_codec\":\"%s\",\"bt_device\":\"%s\",\"station_fav\":%s,\"radio_error\":\"%s\","
         "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\"}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
-        s->volume, s->volume_max, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
+        s->volume, s->volume_max, s->balance, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
         s->radio_state ? s->radio_state : "off", st, su, sti, bc, bd, s->station_fav < 0 ? "null" : s->station_fav ? "true" : "false", re,
         fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
@@ -577,6 +581,8 @@ const char RMT_PAGE_HTML[] =
 "<div class=tr><button id=pv aria-label=Previous>&#9198;</button><button id=pp class=pp aria-label='Play or pause'>&#9199;</button>\n"
 "<button id=nx aria-label=Next>&#9197;</button></div>\n"
 "<div class=card><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=120 value=0>\n"
+"<div class=hd><label for=bal style=flex:1>Balance <span id=bv></span></label><button id=bc class=more style=margin:0>Centre</button></div>\n"
+"<input id=bal type=range min=-10 max=10 step=1 value=0>\n"
 "<label for=eqs>EQ</label><select id=eqs></select>\n"
 "<div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one\n"
 "<option value=3>Repeat all<option value=4>Single</select></div></div></div>\n"
@@ -620,13 +626,16 @@ const char RMT_PAGE_HTML[] =
 "if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}\n"
 "$('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);\n"
 "if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=Math.max(0,s.volume)}$('vv').textContent=s.volume<0?'(not known yet)':s.volume;\n"
+"if(!drag.bal){$('bal').value=s.balance}$('bv').textContent=bl($('bal').value);\n"
 "if(s.play_mode>=0&&document.activeElement!==$('pm'))$('pm').value=s.play_mode;\n"
 "if(document.activeElement!==$('eqs')){if(!$('eqs').options.length||$('eqs').dataset.n!==s.eq_name)eqload(s.eq);else $('eqs').value=s.eq}\n"
 "if(!s.controllable)say(s.source==='other'?'The player is in another mode (e.g. USB or Bluetooth)':'')\n"
 "}).catch(function(){busy=0;say('Player not reachable')})}\n"
 "$('pp').onclick=function(){cmd('play_pause')};$('nx').onclick=function(){cmd('next')};$('pv').onclick=function(){cmd('previous')};\n"
-"['pos','vol'].forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value};\n"
-"e.onchange=function(){drag[i]=0;cmd(i==='pos'?'seek':'volume',(i==='pos'?'position_ms=':'value=')+e.value)}});\n"
+"function bl(v){v=+v;return v?Math.abs(v)+(v<0?' left':' right'):'centre'}\n"
+"['pos','vol','bal'].forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value;if(i==='bal')$('bv').textContent=bl(e.value)};\n"
+"e.onchange=function(){drag[i]=0;cmd(i==='pos'?'seek':i==='vol'?'volume':'balance',(i==='pos'?'position_ms=':'value=')+e.value)}});\n"
+"$('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};\n"
 "$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};\n"
 "$('fv').onclick=function(){(($('fv').dataset.r)?cmd(fav?'radio_fav_remove':'radio_fav_add','kind=radio_now'):cmd('favorite','on='+(fav?0:1))).then(function(ok){if(ok)say(fav?'Removed from favourites':'Added to favourites',1)})};\n"
 "$('rs').onclick=function(){cmd('radio_stop')};function eqload(cur){fetch('api/eq',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok)return;var e=$('eqs');e.textContent='';\n"

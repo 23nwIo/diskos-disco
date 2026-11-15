@@ -214,6 +214,7 @@ static void snapshot(rmt_state_t *s){
     s->playing = music_assistant() ? ma_playing() : ui_is_playing();
     s->position_ms = st.position_ms; s->duration_ms = st.duration_ms;
     s->volume = vol_now(&st); s->volume_max = VOL_MAX;
+    s->balance = simple_cfg_get_int("balance", 0); if(s->balance < -10 || s->balance > 10) s->balance = 0;   /* main.c applies the same at boot */
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
     s->work_mode = ui_get_source_mode();
@@ -263,6 +264,10 @@ static int run(const rmt_cmd_t *c, const char **why){
     case RMT_CMD_VOLUME_STEP: { track_state_t st; ipc_get_state(&st); int v = vol_now(&st);
         if(v < 0){ *why = "The volume is not known yet - set it once"; return -1; }
         return ui_set_volume(v + (int)c->arg); }
+    case RMT_CMD_BALANCE:
+        ui_set_balance((int)c->arg);
+        if(simple_cfg_set_int("balance", (int)c->arg) < 0){ *why = "Balance set, but it could not be saved"; return -1; }
+        return 0;
     case RMT_CMD_PLAY_MODE:
         if(ma){ *why = "Music Assistant sets the play mode while it plays"; return -1; }
         if(!ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }
