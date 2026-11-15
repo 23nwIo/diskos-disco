@@ -23,17 +23,22 @@ static int fails;
 static char e_cur[1024], e_next[1024], e_missing[1024];
 static int e_cur_id = -1, e_next_id = -1, e_ids = 1, e_state = ENG_STOP, e_armed, e_loads;
 static long e_ms;
+static unsigned rate_of(const char *p){ return strstr(p, "96k") ? 96000 : 44100; }
+static eng_prepare_fn e_prepare;
+void eng_set_prepare(eng_prepare_fn fn){ e_prepare = fn; }
 int eng_ready(void){ return 1; }
 int eng_load(const char *p, long ms, int paused){
     if(e_missing[0] && !strcmp(p, e_missing)) return -1;
     snprintf(e_cur, sizeof e_cur, "%s", p); e_cur_id = e_ids++; e_next[0] = 0; e_next_id = -1; e_ms = ms; e_loads++;
     e_armed = paused; e_state = paused ? ENG_PAUSE : ENG_PLAY;
+    if(!paused && e_prepare) e_prepare(rate_of(p));          /* as engine.c: the DAC before MPD opens the PCM */
     return 0;
 }
-int eng_set_next(const char *p){
+int eng_set_next(const char *p, unsigned must_rate){
     e_next[0] = 0; e_next_id = -1;
     if(!p) return 0;
     if(e_missing[0] && !strcmp(p, e_missing)) return -1;
+    if(must_rate && rate_of(p) != must_rate) return 1;
     snprintf(e_next, sizeof e_next, "%s", p); e_next_id = e_ids++;
     return 0;
 }
@@ -45,7 +50,7 @@ int eng_seek_ms(long ms){ e_ms = ms; return 0; }
 int eng_status(eng_status_t *s){
     memset(s, 0, sizeof *s);
     s->state = e_state; s->songid = e_cur_id; s->song = e_cur_id >= 0 ? 0 : -1; s->elapsed_ms = e_ms;
-    s->rate = e_state == ENG_PLAY ? 44100 : 0; s->bits = 16; s->channels = 2;
+    s->rate = e_state == ENG_PLAY ? rate_of(e_cur) : 0; s->bits = 16; s->channels = 2;
     snprintf(s->file, sizeof s->file, "%s", e_cur);
     return 0;
 }
@@ -56,15 +61,17 @@ static void e_song_ends(void){
     e_ms = 0;
     pb_engine_event();
 }
-unsigned dac_current_rate(void){ return 44100; }
+static unsigned d_rate; static int d_starts;
+unsigned dac_current_rate(void){ return d_rate; }
 void dac_attenuation(int v, int g, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)b; *a = *c = 0; }
-int dac_start(unsigned r, unsigned char a, unsigned char c, void (*l)(const char *, ...)){ (void)r; (void)a; (void)c; (void)l; return 0; }
+int dac_start(unsigned r, unsigned char a, unsigned char c, void (*l)(const char *, ...)){ (void)a; (void)c; (void)l; d_rate = r; d_starts++; return 0; }
 
 /* ---- frames to the UI ---- */
 static char sent[64][2048]; static int nsent;
 static void cap_send(void *ctx, const char *f, int len){ (void)ctx; if(nsent < 64){ snprintf(sent[nsent], sizeof sent[0], "%.*s", len, f); nsent++; } }
 static void quiet(const char *fmt, ...){ (void)fmt; }
 
+static int sent_count(const char *s){ int n = 0; for(int i = 0; i < nsent; i++) if(strstr(sent[i], s)) n++; return n; }
 static char dbp[256], sysp[256];
 static void sql(sqlite3 *d, const char *q){
     char *e = NULL;
@@ -116,7 +123,10 @@ static void make_db(void){
            "('/s/b1.flac','b1.flac','Gamma', 30,0,'Bravo','Bob','Various','Jazz',0,0,0,0,150000,6),"
            "('/s/b2.flac','b2.flac','Delta', 40,0,'Bravo','Ann','Various','Jazz',1,3,0,0,150000,6),"
            "('/s/c.flac', 'c.flac', 'Echo',  50,0,'Alpha','Cid','Cid','Rock',2,1,0,0,150000,7),"
-           "('/s/cue.flac','cue.flac','Cue 1',10,0,'Cue','Cid','Cid','Rock',1,1,1,0,60000,8);");
+           "('/s/cue.flac','cue.flac','Cue 1',10,0,'Cue','Cid','Cid','Rock',1,1,1,0,60000,8),"
+           "('/s/m1.flac','m1.flac','M1',60,0,'Mixed','Mo','Mo','Pop',1,1,0,0,1000,9),"
+           "('/s/m2-96k.flac','m2-96k.flac','M2',61,0,'Mixed','Mo','Mo','Pop',1,2,0,0,1000,9),"
+           "('/s/m3-96k.flac','m3-96k.flac','M3',62,0,'Mixed','Mo','Mo','Pop',1,3,0,0,1000,9);");
     sql(d, "INSERT INTO MY_LOVE (PATH,NAME,TITLE,TITLE_CODE,NAME_CODE,ALBUM,ARTIST,TRACK,IS_CUE,IS_ISO,DURATION) VALUES"
            "('/s/c.flac','c.flac','Echo',50,0,'Alpha','Cid',1,0,0,150000),('/s/b1.flac','b1.flac','Gamma',30,0,'Bravo','Bob',0,0,0,150000);");
     /* two playlists; diskOS plays the one with the lowest LIST_ID (seq 0) */
@@ -160,9 +170,9 @@ static void test_queuedb(void){
     CHECK(d != NULL);
     char err[200];
     /* all songs: title code order, the CUE row last (as ui/musicdb.c mdb_play_pos counts) */
-    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 6);
-    CHECK(!strcmp(queue_names(d), "a2.flac,b1.flac,b2.flac,c.flac,a1.flac,cue.flac"));
-    CHECK(count(d, "SELECT MIN(ID) FROM LIST_SONG_0;") == 1 && count(d, "SELECT COUNT(*) FROM LIST_SONG_0 WHERE SONG_TYPE=3;") == 6);
+    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 9);
+    CHECK(!strcmp(queue_names(d), "a2.flac,b1.flac,b2.flac,c.flac,m1.flac,m2-96k.flac,m3-96k.flac,a1.flac,cue.flac"));
+    CHECK(count(d, "SELECT MIN(ID) FROM LIST_SONG_0;") == 1 && count(d, "SELECT COUNT(*) FROM LIST_SONG_0 WHERE SONG_TYPE=3;") == 9);
     CHECK(count(d, "SELECT DURATION FROM LIST_SONG_0 WHERE ID=1;") == 200000);
     /* rebuilt: IDs start at 1 again (DROP + CREATE like the stock player) */
     CHECK(qd_build(d, QD_ALBUM, "Alpha", 0, err, sizeof err) == 3);
@@ -186,18 +196,18 @@ static void test_queuedb(void){
     CHECK(qd_build(d, 4, "", 0, err, sizeof err) == -1);
     CHECK(qd_build(d, QD_ALBUM, "it's", 0, err, sizeof err) == 0);    /* a quote is bound, not interpolated */
 
-    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 6);
-    int *ids = NULL; CHECK(qd_ids(d, &ids) == 6 && ids[0] == 1 && ids[5] == 6); free(ids);
+    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 9);
+    int *ids = NULL; CHECK(qd_ids(d, &ids) == 9 && ids[0] == 1 && ids[8] == 9); free(ids);
     int ord[6] = { 4, 1, 2, 3, 6, 5 }, *o = NULL;
     CHECK(qd_shuffle_write(d, ord, 6) == 0 && qd_shuffle_read(d, &o) == 6 && o[0] == 4 && o[5] == 5); free(o);
     CHECK(count(d, "SELECT MIN(ID) FROM LIST_SONG_3;") == 1);
-    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 6 && count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name='LIST_SONG_3';") == 0);
+    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 9 && count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name='LIST_SONG_3';") == 0);
     CHECK(qd_shuffle_read(d, &o) == 0);
 
     qd_row_t r;
     CHECK(qd_row(d, 4, &r) == 1 && !strcmp(r.path, "/s/c.flac") && r.song_id == 5 && r.love && r.duration_ms == 150000);
     CHECK(qd_row(d, 1, &r) == 1 && !strcmp(r.title, "Beta") && r.song_id == 1 && !r.love);
-    CHECK(qd_row(d, 6, &r) == 1 && r.is_cue);
+    CHECK(qd_row(d, 9, &r) == 1 && r.is_cue);
     CHECK(qd_row(d, 99, &r) == 0);
     sqlite3_close(d);
     CHECK(qd_artist_class(sysp) == 0 && qd_artist_class("/nonexistent/sys.db") == -1);
@@ -268,12 +278,12 @@ static void test_playback(void){
     /* a play list in shuffle: the tapped song plays first, LIST_SONG_3 starts with it */
     c.play_mode = PQ_SHUFFLE;
     CHECK(pb_play_list(QD_ALL, 3, "") == 0 && !strcmp(e_cur, "/s/c.flac"));
-    CHECK(count(d, "SELECT POS_ID FROM LIST_SONG_3 WHERE ID=1;") == 4 && count(d, "SELECT COUNT(*) FROM LIST_SONG_3;") == 6);
+    CHECK(count(d, "SELECT POS_ID FROM LIST_SONG_3 WHERE ID=1;") == 4 && count(d, "SELECT COUNT(*) FROM LIST_SONG_3;") == 9);
     /* type 0 jumps by LIST_SONG_0 position, also in shuffle */
     CHECK(pb_play_list(QD_RESUME, 0, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));
     c.play_mode = PQ_IN_ORDER; pb_mode_changed();
     /* the CUE row is skipped (not supported yet); a missing file is skipped too */
-    CHECK(pb_play_list(QD_ALL, 5, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));   /* wrapped past the CUE row */
+    CHECK(pb_play_list(QD_ALL, 8, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));   /* wrapped past the CUE row */
     snprintf(e_missing, sizeof e_missing, "/s/b1.flac");
     CHECK(pb_play_list(QD_ALL, 0, "") == 0 && !strcmp(e_next, "/s/b2.flac"));
     CHECK(pb_play_list(QD_ALL, 1, "") == 0 && !strcmp(e_cur, "/s/b2.flac"));
@@ -288,6 +298,17 @@ static void test_playback(void){
     c.artist_grouping = 1;
     CHECK(pb_play_list(QD_ARTIST, 0, "Various") == 0 && qd_artist_class(sysp) == 1);
     CHECK(!strcmp(queue_names(d), "b1.flac,b2.flac"));
+    /* a song at another sample rate is not queued in MPD: it starts after the current one ends, with the DAC
+     * started for its rate before MPD opens the PCM; the same rate queues gaplessly again */
+    c.play_mode = PQ_IN_ORDER; pb_mode_changed();
+    int starts = d_starts;
+    CHECK(pb_play_list(QD_ALBUM, 0, "Mixed") == 0 && !strcmp(e_cur, "/s/m1.flac") && e_next[0] == 0 && d_rate == 44100);
+    pb_engine_event();
+    nsent = 0;
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && d_rate == 96000 && d_starts > starts && !strcmp(e_next, "/s/m3-96k.flac"));
+    pb_engine_event();
+    CHECK(sent_count("{\"state\":1}") >= 1 && sent_count("\\\"pos_id\\\":2,") == 1);
     /* headphones pulled */
     e_state = ENG_PLAY; pb_engine_event();
     CHECK(pb_transport(PL_T_PAUSE, 0) == 0 && e_state == ENG_PAUSE);

@@ -164,7 +164,24 @@ static int addid(const char *path){
     return mc_get(r, "Id", v, sizeof v) ? atoi(v) : -1;
 }
 
+static eng_prepare_fn g_prepare;
+void eng_set_prepare(eng_prepare_fn fn){ g_prepare = fn; }
+
+/* The sample rate MPD read from the file's header when it was added ("Format: 44100:16:2"), 0 if unknown. */
+static unsigned song_rate(int id){
+    char line[48], r[4096], v[64];
+    snprintf(line, sizeof line, "playlistid %d", id);
+    if(xcmd(line, r, sizeof r) != 0 || !mc_get(r, "Format", v, sizeof v)) return 0;
+    return (unsigned)strtoul(v, NULL, 10);
+}
+
 static int start_cur(long ms){
+    /* The DAC has to be set up for the stream before MPD opens hw:0,3: without the start sequence the driver refuses
+     * hw_params with EINVAL (device log 2026-11-15) */
+    if(g_prepare){
+        unsigned rate = song_rate(g_cur);
+        g_prepare(rate ? rate : 44100);
+    }
     char line[64];
     if(ms > 0) snprintf(line, sizeof line, "seekid %d %ld.%03ld", g_cur, ms / 1000, ms % 1000);
     else snprintf(line, sizeof line, "playid %d", g_cur);
@@ -181,7 +198,7 @@ int eng_load(const char *path, long start_ms, int paused){
     return start_cur(start_ms);
 }
 
-int eng_set_next(const char *path){
+int eng_set_next(const char *path, unsigned must_rate){
     if(!eng_ready()) return -1;
     if(g_next >= 0){
         char line[48]; snprintf(line, sizeof line, "deleteid %d", g_next);
@@ -190,7 +207,17 @@ int eng_set_next(const char *path){
     }
     if(!path) return 0;
     g_next = addid(path);
-    return g_next >= 0 ? 0 : -1;
+    if(g_next < 0) return -1;
+    if(must_rate){
+        unsigned rate = song_rate(g_next);
+        if(rate && rate != must_rate){             /* the DAC needs its start sequence for the new rate first */
+            char line[48], r[256]; snprintf(line, sizeof line, "deleteid %d", g_next);
+            xcmd(line, r, sizeof r);
+            g_next = -1;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int eng_advanced(const eng_status_t *s){

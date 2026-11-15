@@ -30,6 +30,11 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   exempt; checked against MPD 0.23.14 on a PC). The player's command connection is reopened whenever it is found
   closed (engine.c `xcmd`). Before that fix (7372509) the player lost MPD a minute after boot and never started the
   DAC: no sound (Jo, 2026-11-15).
+- **The DAC start sequence has to run before MPD opens `hw:0,3`**: with the devices open but not started, the driver
+  refuses `snd_pcm_hw_params()` with EINVAL and MPD pauses with "Failed to open dac" (device log 2026-11-15). The
+  player therefore reads the song's rate from MPD (`playlistid`, `Format`) and starts the DAC right before `playid`
+  (engine.c `eng_set_prepare`). A next song with another rate is not queued in MPD; it starts after the current one
+  ends, with the DAC started for its rate (no gapless change across rates).
 - The volume is the DAC's: the stock UI's volume does nothing to MPD's stream, the own player writes the volume bytes.
 
 ## In the own player (ui/player)

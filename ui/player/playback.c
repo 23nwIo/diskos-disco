@@ -17,6 +17,8 @@ static pb_log_fn L;
 static char g_song_db[256], g_sys_db[256];
 static pq_t Q = { 0, NULL, NULL, -1, 0 };
 static int g_next = -1;            /* order index queued in MPD as the next song, -1 none */
+static int g_pending = -1;         /* order index to start when the current song ends (another sample rate: the DAC
+                                    * needs its start sequence, so no gapless change), -1 none */
 static eng_status_t g_es;
 static double g_es_t, g_last_a1;
 static int g_es_valid;
@@ -40,6 +42,12 @@ static void tell_state(int state, int force){
     send_(f, n); send_(f, n);
     g_told = s;
 }
+/* before MPD opens the PCM: the DAC start sequence for this rate (eng_set_prepare) */
+static void prepare(unsigned rate){
+    if(rate == dac_current_rate()) return;
+    unsigned char a, l; dac_attenuation(C->volume, C->gain, C->balance, &a, &l);
+    dac_start(rate, a, l, L);
+}
 static unsigned rnd(unsigned k){ return k ? (unsigned)(random() % k) : 0; }
 
 void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log_fn log){
@@ -47,9 +55,10 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     snprintf(g_song_db, sizeof g_song_db, "%s", song_db);
     snprintf(g_sys_db, sizeof g_sys_db, "%s", sysconfig_db);
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
+    eng_set_prepare(prepare);
     pq_free(&Q);
 }
-void pb_close(void){ pq_free(&Q); g_next = -1; }
+void pb_close(void){ pq_free(&Q); g_next = g_pending = -1; }
 
 static sqlite3 *db(void){
     sqlite3 *d = qd_open(g_song_db);
@@ -82,9 +91,11 @@ static void queue_next(sqlite3 *d){
     int mode = C->play_mode, save = Q.cur;
     int ni = pq_next(&Q, mode, 1);
     qd_row_t *r = malloc(sizeof *r);
-    g_next = -1;
+    g_next = g_pending = -1;
     for(int tries = 0; r && ni >= 0 && tries < Q.n; tries++){
-        if(playable(d, ni, r) && eng_set_next(r->path) == 0){ g_next = ni; break; }
+        int x = playable(d, ni, r) ? eng_set_next(r->path, dac_current_rate()) : -1;
+        if(x == 0){ g_next = ni; break; }
+        if(x == 1){ g_pending = ni; L("queue: next song has another sample rate, started after this one (no gapless)"); break; }
         Q.cur = ni;                               /* look past it; repeat one moves on like repeat all */
         ni = pq_next(&Q, mode == PQ_REPEAT_ONE ? PQ_REPEAT_ALL : mode, 1);
         Q.cur = save;
@@ -92,7 +103,7 @@ static void queue_next(sqlite3 *d){
     }
     Q.cur = save;
     free(r);
-    if(g_next < 0) eng_set_next(NULL);
+    if(g_next < 0) eng_set_next(NULL, 0);
 }
 
 /* Start order index idx (dir +1/-1: where to look when it can't be played). 0 or -1. */
@@ -203,8 +214,15 @@ static void update_status(void){
 }
 
 void pb_engine_event(void){
+    int was = g_es_valid ? g_es.state : ENG_STOP;
     update_status();
     if(!g_es_valid) return;
+    if(g_es.state == ENG_STOP && was == ENG_PLAY && g_pending >= 0){   /* the song ended; the next needs the DAC restarted */
+        int p = g_pending;
+        sqlite3 *d = db();
+        if(d){ if(start_at(d, p, +1, 0, 0) == 0) g_announce = 2; sqlite3_close(d); }
+        return;
+    }
     if(eng_advanced(&g_es)){                          /* the queued next song has started */
         Q.cur = g_next;
         sqlite3 *d = db();
