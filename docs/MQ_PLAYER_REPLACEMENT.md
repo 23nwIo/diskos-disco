@@ -221,7 +221,9 @@ Skeleton stage (what `diskos-player` does now): arms and feeds the hardware watc
 fed every second), creates `/player`, opens `/ui`, parses every command of docs/PLAYER_PROTOCOL.md, remembers the
 settings, answers `0202` (and `0100`) with an `a2` frame "no current track", confirms volume with `a714` and work mode 8
 with `a607`, and runs the stock power off routine (ui/player/hw.c) when the sleep timer `0806` runs out, which is how
-the menu's "Shut down" works. **No sound yet**: playback, the DAC sequences, the queue tables, the power key, the jack
+the menu's "Shut down" works. It owns the keys like the stock player (grabs `/dev/input/event0`): Power toggles the screen (backlight,
+touch, panel, as traced), a held Power key powers off after 2 s (the stock delay is not measured), Volume up/down step
+the volume by 1 and report it with `a714`. **No sound yet**: playback, the DAC sequences, the queue tables, the jack
 and the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off with the own player) come next.
 The stock power off also writes "rfkill 0", which is not copied yet (its exact target is not in the trace).
 Host test: `make -C ui/tests player_test && ui/tests/player_test ui/tests/diskos-player-host`.

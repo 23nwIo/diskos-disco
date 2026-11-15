@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <linux/input.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -118,8 +120,12 @@ static void test_e2e(const char *bin){
     CHECK(ui != (mqd_t)-1);
     if(ui == (mqd_t)-1){ fprintf(stderr, "mq_open: %s (no mqueue support here?)\n", strerror(errno)); return; }
 
+    char fifo[80]; snprintf(fifo, sizeof fifo, "/tmp/dptest%d_keys", (int)getpid());
+    unlink(fifo); CHECK(mkfifo(fifo, 0600) == 0);
+    int kw = open(fifo, O_RDWR);                                  /* a writer before the player reads: no EOF */
+    CHECK(kw >= 0);
     pid_t pid = fork();
-    if(pid == 0){ execl(bin, "mq_player", "-n", "-l", "-", "-q", pfx, (char*)NULL); _exit(127); }
+    if(pid == 0){ execl(bin, "mq_player", "-n", "-l", "-", "-q", pfx, "-k", fifo, (char*)NULL); _exit(127); }
     mqd_t pl = (mqd_t)-1;
     for(int i = 0; i < 100 && pl == (mqd_t)-1; i++){ pl = mq_open(qp, O_WRONLY | O_NONBLOCK); if(pl == (mqd_t)-1) usleep(20000); }
     CHECK(pl != (mqd_t)-1);
@@ -137,6 +143,21 @@ static void test_e2e(const char *bin){
     n = RECV();
     CHECK(n == 12 && !strncmp(buf, "a607000C0008", 12));
 
+    /* keys: Volume up is one step and reaches the UI as a714; a release alone does nothing */
+    struct input_event ev[3]; memset(ev, 0, sizeof ev);
+    ev[0].type = EV_KEY; ev[0].code = 251; ev[0].value = 1;
+    ev[1].type = EV_KEY; ev[1].code = 251; ev[1].value = 0;
+    ev[2].type = EV_SYN;
+    CHECK(write(kw, ev, sizeof ev) == (ssize_t)sizeof ev);
+    n = RECV();
+    CHECK(n == 12 && !strncmp(buf, "a714000C0031", 12));
+    ev[0].code = ev[1].code = 252;
+    CHECK(write(kw, ev, sizeof ev) == (ssize_t)sizeof ev);
+    n = RECV();
+    CHECK(n == 12 && !strncmp(buf, "a714000C0030", 12));
+    ev[0].code = ev[1].code = 265;                                /* Power: screen toggle (dry run on the host) */
+    CHECK(write(kw, ev, sizeof ev) == (ssize_t)sizeof ev);
+
     CHECK(mq_send(pl, "0806000C0001", 12, 0) == 0);           /* sleep timer 1 s: a dry-run power off (-n) */
     usleep(1600000);
 
@@ -144,6 +165,7 @@ static void test_e2e(const char *bin){
     int st = 0; waitpid(pid, &st, 0);
     CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0);
     mq_close(pl); mq_close(ui); mq_unlink(qp); mq_unlink(qu);
+    close(kw); unlink(fifo);
 }
 
 int main(int argc, char **argv){

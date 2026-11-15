@@ -43,7 +43,7 @@ own_player_test: own_player_test.c ../own_player.h
 PLAYER_SRCS := ../player/core.c ../player/proto.c
 diskos-player-host: ../player/main.c ../player/hw.c ../player/hw.h $(PLAYER_SRCS) ../player/core.h ../player/proto.h ../own_player.h ../watchdog/watchdog.c ../watchdog/watchdog.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. ../player/main.c ../player/hw.c $(PLAYER_SRCS) ../watchdog/watchdog.c -lrt -o $@
-player_test: player_test.c $(PLAYER_SRCS) ../player/core.h ../player/proto.h diskos-player-host
+player_test: player_test.c $(PLAYER_SRCS) ../player/core.h ../player/proto.h ../player/hw.h diskos-player-host
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. player_test.c $(PLAYER_SRCS) -lrt -o $@
 
 radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h

@@ -17,6 +17,12 @@
 #define LCD_DEV         "/dev/lcd_st77916"
 #define LCD_IOC_OFF     0x2000ef01UL      /* _IO(0xef,1) display off */
 #define BACKLIGHT       "/sys/class/backlight/backlight/brightness"
+#define BL_POWER        "/sys/class/backlight/backlight/bl_power"
+#define LCD_IOC_ON      0x2000ef02UL      /* _IO(0xef,2) display on */
+#define TOUCH_DEV       "/dev/cst816t"
+#define TOUCH_IOC_OFF   0x2000ef03UL      /* _IO(0xef,3) */
+#define TOUCH_IOC_ON    0x2000ef04UL      /* _IO(0xef,4) */
+#define BL_STOCK_LEVEL  "31"              /* what the stock player writes; the UI then sets its own level */
 
 static void run(const char *cmd, int dry, hw_log_fn log){
     log("power off: %s", cmd);
@@ -54,4 +60,42 @@ void hw_power_off(int wd_fd, int dry, hw_log_fn log){
     run("killall bluetoothd bluealsa brcm_patchram_plus", dry, log);
     if(!dry) sync();
     run("poweroff -f", dry, log);
+}
+
+static int read_int(const char *p){
+    char b[16] = {0}; int fd = open(p, O_RDONLY | O_CLOEXEC);
+    if(fd < 0) return -1;
+    ssize_t n = read(fd, b, sizeof b - 1); close(fd);
+    return n > 0 ? atoi(b) : -1;
+}
+static void write_str(const char *p, const char *v, hw_log_fn log){
+    int fd = open(p, O_WRONLY | O_CLOEXEC);
+    if(fd < 0 || write(fd, v, strlen(v)) != (ssize_t)strlen(v)) log("screen: write %s to %s: %s", v, p, strerror(errno));
+    if(fd >= 0) close(fd);
+}
+static void quiet_ioctl(const char *dev, unsigned long req, const char *what, hw_log_fn log){
+    int fd = open(dev, O_RDWR | O_CLOEXEC);
+    if(fd < 0){ log("screen: open %s: %s", dev, strerror(errno)); return; }
+    if(ioctl(fd, req, 0) < 0) log("screen: %s: %s", what, strerror(errno));
+    close(fd);
+}
+
+int hw_screen_toggle(int dry, hw_log_fn log){
+    /* "On" = what the user sees: brightness above 0 and the rail powered (the UI's own idle screen off only sets
+     * bl_power 4 and leaves the brightness, ui/main.c ui_backlight). */
+    int br = read_int(BACKLIGHT), bp = read_int(BL_POWER);
+    int on = br > 0 && bp == 0;
+    log("power key: screen %s -> %s (brightness %d, bl_power %d)%s", on ? "on" : "off", on ? "off" : "on", br, bp,
+        dry ? " (dry run)" : "");
+    if(dry) return !on;
+    if(on){
+        write_str(BACKLIGHT, "0", log);
+        quiet_ioctl(TOUCH_DEV, TOUCH_IOC_OFF, "touch off", log);
+        quiet_ioctl(LCD_DEV, LCD_IOC_OFF, "display off", log);
+    } else {
+        quiet_ioctl(LCD_DEV, LCD_IOC_ON, "display on", log);
+        write_str(BACKLIGHT, BL_STOCK_LEVEL, log);
+        quiet_ioctl(TOUCH_DEV, TOUCH_IOC_ON, "touch on", log);
+    }
+    return !on;
 }

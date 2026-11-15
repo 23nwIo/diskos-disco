@@ -35,6 +35,16 @@ void pl_core_send_state(pl_core_t *c){
 
 static void send_volume(pl_core_t *c){ char f[16]; send_(c, f, pp_fmt_a714(f, sizeof f, c->volume)); }
 
+void pl_core_volume_step(pl_core_t *c, int dir){
+    int v = c->volume + (dir > 0 ? 1 : -1);
+    if(v < 0) v = 0;
+    if(v > c->max_volume) v = c->max_volume;
+    if(v == c->volume){ logf_(c, "volume key: already at %d", v); return; }
+    c->volume = v;
+    logf_(c, "volume key: volume = %d", v);
+    send_volume(c);
+}
+
 /* a class 1 setting: store v in *slot if it is within lo..hi */
 static int set_(pl_core_t *c, const char *name, int *slot, int v, int lo, int hi){
     if(v < lo || v > hi){ logf_(c, "%s: value %d out of range %d..%d, ignored", name, v, lo, hi); return -1; }

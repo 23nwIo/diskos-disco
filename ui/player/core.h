@@ -43,6 +43,9 @@ void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx);
  * (it is logged either way). */
 int pl_core_handle(pl_core_t *c, const char *buf, int n);
 
+/* Volume key: one step up (+1) or down (-1), within 0..max_volume; the UI hears it as a714. */
+void pl_core_volume_step(pl_core_t *c, int dir);
+
 /* Send the current state as an a2 frame (what 0202 answers). */
 void pl_core_send_state(pl_core_t *c);
 #endif
