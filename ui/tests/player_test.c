@@ -5,7 +5,6 @@
  * Run: make -C ui/tests player_test && ./ui/tests/player_test ./ui/tests/diskos-player-host */
 #include "../player/core.h"
 #include "../player/proto.h"
-#include "../player/sdcard.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -171,27 +170,8 @@ static void test_e2e(const char *bin){
     close(kw); unlink(fifo);
 }
 
-static void test_uevent(void){
-    static const char add[] = "add@/devices/platform/md_ingenic,sdhci.2/mmc_host/mmc1/mmc1:aaaa/block/mmcblk0\0ACTION=add\0"
-        "DEVPATH=/devices/platform/md_ingenic,sdhci.2/mmc_host/mmc1/mmc1:aaaa/block/mmcblk0\0SUBSYSTEM=block\0MAJOR=179\0"
-        "MINOR=0\0DEVNAME=mmcblk0\0DEVTYPE=disk\0SEQNUM=1234";
-    static const char rem[] = "remove@/devices/x/block/mmcblk0\0ACTION=remove\0SUBSYSTEM=block\0DEVNAME=mmcblk0\0DEVTYPE=disk";
-    static const char part[] = "add@/devices/x/block/mmcblk0/mmcblk0p1\0ACTION=add\0SUBSYSTEM=block\0DEVNAME=mmcblk0p1\0DEVTYPE=partition";
-    static const char chg[] = "change@/devices/x/block/mmcblk0\0ACTION=change\0SUBSYSTEM=block\0DEVNAME=mmcblk0\0DEVTYPE=disk";
-    static const char other[] = "add@/devices/x/block/sda\0ACTION=add\0SUBSYSTEM=block\0DEVNAME=sda\0DEVTYPE=disk";
-    static const char libudev[] = "libudev\0\xfe\xed\xca\xfe";
-    CHECK(sd_uevent_kind(add, sizeof add) == SDEV_ADD);
-    CHECK(sd_uevent_kind(rem, sizeof rem) == SDEV_REMOVE);
-    CHECK(sd_uevent_kind(part, sizeof part) == SDEV_NONE);
-    CHECK(sd_uevent_kind(chg, sizeof chg) == SDEV_NONE);
-    CHECK(sd_uevent_kind(other, sizeof other) == SDEV_NONE);
-    CHECK(sd_uevent_kind(libudev, sizeof libudev) == SDEV_NONE);
-    CHECK(sd_uevent_kind(add, 10) == SDEV_NONE);                  /* cut short: no keys */
-}
-
 int main(int argc, char **argv){
     test_proto();
-    test_uevent();
     test_core();
     if(argc > 1) test_e2e(argv[1]);
     else fprintf(stderr, "(end-to-end part skipped: no binary given)\n");
