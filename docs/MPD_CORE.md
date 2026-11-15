@@ -76,6 +76,10 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   same 0..120) goes to the headphones with `bluealsa-cli volume` (0..127), the headphone jack does not pause, and
   `06b3` codecs 1..4 are asked of BlueALSA with `bluealsa-cli codec` (AAC, LDAC; the LDAC quality not yet). MPD has
   no pause for a pipe output, so a pause closes it and play starts aplay again.
+  Device check (Jo, 2026-11-15, LDAC headphones): BlueALSA v4.0.0; `bluealsa-cli info` of the PCM prints
+  `Format: S32_LE`, `Sampling: 96000 Hz`, `Selected codec: LDAC`, `SoftVolume: Y`, `Volume: L: 4 R: 4`; `aplay` with
+  16 bit/44.1 kHz into `bluealsa:DEV=<MAC>,PROFILE=a2dp` and into `plug:'bluealsa:...'` both open and play (the
+  plugin prints `D:` debug lines on stderr), so the link's format and rate are converted either way.
 - Not yet: Previous restarting the song after a few seconds (stock behaviour not measured).
 
 ## Next
