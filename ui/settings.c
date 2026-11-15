@@ -1188,6 +1188,10 @@ static const setting_t TABLE[] = {
       "Model, stock firmware, diskOS build, MAC addresses, storage and battery.", NULL },
     { "About",   "Player",      ST_READONLY, NULL, 0,0,0, NULL,0, "@player", NULL, 0,
       "The player behind diskOS: Stock is FiiO's, Own is diskOS's own player (switched on with /usr/data/diskos-own-player).", NULL },
+    { "About",   "Update",      ST_READONLY, NULL, 0,0,0, NULL,0, "@update", NULL, 0,
+      "The diskOS update that booted (the launcher's VERSION in /tmp/.diskos_run), so a reboot into a new one can be checked. \"trial\": not yet confirmed good.", NULL },
+    { "About",   "Uptime",      ST_READONLY, NULL, 0,0,0, NULL,0, "@uptime", NULL, 0,
+      "Time since the Disc started, read when this page opens.", NULL },
     { "About",   "Temperature", ST_READONLY, NULL, 0,0,0, NULL,0, "@temp", NULL, 0,
       "Battery/board temperature from the fuel gauge (this SoC exposes no core sensor).", NULL },
     { "Volume Keys", "Press", ST_CYCLER, "key_single", 0,0,0, OPT_VOLKEY, 2, NULL, apply_key_single, CTL_ACT_VOLUME,
@@ -1289,6 +1293,33 @@ static void read_about(char *buf, int n){
     else snprintf(buf, n, "Disco! %s (%s)", DISCO_VERSION, id);   /* "Disco! 0.9 (8c29ecbf)" - on diskOS DISKOS_VERSION */
 }
 void settings_diskos_id(char *buf, int n){ read_about(buf, n); }   /* system.c About */
+/* About > Update: VERSION (and BUILD=trial) from the launcher's run record, as the splash shows it */
+static void read_update(char *buf, int n){
+    char ver[48] = "", build[16] = "", ln[160];
+    FILE *f = fopen("/tmp/.diskos_run", "r");
+    if(f){
+        while(fgets(ln, sizeof ln, f)){
+            ln[strcspn(ln, "\r\n")] = 0;
+            if(!strncmp(ln, "VERSION=", 8)) snprintf(ver, sizeof ver, "%s", ln + 8);
+            else if(!strncmp(ln, "BUILD=", 6)) snprintf(build, sizeof build, "%s", ln + 6);
+        }
+        fclose(f);
+    }
+    if(!ver[0]) snprintf(buf, n, "%s", tr("Unknown"));
+    else if(!strcmp(ver, "flashed")) snprintf(buf, n, "%s", tr("Flashed build"));
+    else snprintf(buf, n, "%s%s", ver, !strcmp(build, "trial") ? " (trial)" : "");
+}
+/* About > Uptime: /proc/uptime once, when the page is drawn */
+static void read_uptime(char *buf, int n){
+    double up = 0;
+    FILE *f = fopen("/proc/uptime", "r");
+    if(!f || fscanf(f, "%lf", &up) != 1){ if(f) fclose(f); snprintf(buf, n, "%s", tr("Unknown")); return; }
+    fclose(f);
+    long m = (long)(up / 60.0), d = m / 1440, h = m / 60 % 24, mi = m % 60;
+    if(d) snprintf(buf, n, "%ld d %ld h %ld min", d, h, mi);
+    else if(h) snprintf(buf, n, "%ld h %ld min", h, mi);
+    else snprintf(buf, n, "%ld min", mi);
+}
 void settings_restart_prompt(const char *note){ g_restart_note = note; apply_restart(0); }
 static void read_batt_temp(char *buf, int n){
     FILE *f = fopen("/sys/class/power_supply/cw221X-bat/temp", "r");
@@ -1340,6 +1371,8 @@ static const char *val_text_value(const setting_t *s, char *buf, int n){
             if(s->ro_val && !strcmp(s->ro_val, "@temp")) read_batt_temp(buf, n);
             else if(s->ro_val && !strcmp(s->ro_val, "@about")) read_about(buf, n);
             else if(s->ro_val && !strcmp(s->ro_val, "@player")) return tr(opl_running() ? "Own" : "Stock");
+            else if(s->ro_val && !strcmp(s->ro_val, "@update")) read_update(buf, n);
+            else if(s->ro_val && !strcmp(s->ro_val, "@uptime")) read_uptime(buf, n);
             else return tr(s->ro_val?s->ro_val:"");
             break;
         case ST_ACTION:   return tr((s->apply==apply_rescan && scanner_active()) ? "Stop" : (s->ro_val?s->ro_val:""));
