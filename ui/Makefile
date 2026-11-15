@@ -46,6 +46,16 @@ $(WD_BIN): $(APP)/watchdog/main.c $(APP)/watchdog/watchdog.c $(APP)/watchdog/wat
 	$(CROSS)strip $@ || true
 $(APP)/wd_blob.o: CFLAGS += -DWD_BIN='"$(WD_BIN)"'
 $(APP)/wd_blob.o: $(WD_BIN)
+# diskos-player (ui/player, the own player, docs/MQ_PLAYER_REPLACEMENT.md) built with the same toolchain and carried
+# inside mq_ui; the launcher writes it to /usr/data/diskos-player when /usr/data/diskos-own-player exists (own_player.h)
+APP_SRCS += $(APP)/pl_blob.c
+PL_BIN := $(APP)/player/diskos-player
+PL_SRCS := $(APP)/player/main.c $(APP)/player/core.c $(APP)/player/proto.c $(APP)/watchdog/watchdog.c
+$(PL_BIN): $(PL_SRCS) $(APP)/player/core.h $(APP)/player/proto.h $(APP)/own_player.h $(APP)/watchdog/watchdog.h
+	$(CC) -Os -static -D_GNU_SOURCE -Wall -Wextra -Werror -ffile-prefix-map=$(APP)/= $(FP_FLAGS) -o $@ $(PL_SRCS) -lrt
+	$(CROSS)strip $@ || true
+$(APP)/pl_blob.o: CFLAGS += -DPL_BIN='"$(PL_BIN)"'
+$(APP)/pl_blob.o: $(PL_BIN)
 # diskos-trace.so (ui/trace, docs/MQ_PLAYER_TRACE.md): an LD_PRELOAD library for the stock glibc player, built with the same
 # toolchain as a self-contained shared object (no musl linked in; dlsym and __errno_location come from the device's glibc,
 # the stubs only name them). Carried inside mq_ui; the launcher preloads it when /usr/data/diskos-trace-player exists.

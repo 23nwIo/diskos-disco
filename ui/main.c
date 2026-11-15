@@ -40,6 +40,7 @@
 #include "trace_blob.h"
 #include "trace_launch.h"  /* player trace switch (docs/MQ_PLAYER_TRACE.md) */
 #include "own_player.h"    /* own player switch (development phase, docs/MQ_PLAYER_REPLACEMENT.md) */
+#include "pl_blob.h"       /* the own player carried inside mq_ui */
 #include "screens.h"
 #include "npshade.h"
 #include "ma.h"
@@ -3222,6 +3223,13 @@ static void player_launch_prepare(void){
     launch_status_publish(guard, local);
     {   /* own player (own_player.h): only with /usr/data/diskos-own-player; the trace below is for the stock player */
         const opl_paths_t op = { OPL_SWITCH, OPL_BIN, OPL_STARTS, OPL_UNSTABLE };
+        /* The player runs from the copy carried in this (signed) mq_ui, never from a file someone else put there:
+         * refresh it when it differs, and when that fails remove it, so opl_prepare falls back to stock. */
+        if(access(OPL_SWITCH, F_OK) == 0 && !wdo_same_bytes(OPL_BIN, pl_blob_data(), pl_blob_size())
+           && wdo_write(OPL_BIN, pl_blob_data(), pl_blob_size()) != 0){
+            unlink(OPL_BIN);
+            boot_note("launcher: own player binary could not be written");
+        }
         int no = 0, r = opl_prepare(&op, &no);
         if(r == OPL_ON) g_own_player = 1;
         if(r != OPL_OFF){

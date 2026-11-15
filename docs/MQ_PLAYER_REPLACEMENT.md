@@ -200,6 +200,29 @@ our tool without a reboot. Build dev-20261114-622b003 booted with the log line `
 `sha256sum /usr/bin/cmd_watchdog` = `b34fb6c4…` (device-checked 2026-11-14). An own player links `ui/watchdog/watchdog.c` directly instead. Replacing the file in the
 rootfs at a later flash is listed in todo.md.
 
+## Own player during development: switch and skeleton
+
+Since 2026-11-15 the own player can be switched in per boot, so tests run on it and trace runs (docs/MQ_PLAYER_TRACE.md)
+on the stock player, without any UI change:
+
+- On: `touch /usr/data/diskos-own-player`, reboot. Off: `busybox rm /usr/data/diskos-own-player`, reboot.
+- The binary is `ui/player` (`diskos-player`), built with mq_ui and carried inside it (ui/pl_blob.c), so it comes with
+  the signed SD update. With the switch on, the launcher writes it to `/usr/data/diskos-player` (only when the bytes
+  differ) and execs it as `mq_player` instead of the stock player.
+- Fail-safe (ui/own_player.h): at most 3 starts per boot, and at most 2 starts in a row that did not run for 60 s
+  (the player deletes `/usr/data/diskos-own-player.unstable` after 60 s; the count survives a reboot the player
+  caused through the watchdog). When either runs out the switch file is renamed to `diskos-own-player.failed` and the
+  stock player runs. A missing binary or a failed exec also means the stock player.
+- `/usr/data/diskos_boot.log` gets a line `launcher: own player ...` on every start.
+- The player logs every frame and decision to `/tmp/diskos-player.log` (RAM).
+
+Skeleton stage (what `diskos-player` does now): arms and feeds the hardware watchdog like the stock player (10000 ms,
+fed every second), creates `/player`, opens `/ui`, parses every command of docs/PLAYER_PROTOCOL.md, remembers the
+settings, answers `0202` (and `0100`) with an `a2` frame "no current track", confirms volume with `a714` and work mode 8
+with `a607`. **No sound yet**: playback, the DAC sequences, the queue tables, the power key, the jack and power off come
+next. The UI therefore shows nothing playing, and the menu's "Shut down" does not power off with the own player yet.
+Host test: `make -C ui/tests player_test && ui/tests/player_test ui/tests/diskos-player-host`.
+
 ## Open questions for a device session
 
 1. `cmd_watchdog` is `/usr/bin/cmd_watchdog` (5304 bytes): a thin wrapper around `watchdog_start/feed/stop/reset` in

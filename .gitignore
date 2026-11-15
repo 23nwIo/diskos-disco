@@ -99,5 +99,8 @@ build/out/
 # diskos-watchdog built into mq_ui (ui/Makefile, embedded by wd_blob.c; never committed)
 ui/watchdog/diskos-watchdog
 ui/trace/diskos-trace.so
+ui/player/diskos-player
+ui/tests/diskos-player-host
+ui/tests/player_test
 ui/trace/stub-libdl.so.2
 ui/trace/stub-libc.so.6
