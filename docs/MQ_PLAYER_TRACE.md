@@ -158,6 +158,13 @@ the mark that follows it.
   stock player grabs the device): Power short = 265 (0x109), Power held about 3 s = 264 (0x108, its own key code, sent
   by the driver as press and release 14 µs apart), Volume up = 251 (0xfb), Volume down = 252 (0xfc), Play/Pause = 250
   (0xfa). Every key arrives as press + release within microseconds, so the driver reports clicks, not hold times.
+- **SD card out and in** (fourth run, 2026-11-15, log `player-trace-20261115-033139.log`, card with a file system on the
+  whole `/dev/mmcblk0`). At start the player itself mounts the card: `umount /tmp/sdcard`, `rm -rf /tmp/sdcard`,
+  `mkdir -p /tmp/sdcard`, `blkid | grep /dev/mmcblk0`, then `mount -o iocharset=utf8 /dev/mmcblk0 /tmp/sdcard` from a
+  child. Card pulled (seen by a separate thread): `/ui` `aa1c000C0000`, read `/proc/mounts`, `sync`, `umount
+  /tmp/sdcard`, `rm -rf /tmp/sdcard`, `/ui` `aa22000C0000`. Card inserted: `aa1c000C0000`, `mkdir -p /tmp/sdcard`,
+  `blkid | grep /dev/mmcblk0`, the same mount, `aa22000C0001`. No DAC or other hardware calls. The diskOS UI does not
+  read `aa22` or `aa1c` (it watches `/proc/mounts` itself), so an own player only has to do the mounting.
 - **USB storage mode**: stop the stream, mixer write (control `LO3_MUX`), the DAC block above, `sync`, `umount
   /tmp/sdcard`, `rm -rf /tmp/sdcard`, `echo device > .../13500000.otg_new-role-switch/role`, configfs gadget
   `storage_demo` (idVendor 0x0525, idProduct 0xa4a5, mass_storage lun.0 file `/dev/mmcblk0`, removable 1, UDC
