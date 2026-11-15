@@ -9,6 +9,7 @@
 
 #define PL_WORK_LOCAL 8            /* 0657 / a607: local playback */
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
+#define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
 #define PL_VOL_MAX    120
 
 typedef void (*pl_send_fn)(void *ctx, const char *frame, int len);
@@ -35,6 +36,9 @@ typedef struct {
     int artist_grouping;           /* 0 artist, 1 album artist, -1 not sent yet */
     int work_mode;                 /* last mode set; -1 none yet */
     int route;                     /* 0666 output route; -1 none yet */
+    char bt_mac[18];               /* 06b3: the Bluetooth headphones ("AA:BB:CC:DD:EE:FF"), "" none yet */
+    int bt_codec;                  /* 06b3 VALUE1: 0 SBC, 1 AAC, 2/3/4 LDAC mobile/standard/high */
+    unsigned route_seq;            /* bumps on every accepted 0666 and 06b3, so the main loop switches the output */
     int idle_off_s, sleep_s;       /* 0 off */
     unsigned sleep_seq;            /* bumps on every 0806, so the main loop (re)starts or cancels the timer */
     int jack;                      /* headphone plug: 1 in, 0 out, -1 not known */

@@ -35,6 +35,7 @@
 #include "usbstorage.h"
 #include "dac.h"
 #include "mixer.h"
+#include "btout.h"
 #include "engine.h"
 #include "mpdcli.h"
 #include "playback.h"
@@ -204,7 +205,8 @@ int main(int argc, char **argv){
     if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     if(use_wd) pb_resume_begin(sd_is_mounted, RESUME_FLAG);    /* host runs (-n) have no library */
-    int att_vol = -1, att_gain = -1, att_bal = -1;
+    int att_vol = -1, att_gain = -1, att_bal = -1, bt_vol = -1;
+    unsigned route_seq = core.route_seq;
 
     /* The keys. The stock player grabs them, so the UI never sees them (ui/main.c reads the Power level from the GPIO
      * instead); we do the same. Without the device the player still runs, only without keys. */
@@ -312,7 +314,12 @@ int main(int argc, char **argv){
             else pl_core_jack(&core, lv);
         }
         eng_check();
-        if(dac_current_rate() && (core.volume != att_vol || core.gain != att_gain || core.balance != att_bal)){
+        if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.volume; }
+        if(pb_bluetooth() && core.volume != bt_vol){           /* the headphones' own volume (BlueALSA) */
+            bt_vol = core.volume;
+            bto_volume(pb_bt_mac(), core.volume, PL_VOL_MAX, logmsg);
+        }
+        if(!pb_bluetooth() && dac_current_rate() && (core.volume != att_vol || core.gain != att_gain || core.balance != att_bal)){
             unsigned char a, l;
             dac_attenuation(core.volume, core.gain, core.balance, &a, &l);
             dac_set_attenuation(a, l, logmsg);

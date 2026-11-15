@@ -11,6 +11,8 @@
 #define ENG_RUN_DIR   "/tmp/diskos-mpd"
 #define ENG_SOCK      ENG_RUN_DIR "/sock"
 #define ENG_CONF      ENG_RUN_DIR "/mpd.conf"
+#define ENG_BT_SCRIPT ENG_RUN_DIR "/bt-out.sh"   /* MPD's Bluetooth pipe command (engine.c) */
+#define ENG_BT_DEV    ENG_RUN_DIR "/bt-dev"      /* the headphones' MAC for it, one line */
 
 typedef void (*eng_log_fn)(const char *fmt, ...);
 
@@ -46,6 +48,9 @@ int eng_ready(void);
  *           queued only when its sample rate is that one. 0 queued, 1 not queued (another rate), -1 not added.
  * eng_advanced: after an event, 1 when MPD has moved on to that next song (it is now the current one; the caller then
  *           sets a new next), else 0. */
+/* The output MPD plays to: the DAC (bt 0), or the Bluetooth headphones whose MAC is in ENG_BT_DEV through the pipe
+ * output for that stream rate (44100, 48000 or 96000; anything else uses 44100). Kept over a restart of MPD. 0 or -1. */
+int eng_output(int bt, unsigned rate);
 int eng_load(const char *path, long off_ms, long len_ms, long start_ms, int paused);
 int eng_set_next(const char *path, long off_ms, long len_ms, unsigned must_rate);
 /* Called with the stream's sample rate right before MPD starts a song (opens the PCM): the player starts the DAC. */

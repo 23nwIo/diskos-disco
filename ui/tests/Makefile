@@ -40,7 +40,7 @@ trace_launch_test: trace_launch_test.c ../trace_launch.h ../wd_override.h
 own_player_test: own_player_test.c ../own_player.h
 	$(CC) $(CFLAGS) -I.. own_player_test.c -o $@
 
-PLAYER_SRCS := ../player/core.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c
+PLAYER_SRCS := ../player/core.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c ../player/btout.c
 # SQLite for the player, without sanitizers (instrumenting the amalgamation only slows the tests)
 sqlite3_host.o: ../sqlite3.c
 	$(CC) -O1 -g -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c $< -o $@

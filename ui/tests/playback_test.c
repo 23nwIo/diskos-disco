@@ -4,6 +4,7 @@
  * song.db and an in-process stand-in for the MPD engine (the eng_* and dac_* functions below), so the queue logic, the
  * LIST_SONG tables and the frames to the UI are checked without MPD or the Disc.
  * Run: make -C ui/tests playback_test && ./ui/tests/playback_test */
+#include "../player/btout.h"
 #include "../player/core.h"
 #include "../player/engine.h"
 #include "../player/playback.h"
@@ -16,6 +17,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static int fails;
 #define CHECK(c) do{ if(!(c)){ fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); fails++; } }while(0)
@@ -63,6 +65,12 @@ static void e_song_ends(void){
     e_ms = 0;
     pb_engine_event();
 }
+static int e_out_bt = 0; static unsigned e_out_rate;
+int eng_output(int bt, unsigned rate){ e_out_bt = bt; e_out_rate = rate; return 0; }
+static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8];
+unsigned bto_rate(const char *mac, bto_log_fn log){ (void)mac; (void)log; return bt_link_rate; }
+int bto_volume(const char *mac, int v, int max, bto_log_fn log){ (void)mac; (void)max; (void)log; bt_vol_set = v; return 0; }
+void bto_codec(const char *mac, int value, bto_log_fn log){ (void)mac; (void)log; snprintf(bt_codec_asked, sizeof bt_codec_asked, "%d", value); }
 int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(const char *, ...)){ (void)dev; (void)name; (void)value; (void)log; return 0; }
 static unsigned d_rate; static int d_starts;
 unsigned dac_current_rate(void){ return d_rate; }
@@ -322,6 +330,21 @@ static void test_playback(void){
     CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && d_rate == 96000 && d_starts > starts && !strcmp(e_next, "/s/m3-96k.flac"));
     pb_engine_event();
     CHECK(sent_count("{\"state\":1}") >= 1 && sent_count("\\\"pos_id\\\":2,") == 1);
+    /* Bluetooth: 0666 2 waits for the headphones' address (06b3); then MPD plays to the pipe output for the link's
+     * rate, the DAC is left alone, and the volume goes to the headphones; back to the DAC on 0666 6 */
+    mkdir(ENG_RUN_DIR, 0755);
+    c.route = PL_ROUTE_BT; c.bt_mac[0] = 0; pb_route();
+    CHECK(!pb_bluetooth() && e_out_bt == 0);
+    snprintf(c.bt_mac, sizeof c.bt_mac, "AA:BB:CC:01:02:03"); c.bt_codec = 1; c.volume = 60; pb_route();
+    CHECK(pb_bluetooth() && e_out_bt == 1 && e_out_rate == 48000 && bt_vol_set == 60 && !strcmp(bt_codec_asked, "1"));
+    FILE *bf = fopen(ENG_BT_DEV, "r"); char bl[32] = ""; if(bf){ if(!fgets(bl, sizeof bl, bf)) bl[0] = 0; fclose(bf); }
+    CHECK(!strcmp(bl, "AA:BB:CC:01:02:03\n"));
+    starts = d_starts;
+    CHECK(pb_play_list(QD_ALBUM, 1, "Mixed") == 0 && d_starts == starts);   /* a 96 kHz song: no DAC start */
+    bt_codec_asked[0] = 0; pb_route();
+    CHECK(bt_codec_asked[0] == 0);                            /* the same codec is not asked again */
+    c.route = PL_ROUTE_DAC; pb_route();
+    CHECK(!pb_bluetooth() && e_out_bt == 0);
     /* headphones pulled */
     e_state = ENG_PLAY; pb_engine_event();
     CHECK(pb_transport(PL_T_PAUSE, 0) == 0 && e_state == ENG_PAUSE);

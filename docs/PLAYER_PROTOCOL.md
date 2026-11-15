@@ -44,11 +44,11 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0653 | `0653000C000v` | DAC filter 0..5 | main.c `ui_set_dac_filter` | do |
 | 0657 | `0657000C000v` | Work mode: 8 local playback; 1 USB DAC, 6 BT sink, 7 BT streaming, 10 AirPlay, 12 DLNA | main.c, modes.c | do 8, ack others |
 | 0664 | `0664000C<s 4h>` | Idle power off after s seconds (0 off) | power.c | do |
-| 0666 | `0666000C000v` | Output route: 6 internal DAC, 4 S/PDIF, 3 USB audio, 2 Bluetooth | main.c, modes.c | do 6, ack others |
+| 0666 | `0666000C000v` | Output route: 6 internal DAC, 4 S/PDIF, 3 USB audio, 2 Bluetooth | main.c, modes.c | do 6 and 2, ack others |
 | 0684 | `0684000C000v` | Resume memory mode 0..2 | main.c | keep |
 | 0687 | `0687000C000v` | Play through folders on/off | main.c | keep |
 | 0689 | `0689000C<p 4h>` | EQ preset 0..10, custom PEQ slots 11..20 | main.c `ui_apply_eq` | do |
-| 06b3 | `06b3` LEN `<codec 4h>0000<MAC>` | Bluetooth codec select | bt.c, main.c | ack |
+| 06b3 | `06b3001D<codec 4h><MAC>` | Bluetooth codec (0 SBC, 1 AAC, 2..4 LDAC) for the headphones `<MAC>` (17 chars) | bt.c, main.c | do (own player: MAC for the Bluetooth output, codec via bluealsa-cli) |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
 | 0713 | `0713000C<v 4h>` | Balance: 0 centre, `00NN` one side, `01NN` the other, N 1..10 | main.c `ui_set_balance` | do |

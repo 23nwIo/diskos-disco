@@ -3,6 +3,7 @@
 /* Host test of the own player skeleton (ui/player): frame parsing and formatting, the command handling in core.c, and
  * an end-to-end run of the real binary over POSIX message queues (watchdog off, own queue names).
  * Run: make -C ui/tests player_test && ./ui/tests/player_test ./ui/tests/diskos-player-host */
+#include "../player/btout.h"
 #include "../player/core.h"
 #include "../player/proto.h"
 #include "../player/sdcard.h"
@@ -55,6 +56,8 @@ static void test_proto(void){
     char s[6] = "";
     CHECK(pp_json_escape(s, sizeof s, 0, "abcdefgh") == -1 && s[0] == 0);
 }
+static int npause;
+static int count_pause(void *ctx, int op, long arg){ (void)ctx; (void)arg; if(op == PL_T_PAUSE) npause++; return 0; }
 
 static void test_core(void){
     pl_core_t c; pl_core_init(&c, cap_send, NULL, NULL);
@@ -101,8 +104,25 @@ static void test_core(void){
     CHECK(send1(&c, "0657000C0008") == 0 && c.work_mode == 8 && nsent == 1 && !strcmp(sent[0], "a607000C0008"));
     CHECK(send1(&c, "0657000C0008") == 0 && nsent == 1);
     CHECK(send1(&c, "0657000C0006") == 0 && c.work_mode == 8 && nsent == 1);
-    CHECK(send1(&c, "0666000C0002") == 0 && c.route == -1);
+    CHECK(send1(&c, "0666000C0004") == 0 && c.route == -1);          /* S/PDIF: not yet */
+    unsigned rs = c.route_seq;
+    CHECK(send1(&c, "0666000C0002") == 0 && c.route == 2 && c.route_seq == rs + 1);
+    /* 06b3: codec + the headphones' MAC (ui/bt.c bt_codec_frame_value) */
+    CHECK(send1(&c, "06b3001D0003AA:bb:CC:01:02:03") == 0 && c.bt_codec == 3 && !strcmp(c.bt_mac, "AA:bb:CC:01:02:03"));
+    CHECK(c.route_seq == rs + 2);
+    CHECK(send1(&c, "06b3001D0003AA:bb:CC:01:02") == -1 && send1(&c, "06b3001D0009AA:bb:CC:01:02:03") == -1);
+    CHECK(send1(&c, "06b3001D0000AA-bb-CC-01-02-03") == -1 && c.bt_codec == 3);
+    char bp[96];
+    CHECK(bto_pcm_path("aa:bb:CC:01:02:03", bp, sizeof bp) == 0 && !strcmp(bp, "/org/bluealsa/hci0/dev_AA_BB_CC_01_02_03/a2dpsrc/sink"));
+    CHECK(bto_pcm_path("aa:bb:CC:01:02", bp, sizeof bp) == -1 && bto_pcm_path("aa-bb-CC-01-02-03", bp, sizeof bp) == -1);
+    CHECK(bto_parse_rate("Device: /org/bluez/hci0/dev_X\nFormat: S16_LE\nChannels: 2\nSampling: 48000 Hz\n") == 48000);
+    CHECK(bto_parse_rate("Transport: A2DP-source\n  Rate: 44100\n") == 44100 && bto_parse_rate("Rate: 7\nVolume: 127\n") == 0);
+    c.transport = count_pause; npause = 0;
+    pl_core_jack(&c, 1); pl_core_jack(&c, 0);                         /* on Bluetooth the jack doesn't pause */
+    CHECK(npause == 0);
+    c.transport = NULL;
     CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6);
+    c.jack = -1;
 
     /* play list: answered with the state, name may be long */
     nsent = 0;

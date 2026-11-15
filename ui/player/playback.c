@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 #include "playback.h"
+#include "btout.h"
 #include "dac.h"
 #include "mixer.h"
 #include "proto.h"
@@ -23,6 +24,9 @@ static int g_next = -1;            /* order index queued in MPD as the next song
 static int g_pending = -1;         /* order index to start when the current song ends (another sample rate: the DAC
                                     * needs its start sequence, so no gapless change), -1 none */
 static eng_status_t g_es;
+static int g_bt;                   /* playing to Bluetooth (pb_route): the DAC and its mixer route are left alone */
+static int g_bt_codec = -1;        /* the last codec asked of BlueALSA for g_bt_mac */
+static char g_bt_mac[18];
 static double g_es_t, g_last_a1;
 static int g_es_valid;
 static int g_told = -1;            /* the state the UI was last told: ENG_PLAY or ENG_PAUSE, -1 nothing yet */
@@ -62,6 +66,7 @@ static void tell_state(int state, int force){
 }
 /* before MPD opens the PCM: the DAC start sequence for this rate (eng_set_prepare) */
 static void prepare(unsigned rate){
+    if(g_bt) return;
     mix_route_dac(L);                        /* DMA3 -> DAC; without it hw_params fails (mixer.h) */
     if(rate == dac_current_rate()) return;
     unsigned char a, l; dac_attenuation(C->volume, C->gain, C->balance, &a, &l);
@@ -76,6 +81,7 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
     eng_set_prepare(prepare);
     pq_free(&Q);
+    g_bt = 0; g_bt_codec = -1; g_bt_mac[0] = 0;
     g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
 }
 void pb_close(void){ pq_free(&Q); g_next = g_pending = -1; }
@@ -250,7 +256,7 @@ static void announce(const eng_status_t *s){
 static void update_status(void){
     eng_status_t s;
     if(eng_status(&s) != 0) return;
-    if(s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
+    if(!g_bt && s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
         unsigned char a, l; dac_attenuation(C->volume, C->gain, C->balance, &a, &l);
         dac_start(s.rate, a, l, L);
     }
@@ -355,6 +361,35 @@ out:
     sqlite3_close(d);
     return rc;
 }
+
+/* The output route changed (0666, 06b3; ui/main.c ui_route_bt / ui_route_analog). */
+void pb_route(void){
+    if(C->route != PL_ROUTE_BT){
+        if(!g_bt) return;
+        g_bt = 0; g_bt_codec = -1;
+        L("route: DAC");
+        eng_output(0, 0);
+        return;
+    }
+    if(!C->bt_mac[0]){ L("route: Bluetooth, waiting for the headphones' address (06b3)"); return; }
+    int new_dev = !g_bt || strcmp(g_bt_mac, C->bt_mac);
+    if(new_dev){
+        FILE *f = fopen(ENG_BT_DEV, "we");
+        if(!f || fprintf(f, "%s\n", C->bt_mac) < 0){ L("route: write %s: %s", ENG_BT_DEV, strerror(errno)); if(f) fclose(f); return; }
+        fclose(f);
+        snprintf(g_bt_mac, sizeof g_bt_mac, "%s", C->bt_mac);
+        g_bt_codec = -1;
+    }
+    if(C->bt_codec > 0 && C->bt_codec != g_bt_codec) bto_codec(g_bt_mac, C->bt_codec, L);
+    g_bt_codec = C->bt_codec;
+    unsigned rate = bto_rate(g_bt_mac, L);
+    L("route: Bluetooth %s, link at %u Hz", g_bt_mac, rate);
+    g_bt = 1;
+    eng_output(1, rate);
+    bto_volume(g_bt_mac, C->volume, PL_VOL_MAX, L);
+}
+int pb_bluetooth(void){ return g_bt; }
+const char *pb_bt_mac(void){ return g_bt_mac; }
 
 /* Resume at start, like the stock player's play_memory thread (docs/MQ_PLAYER_REPLACEMENT.md, "Resume"). */
 void pb_resume_begin(int (*mounted)(void), const char *flag_path){

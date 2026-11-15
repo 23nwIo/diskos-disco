@@ -18,6 +18,8 @@
 #define ENG_TIMEOUT_MS   3000
 
 static pid_t g_pid = -1;
+static int g_out_bt;                       /* the output in use: 0 the DAC, 1 Bluetooth at g_out_rate */
+static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
 static eng_log_fn g_log;
 /* MPD song ids of the two slots (see eng_load) and a paused start that has not been played yet */
@@ -39,7 +41,29 @@ static const char CONF[] =
     "  auto_resample \"no\"\n"
     "  auto_format \"no\"\n"
     "  format \"*:32:*\"\n"
-    "}\n";
+    "}\n"
+    /* Bluetooth: our MPD is static (musl) and can't load the device's BlueALSA ALSA plugin (a glibc .so), so these
+     * pipe raw 16-bit PCM into the device's aplay, which can (ENG_BT_SCRIPT). One output per stream rate, so the PCM
+     * is converted only when the headphones' rate differs from all three; the one matching the Bluetooth link's rate
+     * is enabled on a route to Bluetooth (eng_output). */
+    "audio_output {\n  type \"pipe\"\n  name \"bt44\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 44100\"\n"
+    "  format \"44100:16:2\"\n}\n"
+    "audio_output {\n  type \"pipe\"\n  name \"bt48\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 48000\"\n"
+    "  format \"48000:16:2\"\n}\n"
+    "audio_output {\n  type \"pipe\"\n  name \"bt96\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 96000\"\n"
+    "  format \"96000:16:2\"\n}\n";
+/* MPD's output ids: the order above */
+enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_N };
+
+/* The Bluetooth pipe's command: the device's aplay with the BlueALSA plugin, to the headphones in ENG_BT_DEV, through
+ * "plug" so that a link at another rate or sample format still opens. $1 = the stream rate. aplay's messages go to
+ * ENG_RUN_DIR/bt.log. */
+static const char BT_SCRIPT[] =
+    "#!/bin/sh\n"
+    "# written by diskos-player (engine.c): MPD's Bluetooth output\n"
+    "read -r DEV < " ENG_BT_DEV "\n"
+    "echo \"$(date) bt out: $DEV at $1 Hz\" >> " ENG_RUN_DIR "/bt.log\n"
+    "exec aplay -q -t raw -f S16_LE -c 2 -r \"$1\" -D \"plug:'bluealsa:DEV=$DEV,PROFILE=a2dp'\" 2>> " ENG_RUN_DIR "/bt.log\n";
 
 static void disconnect(void){
     if(g_cmd >= 0) close(g_cmd);
@@ -72,6 +96,9 @@ static int spawn(void){
     FILE *f = fopen(ENG_CONF, "we");
     if(!f || fputs(CONF, f) < 0){ g_log("engine: write %s: %s", ENG_CONF, strerror(errno)); if(f) fclose(f); return -1; }
     fclose(f);
+    f = fopen(ENG_BT_SCRIPT, "we");
+    if(!f || fputs(BT_SCRIPT, f) < 0) g_log("engine: write %s: %s - no Bluetooth output", ENG_BT_SCRIPT, strerror(errno));
+    if(f) fclose(f);
     unlink(ENG_SOCK);
     pid_t p = fork();
     if(p < 0){ g_log("engine: fork: %s", strerror(errno)); return -1; }
@@ -93,6 +120,7 @@ static int spawn(void){
     char r[256];
     xcmd("consume 0", r, sizeof r);
     xcmd("single 0", r, sizeof r);
+    eng_output(g_out_bt, g_out_rate);           /* the DAC, or the Bluetooth output after a restart of MPD */
     g_log("engine: connected");
     return 0;
 }
@@ -144,6 +172,23 @@ static int cmd(const char *c){
     int x = xcmd(c, r, sizeof r);
     if(x > 0) g_log("engine: \"%s\": %s", c, r);
     return x == 0 ? 0 : -1;
+}
+
+int eng_output(int bt, unsigned rate){
+    g_out_bt = bt; g_out_rate = rate;
+    if(!eng_ready()) return -1;
+    int want = !bt ? OUT_DAC : rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
+    char line[32], r[256];
+    snprintf(line, sizeof line, "enableoutput %d", want);
+    int x = xcmd(line, r, sizeof r);
+    if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); return -1; }
+    for(int i = 0; i < OUT_N; i++){
+        if(i == want) continue;
+        snprintf(line, sizeof line, "disableoutput %d", i);
+        xcmd(line, r, sizeof r);
+    }
+    g_log("engine: output %s", !bt ? "dac" : want == OUT_BT48 ? "bt48" : want == OUT_BT96 ? "bt96" : "bt44");
+    return 0;
 }
 
 int eng_cmd(const char *c, char *out, unsigned cap){

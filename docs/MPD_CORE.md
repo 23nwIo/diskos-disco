@@ -65,8 +65,20 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   0.23 on a PC), so `a1`, `a2` and `0103` need no conversion. Consecutive tracks of one file queue gaplessly like
   any two songs.
 - **SACD ISO tracks** (`IS_ISO=1`) are skipped with a log line: MPD has no decoder for disc images.
+- **Bluetooth output** (2026-11-15, host-tested, not yet on a Disc). Our MPD is static (musl) and can't load the
+  device's BlueALSA ALSA plugin (a glibc .so), so the first way is the fallback of Jo's plan: three `pipe` outputs
+  (`bt44`, `bt48`, `bt96`, 16 bit stereo at that rate) whose command is `/tmp/diskos-mpd/bt-out.sh <rate>`, which
+  runs the device's `aplay -t raw -D "plug:'bluealsa:DEV=<MAC>,PROFILE=a2dp'"` (MAC from `/tmp/diskos-mpd/bt-dev`,
+  aplay's messages in `/tmp/diskos-mpd/bt.log`). The UI's route (ui/main.c `ui_route_bt`: `0666 2`, then `06b3`
+  with the codec and the headphones' MAC) makes the player write the MAC, read the link's rate with
+  `bluealsa-cli info` and enable the matching output (any other rate: `bt44`, and `plug` converts); `0666 6`
+  switches back to the DAC. While on Bluetooth the DAC and its mixer route are left alone, the volume (`0715`, the
+  same 0..120) goes to the headphones with `bluealsa-cli volume` (0..127), the headphone jack does not pause, and
+  `06b3` codecs 1..4 are asked of BlueALSA with `bluealsa-cli codec` (AAC, LDAC; the LDAC quality not yet). MPD has
+  no pause for a pipe output, so a pause closes it and play starts aplay again.
 - Not yet: Previous restarting the song after a few seconds (stock behaviour not measured).
 
 ## Next
 
-Resume (`MEMORY_PLAY`), CUE/ISO tracks, then web radio via MPD streams. Bluetooth: bluealsa plugin built into MPD, fallback MPD pipe output into `aplay -D bluealsa` (Jo 2026-11-15).
+Web radio via MPD streams. Bluetooth: bluealsa plugin built into MPD as the primary way (Jo 2026-11-15; needs a static
+alsa-lib with the BlueALSA PCM plugin built in and libdbus for musl), the pipe output above stays as its fallback.

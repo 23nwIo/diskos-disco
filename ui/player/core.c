@@ -52,6 +52,7 @@ void pl_core_jack(pl_core_t *c, int plugged){
     c->jack = plugged;
     if(first){ logf_(c, "jack: headphones %s", plugged ? "in" : "out"); return; }
     if(plugged){ logf_(c, "jack: headphones in (playback stays paused)"); return; }
+    if(c->route == PL_ROUTE_BT){ logf_(c, "jack: headphones out (playing to Bluetooth, no pause)"); return; }
     logf_(c, "jack: headphones out - pause");
     if(c->transport) c->transport(c->ctx, PL_T_PAUSE, 0);
 }
@@ -148,8 +149,27 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
     }
     case 0x0666:
         if(v < 0){ c->bad_frames++; logf_(c, "output route: bad frame"); return -1; }
-        if(v != PL_ROUTE_DAC){ logf_(c, "output route %d: not supported by the own player yet, ignored", v); return 0; }
-        c->route = v; logf_(c, "output route = %d", v); return 0;
+        if(v != PL_ROUTE_DAC && v != PL_ROUTE_BT){ logf_(c, "output route %d: not supported by the own player yet, ignored", v); return 0; }
+        c->route = v; c->route_seq++;
+        logf_(c, "output route = %d (%s)", v, v == PL_ROUTE_BT ? "Bluetooth" : "DAC");
+        return 0;
+    case 0x06c1:          /* the stock player's Bluetooth init; the UI brings Bluetooth up itself (ui/bt.c) */
+        logf_(c, "bluetooth init: nothing to do");
+        return 0;
+    case 0x06b3: {        /* codec VALUE1 (4 hex) + the headphones' MAC (17), ui/bt.c bt_codec_frame_value */
+        pp_frame_t cv = { 0, f.data, 4 };
+        int codec = f.dlen == 4 + 17 ? pp_class1(&cv) : -1;
+        int ok = codec >= 0 && codec <= 4;
+        for(int i = 0; ok && i < 17; i++){
+            char ch = f.data[4 + i];
+            ok = (i % 3 == 2) ? ch == ':' : ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'));
+        }
+        if(!ok){ c->bad_frames++; logf_(c, "bluetooth codec: bad frame (%.*s)", f.dlen > 48 ? 48 : f.dlen, f.data); return -1; }
+        memcpy(c->bt_mac, f.data + 4, 17); c->bt_mac[17] = 0;
+        c->bt_codec = codec; c->route_seq++;
+        logf_(c, "bluetooth codec %d for %s", codec, c->bt_mac);
+        return 0;
+    }
 
     case 0x0664: return set_(c, "idle power off s", &c->idle_off_s, v, 0, 0xffff);
     case 0x0806:
@@ -174,7 +194,7 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         c->usb_gadget = v; c->usb_seq++;
         logf_(c, "usb gadget = %d (%s)", v, v ? "USB storage" : "none");
         return 0;
-    case 0x0622: case 0x06b3: case 0x06c1: case 0x0818:
+    case 0x0622: case 0x0818:
         logf_(c, "%04x: not handled by the own player yet (%.*s)", f.tag, f.dlen > 48 ? 48 : f.dlen, f.data);
         return 0;
     }

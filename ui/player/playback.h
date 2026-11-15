@@ -39,6 +39,11 @@ void pb_tick(double now);
  * flag_path: created while a resumed song has not played 10 s yet, removed then and by pb_shutdown; found at the
  * next start, it means the last resume crashed or hung the player, and that resume is skipped (NULL: no check). */
 void pb_resume_begin(int (*mounted)(void), const char *flag_path);
+/* The output route changed (core route / bt_mac / bt_codec): switch MPD between the DAC and the Bluetooth headphones
+ * (engine.c eng_output, btout.c). pb_bluetooth: 1 while playing to Bluetooth; pb_bt_mac: their MAC then. */
+void pb_route(void);
+int pb_bluetooth(void);
+const char *pb_bt_mac(void);
 /* Power off or an orderly stop: store the position in MEMORY_PLAY. */
 void pb_shutdown(void);
 /* The last engine status and when it was read (CLOCK_MONOTONIC seconds); NULL before the first. */
