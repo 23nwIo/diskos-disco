@@ -227,10 +227,12 @@ the volume by 1 and report it with `a714`. It mounts the SD card when it is inse
 pulled (kernel uevents for `mmcblk0`, ui/player/sdcard.c; a dead mount left from a missed pull is detached first; ext4 first, then vfat/exfat with iocharset=utf8 like the stock player);
 It reads the headphone jack as the stock player does (`/dev/gpio` `pb20`, polled every 330 ms) and pauses on unplug. No kernel event exists for it (device-checked 2026-11-15: no switch/extcon, event0 has keys only, and exporting GPIO 52 via sysfs gives EBUSY because a driver holds the pin).
 USB storage mode (`0642 1`/`0`) exports the card to a USB host with the stock player's configfs gadget (ui/player/usbstorage.c);
-the cold-boot mount stays the UI's. **No sound yet**: playback, the DAC sequences, the queue tables
-and the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off with the own player) come next.
+the cold-boot mount stays the UI's. Playback goes through MPD ([MPD_CORE.md](MPD_CORE.md)): the DAC sequences, the
+queue tables for `0100`, the play modes and the track frames are in place (2026-11-15, host-tested, not yet on a
+Disc); resume, CUE/ISO tracks and the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off
+with the own player) come next.
 The stock power off also writes "rfkill 0" (`/sys/class/rfkill/rfkill0/state`); copied.
-Host test: `make -C ui/tests player_test && ui/tests/player_test ui/tests/diskos-player-host`.
+Host tests: `make -C ui/tests player_test playback_test && ui/tests/player_test ui/tests/diskos-player-host && ui/tests/playback_test`.
 
 ## Open questions for a device session
 

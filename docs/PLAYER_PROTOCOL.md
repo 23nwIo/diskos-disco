@@ -28,7 +28,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 
 | Tag | Frame | Meaning | Sent from | Step 2 |
 |---|---|---|---|---|
-| 0100 | `0100` LEN `<pos 4h><type 4h><name>` | Play a list from index `pos` (0-based). The player builds its queue from `song.db` by `type`: 1 all songs, 2 artist, 3 album, 5 custom playlist (by id), 6 favourites, 7 artist+album, 10 genre; type 0 = resume the current queue. `name` selects the artist/album/genre/playlist | main.c `ui_play_list_ex`, `ui_play_restore` | do |
+| 0100 | `0100` LEN `<pos 4h><type 4h><name>` | Play a list from index `pos` (0-based). The player builds its queue from `song.db` by `type`: 1 all songs, 2 artist, 3 album, 5 custom playlist (`name` = its sequence number in `CUSTOM_PLAYLIST_INDEX` by `LIST_ID`, diskOS sends 0), 6 favourites, 7 artist+album (`{"artist":"X", "album":"Y"}`), 8 genre+album (`{"style":"X", "album":"Y"}`), 10 genre; type 0 = jump to `pos` in the current queue without a rebuild (`LIST_SONG_0` ID order, also in shuffle). `name` selects the artist/album/genre | main.c `ui_play_list_ex`, `ui_play_restore` | do |
 | 0102 | `0102000C000v` | Play mode: 0 in order, 1 shuffle, 2 repeat one, 3 repeat all, 4 single | main.c `send_play_mode` | do |
 | 0103 | `01030010<ms 8h>` | Seek to ms | main.c `ui_seek_to` | do |
 | 0104 | `0104000C000v` | Favourite on/off for the current song (`MY_LOVE` table) | main.c | do |

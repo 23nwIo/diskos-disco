@@ -18,7 +18,9 @@ enum { ENG_STOP = 0, ENG_PLAY, ENG_PAUSE };
 typedef struct {
     int state;                     /* ENG_* */
     long elapsed_ms, duration_ms;
-    int song;                      /* queue position, -1 none */
+    int song;                      /* MPD queue position, -1 none */
+    int songid;                    /* MPD song id, -1 none */
+    int bits, channels, kbps;      /* of the decoded stream, 0 unknown */
     int songs;                     /* queue length */
     unsigned rate;                 /* sample rate of the current stream, 0 unknown */
     char file[1100];               /* current song's path (file:// stripped) */
@@ -35,12 +37,17 @@ int eng_idle_event(void);
 void eng_check(void);
 int eng_ready(void);
 
-/* Replace the queue with these files and play from index start (paused when start_paused). 0 or -1. */
-int eng_play_files(const char *const *paths, int n, int start, long start_ms, int start_paused);
-int eng_toggle(void);                  /* play <-> pause; from stop: play */
+/* MPD holds the current song and the next one (for gapless); the queue is the player's (queue.c).
+ * eng_load: replace both slots with path and start it at start_ms; paused = load only, play starts on eng_toggle (a
+ *           resume). 0, or -1 (the file can't be added: missing, not readable, or no engine).
+ * eng_set_next: the song to follow the current one (NULL = none, playback stops after it). 0 or -1 (not added).
+ * eng_advanced: after an event, 1 when MPD has moved on to that next song (it is now the current one; the caller then
+ *           sets a new next), else 0. */
+int eng_load(const char *path, long start_ms, int paused);
+int eng_set_next(const char *path);
+int eng_advanced(const eng_status_t *s);
+int eng_toggle(void);                  /* play <-> pause; from stop or a paused load: play */
 int eng_pause(int on);
-int eng_next(void);
-int eng_prev(void);
 int eng_seek_ms(long ms);
 int eng_status(eng_status_t *st);
 /* Raw command for tests and diagnosis; the answer in out. */

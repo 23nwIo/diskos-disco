@@ -3,8 +3,7 @@
 /* What the own player does with each UI command (docs/PLAYER_PROTOCOL.md, column "Step 2"). No I/O of its own: replies
  * go through the send callback and notes through the log callback, so ui/tests can drive it on the host.
  *
- * Skeleton stage (2026-11-15): every command is parsed, settings are remembered, state requests are answered with "no
- * current track". Playback, the DAC and the queue tables come in the next steps. */
+ * Playback itself (queue, MPD, DAC) is behind the transport and play callbacks (main.c wires them to playback.c). */
 #ifndef DISKOS_PLAYER_CORE_H
 #define DISKOS_PLAYER_CORE_H
 
@@ -15,8 +14,14 @@
 typedef void (*pl_send_fn)(void *ctx, const char *frame, int len);
 typedef void (*pl_log_fn)(void *ctx, const char *msg);
 /* Transport requests to the audio engine (main.c wires them to engine.c; NULL = no engine, logged only). */
-enum { PL_T_TOGGLE = 0, PL_T_NEXT = 1, PL_T_PREV = 2, PL_T_SEEK = 3 };
+enum { PL_T_TOGGLE = 0, PL_T_NEXT = 1, PL_T_PREV = 2, PL_T_SEEK = 3,
+       PL_T_PAUSE = 4,             /* pause if playing (headphones pulled) */
+       PL_T_MODE = 5,              /* the play mode changed (arg = new mode) */
+       PL_T_STATE = 6 };           /* 0202: send the full state if a track is loaded (0), else -1 */
 typedef int (*pl_transport_fn)(void *ctx, int op, long arg);
+/* 0100: play list type from 0-based position pos; name is the frame's name field, NUL terminated. 0 or -1. Frames to
+ * the UI are the callee's (it sends the track start sequence). */
+typedef int (*pl_play_fn)(void *ctx, int type, int pos, const char *name);
 
 typedef struct {
     /* applied settings (Step 2 "do") */
@@ -27,7 +32,7 @@ typedef struct {
     int dre;                       /* 0 on, 1 off */
     int eq_preset;                 /* 0..20 */
     int play_mode;                 /* 0 in order, 1 shuffle, 2 repeat one, 3 repeat all, 4 single */
-    int artist_grouping;           /* 0 artist, 1 album artist */
+    int artist_grouping;           /* 0 artist, 1 album artist, -1 not sent yet */
     int work_mode;                 /* last mode set; -1 none yet */
     int route;                     /* 0666 output route; -1 none yet */
     int idle_off_s, sleep_s;       /* 0 off */
@@ -42,6 +47,7 @@ typedef struct {
 
     pl_send_fn send; pl_log_fn log; void *ctx;
     pl_transport_fn transport;     /* set after pl_core_init; may stay NULL */
+    pl_play_fn play;               /* set after pl_core_init; NULL = 0100 is only logged */
 } pl_core_t;
 
 void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx);

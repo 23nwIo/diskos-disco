@@ -19,8 +19,9 @@
  *   - logs every command to /tmp/diskos-player.log (RAM).
  *   - plays through MPD as its audio core (engine.c, docs/MPD_CORE.md) when /usr/data/diskos-own/mpd exists: owns
  *     the DAC (dac.c: start sequence per stream rate, volume/balance/gain as attenuation bytes), turns 0201/0103 into
- *     MPD commands and reports a1 (position, once a second while playing) and the state frames. Building the queue
- *     from song.db for 0100 comes next.
+ *     MPD commands and reports a1 (position, once a second while playing) and the state frames;
+ *   - builds the queue for 0100 from song.db like the stock player (LIST_SONG_0, LIST_SONG_3 in shuffle; queuedb.c),
+ *     moves through it by the play mode and announces every track start with the full a2 frame (playback.c).
  *
  *   diskos-player [-n] [-l <log>] [-q <prefix>]
  *     -n           do not touch the hardware watchdog, power off only as a logged dry run (host runs)
@@ -35,6 +36,8 @@
 #include "dac.h"
 #include "engine.h"
 #include "mpdcli.h"
+#include "playback.h"
+#include "queuedb.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
 
@@ -98,45 +101,9 @@ static void core_send(void *ctx, const char *frame, int len){
 
 static void on_signal(int s){ (void)s; g_stop = 1; }
 
-/* ---- audio engine glue ---- */
-static eng_status_t g_es;          /* last status read after an MPD event */
-static double g_es_t;              /* when it was read (CLOCK_MONOTONIC) */
-static int g_es_valid;
-
-static int core_transport(void *ctx, int op, long arg){
-    (void)ctx;
-    if(!eng_ready()){ logmsg("transport %d: no engine", op); return -1; }
-    switch(op){
-    case PL_T_TOGGLE: return eng_toggle();
-    case PL_T_NEXT:   return eng_next();
-    case PL_T_PREV:   return eng_prev();
-    case PL_T_SEEK:   return eng_seek_ms(arg);
-    }
-    return -1;
-}
-
-static void send_state(pl_core_t *c, int state){
-    /* the stock player sends the partial state frame twice (capture 2026-11-15) */
-    char f[32]; int n = pp_fmt_a2(f, sizeof f, state == ENG_PLAY ? "{\"state\":0}" : "{\"state\":1}");
-    core_send(c, f, n); core_send(c, f, n);
-}
-
-/* After an MPD event: read the status, start the DAC for a new stream rate, tell the UI about play/pause. */
-static void engine_update(pl_core_t *c){
-    eng_status_t s;
-    if(eng_status(&s) != 0) return;
-    int was = g_es_valid ? g_es.state : ENG_STOP;
-    if(s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
-        unsigned char a, l; dac_attenuation(c->volume, c->gain, c->balance, &a, &l);
-        dac_start(s.rate, a, l, logmsg);
-    }
-    if(s.state != was || (g_es_valid && strcmp(s.file, g_es.file)))
-        logmsg("engine: %s, song %d/%d, %ld/%ld ms, %u Hz, %s", s.state == ENG_PLAY ? "play" : s.state == ENG_PAUSE ? "pause" : "stop",
-               s.song + 1, s.songs, s.elapsed_ms, s.duration_ms, s.rate, s.file);
-    if(s.state != was && (s.state == ENG_PLAY || was == ENG_PLAY)) send_state(c, s.state);
-    g_es = s; g_es_t = now_s(); g_es_valid = 1;
-}
-
+/* ---- playback glue (playback.c) ---- */
+static int core_transport(void *ctx, int op, long arg){ (void)ctx; return pb_transport(op, arg); }
+static int core_play(void *ctx, int type, int pos, const char *name){ (void)ctx; return pb_play_list(type, pos, name); }
 
 int main(int argc, char **argv){
     int use_wd = 1; const char *logpath = LOG_DEFAULT, *qprefix = "/", *keypath = KEY_DEV;
@@ -194,11 +161,12 @@ int main(int argc, char **argv){
     pl_core_t core;
     pl_core_init(&core, core_send, core_log, NULL);
     core.transport = core_transport;
+    core.play = core_play;
+    pb_init(&core, QD_SONG_DB, QD_SYSCONFIG_DB, logmsg);
 
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
-    if(eng_start(0, logmsg) == 0) engine_update(&core);         /* MPD is not hardware: host runs (-n) use it too when present */
+    if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     int att_vol = -1, att_gain = -1, att_bal = -1;
-    double last_a1 = 0;
 
     /* The keys. The stock player grabs them, so the UI never sees them (ui/main.c reads the Power level from the GPIO
      * instead); we do the same. Without the device the player still runs, only without keys. */
@@ -222,7 +190,7 @@ int main(int argc, char **argv){
         int pr = poll(pf, 4, 250);
         if(pr > 0 && pf[3].fd >= 0 && (pf[3].revents & (POLLIN | POLLHUP | POLLERR))){
             int ev = eng_idle_event();
-            if(ev > 0) engine_update(&core);
+            if(ev > 0) pb_engine_event();
         }
         if(pr > 0 && uev >= 0 && (pf[2].revents & (POLLIN | POLLERR))){
             char ub[2048];
@@ -272,7 +240,7 @@ int main(int argc, char **argv){
                     break;
                 case KEYC_VOL_UP:   pl_core_volume_step(&core, +1); break;
                 case KEYC_VOL_DOWN: pl_core_volume_step(&core, -1); break;
-                case KEYC_PLAY:     logmsg("play key (playback not implemented yet)"); break;
+                case KEYC_PLAY:     logmsg("play key"); pb_transport(PL_T_TOGGLE, 0); break;
                 default:            logmsg("key %u pressed, not used", (unsigned)ev[k].code); break;
                 }
             }
@@ -296,13 +264,7 @@ int main(int argc, char **argv){
             dac_set_attenuation(a, l, logmsg);
             att_vol = core.volume; att_gain = core.gain; att_bal = core.balance;
         }
-        if(g_es_valid && g_es.state == ENG_PLAY && t - last_a1 >= 1.0){   /* a1 once a second while playing */
-            last_a1 = t;
-            long ms = g_es.elapsed_ms + (long)((t - g_es_t) * 1000.0);
-            if(g_es.duration_ms > 0 && ms > g_es.duration_ms) ms = g_es.duration_ms;
-            char f[32]; int n = pp_fmt_a1(f, sizeof f, (unsigned long)ms);
-            core_send(NULL, f, n);
-        }
+        pb_tick(t);
         if(core.usb_seq != usb_seq){                     /* 0642: the UI's "USB storage" source */
             usb_seq = core.usb_seq;
             if(core.usb_gadget == 1) us_start(!use_wd, logmsg);
@@ -331,6 +293,7 @@ int main(int argc, char **argv){
     logmsg("=== diskos-player stop: %u frames, %u malformed, %u unknown", core.frames, core.bad_frames,
            core.unknown_tags);
     eng_stop();
+    pb_close();
     dac_close();
     if(wd >= 0){ wd_stop(wd); wd_close(wd); }
     if(keys >= 0) close(keys);

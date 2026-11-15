@@ -20,6 +20,9 @@
 static pid_t g_pid = -1;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
 static eng_log_fn g_log;
+/* MPD song ids of the two slots (see eng_load) and a paused start that has not been played yet */
+static int g_cur = -1, g_next = -1, g_armed;
+static long g_armed_ms;
 
 /* MPD writes S32_LE like the stock player and nothing else touches the hardware; buffer and period come from MPD's
  * defaults with our period-first patch (mpd/patches). No database, no state file (resume is the player's job). */
@@ -103,6 +106,7 @@ void eng_check(void){
     if(r != g_pid) return;
     g_log("engine: MPD exited (%s %d)", WIFEXITED(st) ? "status" : "signal", WIFEXITED(st) ? WEXITSTATUS(st) : WTERMSIG(st));
     g_pid = -1; disconnect();
+    g_cur = g_next = -1; g_armed = 0;                    /* its queue is gone with it */
     if(++g_restarts > ENG_MAX_RESTARTS){ g_log("engine: too many restarts, no sound from now on"); return; }
     spawn();
 }
@@ -123,39 +127,72 @@ int eng_cmd(const char *c, char *out, unsigned cap){
     return x;
 }
 
-int eng_play_files(const char *const *paths, int n, int start, long start_ms, int start_paused){
+/* MPD holds at most two songs: the current one and, so that it can play gaplessly, the one after it. The queue itself
+ * is ours (queue.c, LIST_SONG_0/3 in song.db); g_cur/g_next are the MPD song ids of the two slots. A paused start
+ * (resume) does not touch MPD at all until play is pressed ("armed"), so nothing is heard and the DAC stays idle. */
+
+static int addid(const char *path){
+    char uri[1060], q[1100], line[1200], r[256], v[32];
+    snprintf(uri, sizeof uri, "file://%s", path);
+    if(mc_quote(q, sizeof q, uri) < 0){ g_log("engine: path too long: %s", path); return -1; }
+    snprintf(line, sizeof line, "addid %s", q);
+    int x = mc_cmd(g_cmd, line, r, sizeof r);
+    if(x != 0){ g_log("engine: add %s: %s", path, x > 0 ? r : "no answer"); if(x < 0) disconnect(); return -1; }
+    return mc_get(r, "Id", v, sizeof v) ? atoi(v) : -1;
+}
+
+static int start_cur(long ms){
+    char line[64];
+    if(ms > 0) snprintf(line, sizeof line, "seekid %d %ld.%03ld", g_cur, ms / 1000, ms % 1000);
+    else snprintf(line, sizeof line, "playid %d", g_cur);
+    return cmd(line);
+}
+
+int eng_load(const char *path, long start_ms, int paused){
     if(g_cmd < 0) return -1;
+    g_armed = 0; g_cur = g_next = -1;
     if(cmd("clear")) return -1;
-    char line[1200], q[1100];
-    int added = 0;
-    for(int i = 0; i < n; i++){
-        char uri[1060];
-        snprintf(uri, sizeof uri, "file://%s", paths[i]);
-        if(mc_quote(q, sizeof q, uri) < 0){ g_log("engine: path too long: %s", paths[i]); continue; }
-        snprintf(line, sizeof line, "add %s", q);
-        if(cmd(line) == 0) added++;
-        else if(g_cmd < 0) return -1;
+    g_cur = addid(path);
+    if(g_cur < 0) return -1;
+    if(paused){ g_armed = 1; g_armed_ms = start_ms > 0 ? start_ms : 0; return 0; }
+    return start_cur(start_ms);
+}
+
+int eng_set_next(const char *path){
+    if(g_cmd < 0) return -1;
+    if(g_next >= 0){
+        char line[48]; snprintf(line, sizeof line, "deleteid %d", g_next);
+        char r[256]; mc_cmd(g_cmd, line, r, sizeof r);         /* already gone is fine */
+        g_next = -1;
     }
-    if(!added) return -1;
-    if(start < 0 || start >= added) start = 0;
-    if(start_ms > 0) snprintf(line, sizeof line, "seek %d %ld.%03ld", start, start_ms / 1000, start_ms % 1000);
-    else snprintf(line, sizeof line, "play %d", start);
-    if(cmd(line)) return -1;
-    if(start_ms > 0 && !start_paused) cmd("pause 0");
-    if(start_paused) cmd("pause 1");
-    return 0;
+    if(!path) return 0;
+    g_next = addid(path);
+    return g_next >= 0 ? 0 : -1;
+}
+
+int eng_advanced(const eng_status_t *s){
+    if(g_next < 0 || s->songid != g_next) return 0;
+    if(g_cur >= 0){
+        char line[48], r[256]; snprintf(line, sizeof line, "deleteid %d", g_cur);
+        mc_cmd(g_cmd, line, r, sizeof r);
+    }
+    g_cur = g_next; g_next = -1;
+    return 1;
 }
 
 int eng_toggle(void){
+    if(g_armed){ g_armed = 0; return start_cur(g_armed_ms); }
     eng_status_t s;
     if(eng_status(&s) != 0) return -1;
-    if(s.state == ENG_STOP) return s.songs > 0 ? cmd("play") : -1;
+    if(s.state == ENG_STOP) return g_cur >= 0 ? start_cur(0) : -1;
     return cmd(s.state == ENG_PLAY ? "pause 1" : "pause 0");
 }
-int eng_pause(int on){ return cmd(on ? "pause 1" : "pause 0"); }
-int eng_next(void){ return cmd("next"); }
-int eng_prev(void){ return cmd("previous"); }
+int eng_pause(int on){
+    if(g_armed) return on ? 0 : eng_toggle();
+    return cmd(on ? "pause 1" : "pause 0");
+}
 int eng_seek_ms(long ms){
+    if(g_armed){ g_armed_ms = ms; return 0; }
     char c[64];
     snprintf(c, sizeof c, "seekcur %ld.%03ld", ms / 1000, ms % 1000);
     return cmd(c);
@@ -163,7 +200,7 @@ int eng_seek_ms(long ms){
 
 int eng_status(eng_status_t *st){
     memset(st, 0, sizeof *st);
-    st->song = -1;
+    st->song = st->songid = -1;
     if(g_cmd < 0) return -1;
     char r[MC_RESP_MAX], v[1100];
     if(mc_cmd(g_cmd, "status", r, sizeof r) != 0){ disconnect(); return -1; }
@@ -172,11 +209,17 @@ int eng_status(eng_status_t *st){
     if(mc_get(r, "duration", v, sizeof v)) st->duration_ms = (long)(atof(v) * 1000.0 + 0.5);
     if(mc_get(r, "song", v, sizeof v)) st->song = atoi(v);
     if(mc_get(r, "playlistlength", v, sizeof v)) st->songs = atoi(v);
-    if(mc_get(r, "audio", v, sizeof v)) st->rate = (unsigned)strtoul(v, NULL, 10);
+    if(mc_get(r, "songid", v, sizeof v)) st->songid = atoi(v);
+    if(mc_get(r, "bitrate", v, sizeof v)) st->kbps = atoi(v);
+    if(mc_get(r, "audio", v, sizeof v)){
+        char *p; st->rate = (unsigned)strtoul(v, &p, 10);
+        if(*p == ':'){ st->bits = (int)strtol(p + 1, &p, 10); if(*p == ':') st->channels = (int)strtol(p + 1, NULL, 10); }
+    }
     if(st->song >= 0 && mc_cmd(g_cmd, "currentsong", r, sizeof r) == 0 && mc_get(r, "file", v, sizeof v)){
         const char *p = !strncmp(v, "file://", 7) ? v + 7 : v;
         snprintf(st->file, sizeof st->file, "%s", p);
         if(!st->rate && mc_get(r, "Format", v, sizeof v)) st->rate = (unsigned)strtoul(v, NULL, 10);
     }
+    if(g_armed && st->state == ENG_STOP){ st->state = ENG_PAUSE; st->elapsed_ms = g_armed_ms; }   /* a paused start */
     return 0;
 }

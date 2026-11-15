@@ -21,7 +21,7 @@ void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx){
     /* Defaults until the UI re-sends its settings (ui_reapply_audio does that once the player answers). The volume
      * starts low on purpose: a player that has not been told the volume yet must not be loud. */
     c->volume = 20; c->max_volume = PL_VOL_MAX;
-    c->gain = 0; c->dre = 0; c->work_mode = -1; c->route = -1; c->jack = -1;
+    c->gain = 0; c->dre = 0; c->work_mode = -1; c->route = -1; c->jack = -1; c->artist_grouping = -1;
 }
 
 void pl_core_send_state(pl_core_t *c){
@@ -52,7 +52,8 @@ void pl_core_jack(pl_core_t *c, int plugged){
     c->jack = plugged;
     if(first){ logf_(c, "jack: headphones %s", plugged ? "in" : "out"); return; }
     if(plugged){ logf_(c, "jack: headphones in (playback stays paused)"); return; }
-    logf_(c, "jack: headphones out - pause (no playback yet, nothing to pause)");
+    logf_(c, "jack: headphones out - pause");
+    if(c->transport) c->transport(c->ctx, PL_T_PAUSE, 0);
 }
 
 /* a class 1 setting: store v in *slot if it is within lo..hi */
@@ -73,15 +74,21 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
     }
     int v = pp_class1(&f);
     switch(f.tag){
-    case 0x0202: pl_core_send_state(c); return 0;
+    case 0x0202:
+        if(c->transport && c->transport(c->ctx, PL_T_STATE, 0) == 0) return 0;
+        pl_core_send_state(c); return 0;
 
-    /* transport and queue: parsed, not played yet */
+    /* transport and queue */
     case 0x0100: {
         if(f.dlen < 8){ c->bad_frames++; logf_(c, "play list: frame too short"); return -1; }
         pp_frame_t pos = { 0, f.data, 4 }, type = { 0, f.data + 4, 4 };
-        logf_(c, "play list: pos %d type %d name \"%.*s\" (playback not implemented yet)",
-              pp_class1(&pos), pp_class1(&type), f.dlen - 8, f.data + 8);
-        pl_core_send_state(c);
+        int p = pp_class1(&pos), t = pp_class1(&type);
+        if(p < 0 || t < 0){ c->bad_frames++; logf_(c, "play list: bad frame"); return -1; }
+        logf_(c, "play list: pos %d type %d name \"%.*s\"", p, t, f.dlen - 8, f.data + 8);
+        if(!c->play){ pl_core_send_state(c); return 0; }
+        char name[PP_MAX_FRAME];
+        memcpy(name, f.data + 8, (size_t)(f.dlen - 8)); name[f.dlen - 8] = 0;
+        if(c->play(c->ctx, t, p, name) != 0) logf_(c, "play list: nothing plays");
         return 0;
     }
     case 0x0103:
@@ -100,7 +107,12 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         if(c->transport) c->transport(c->ctx, v == 0 ? PL_T_TOGGLE : v == 1 ? PL_T_NEXT : PL_T_PREV, 0);
         return 0;
     case 0x0104: logf_(c, "favourite %d (not implemented yet)", v); return 0;
-    case 0x0102: return set_(c, "play mode", &c->play_mode, v, 0, 4);
+    case 0x0102: {
+        int old = c->play_mode;
+        if(set_(c, "play mode", &c->play_mode, v, 0, 4)) return -1;
+        if(old != v && c->transport) c->transport(c->ctx, PL_T_MODE, v);
+        return 0;
+    }
     case 0x0648: return set_(c, "artist grouping", &c->artist_grouping, v, 0, 1);
 
     /* audio settings */

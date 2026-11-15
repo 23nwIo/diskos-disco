@@ -28,8 +28,26 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   byte), A `_IO('M',46)`; then the PCM is opened.
 - The volume is the DAC's: the stock UI's volume does nothing to MPD's stream, the own player writes the volume bytes.
 
+## In the own player (ui/player)
+
+- **Engine** (`engine.c`): the player starts MPD as a child with a generated config (`/tmp/diskos-mpd`), owns the DAC
+  (`dac.c`: start sequence with the stream's rate code, volume/balance/gain as attenuation bytes) and reads MPD's
+  changes from a second connection that sits in `idle`.
+- **Queue** (`queue.c`, `queuedb.c`, `playback.c`, 2026-11-15): on `0100` the player rebuilds `LIST_SONG_0` in
+  song.db exactly like the stock player (DROP and CREATE with the stock schema, so the IDs start at 1;
+  `INSERT ... SELECT` from `SONG`, `MY_LOVE` or `CUSTOM_PLAYLIST` with the stock filter and `ORDER BY`), and in shuffle
+  writes `LIST_SONG_3` (one `POS_ID` per song, the tapped song first). The UI's Up Next and positions read these
+  tables, so they must stay identical (`ui/tests/playback_test.c` checks the orderings against ui/musicdb.c).
+- **MPD holds two songs only**: the current one and the one after it (for gapless). The queue itself stays the
+  player's, so a library of tens of thousands of songs is never copied into MPD. When MPD moves on to the queued
+  song, the player queues the next one by the play mode: in order (stop after the last), shuffle and repeat all (wrap
+  around), repeat one (the same song again), single (stop after it). Next/Previous always move one song, wrapping.
+- **Frames**: every track start sends the stock sequence (`a102` mode on a play command or `{"state":1}` on a natural
+  change, `aa1c`, the full `a2` with the song JSON and `pos_id` = `LIST_SONG_0.ID`, `aa05`, `aa1c`, `{"state":0}`
+  twice); `0202` with a track loaded is answered with the full `a2`.
+- Not yet: CUE and ISO tracks (a part of a bigger file; skipped with a log line), resume after a restart
+  (`MEMORY_PLAY`), Previous restarting the song after a few seconds (stock behaviour not measured).
+
 ## Next
 
-The own player starts MPD as a child, owns the DAC devices (start sequence with the track's rate code before each
-stream, volume, balance, gain), translates `0100`/`0201`/`0103` into MPD commands and MPD's status into `a1`/`a2`.
-Bluetooth: bluealsa plugin built into MPD, fallback MPD pipe output into `aplay -D bluealsa` (Jo 2026-11-15).
+Resume (`MEMORY_PLAY`), CUE/ISO tracks, then web radio via MPD streams. Bluetooth: bluealsa plugin built into MPD, fallback MPD pipe output into `aplay -D bluealsa` (Jo 2026-11-15).

@@ -50,9 +50,9 @@ $(APP)/wd_blob.o: $(WD_BIN)
 # inside mq_ui; the launcher writes it to /usr/data/diskos-player when /usr/data/diskos-own-player exists (own_player.h)
 APP_SRCS += $(APP)/pl_blob.c
 PL_BIN := $(APP)/player/diskos-player
-PL_SRCS := $(APP)/player/main.c $(APP)/player/core.c $(APP)/player/proto.c $(APP)/player/hw.c $(APP)/player/sdcard.c $(APP)/player/usbstorage.c $(APP)/player/dac.c $(APP)/player/mpdcli.c $(APP)/player/engine.c $(APP)/watchdog/watchdog.c
-$(PL_BIN): $(PL_SRCS) $(APP)/player/core.h $(APP)/player/proto.h $(APP)/player/hw.h $(APP)/player/sdcard.h $(APP)/player/usbstorage.h $(APP)/player/dac.h $(APP)/player/mpdcli.h $(APP)/player/engine.h $(APP)/own_player.h $(APP)/watchdog/watchdog.h
-	$(CC) -Os -static -D_GNU_SOURCE -Wall -Wextra -Werror -ffile-prefix-map=$(APP)/= $(FP_FLAGS) -o $@ $(PL_SRCS) -lrt
+PL_SRCS := $(APP)/player/main.c $(APP)/player/core.c $(APP)/player/proto.c $(APP)/player/hw.c $(APP)/player/sdcard.c $(APP)/player/usbstorage.c $(APP)/player/dac.c $(APP)/player/mpdcli.c $(APP)/player/engine.c $(APP)/player/queue.c $(APP)/player/queuedb.c $(APP)/player/playback.c $(APP)/watchdog/watchdog.c
+$(PL_BIN): $(PL_SRCS) $(APP)/sqlite3.o $(APP)/player/queue.h $(APP)/player/queuedb.h $(APP)/player/playback.h $(APP)/player/core.h $(APP)/player/proto.h $(APP)/player/hw.h $(APP)/player/sdcard.h $(APP)/player/usbstorage.h $(APP)/player/dac.h $(APP)/player/mpdcli.h $(APP)/player/engine.h $(APP)/own_player.h $(APP)/watchdog/watchdog.h
+	$(CC) -Os -static -D_GNU_SOURCE -Wall -Wextra -Werror -ffile-prefix-map=$(APP)/= $(FP_FLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $(PL_SRCS) $(APP)/sqlite3.o -lrt -lm
 	$(CROSS)strip $@ || true
 $(APP)/pl_blob.o: CFLAGS += -DPL_BIN='"$(PL_BIN)"'
 $(APP)/pl_blob.o: $(PL_BIN)
