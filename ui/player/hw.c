@@ -43,6 +43,9 @@ void hw_power_off(int wd_fd, int dry, hw_log_fn log){
     /* Order as the stock player's menu power off (trace run 3). The UI has already flushed and unmounted what it
      * owns before it asked for this (ui/power.c). */
     run("hciconfig hci0 down", dry, log);
+    /* Not in the stock routine: end the SSH sessions while Wi-Fi is still up, so a connected client gets a clean
+     * close instead of a timeout (Jo 2026-11-15: "server not responding" after the menu power off). */
+    run("killall dropbear", dry, log);
     run("ifconfig wlan0 down", dry, log);
     run("killall udhcpc wpa_supplicant curl wget", dry, log);
     dev_ioctl(DAC_A, DAC_IOC_M48, "DAC power down", dry, log);
