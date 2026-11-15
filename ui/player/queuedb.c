@@ -263,3 +263,59 @@ int qd_row(sqlite3 *d, int id, qd_row_t *r){
     }
     return 1;
 }
+
+int qd_memory_get(sqlite3 *d, int *music_id, long *pos_ms, int *track){
+    sqlite3_stmt *st;
+    *music_id = 0; *pos_ms = 0; *track = 0;
+    if(sqlite3_prepare_v2(d, "SELECT IFNULL(MUSIC_ID,0), IFNULL(POSITION,0), IFNULL(TRACK,0) FROM MEMORY_PLAY WHERE ID=1;",
+                          -1, &st, NULL) != SQLITE_OK) return -1;
+    int rc = sqlite3_step(st);
+    if(rc == SQLITE_ROW){
+        *music_id = sqlite3_column_int(st, 0);
+        *pos_ms = (long)sqlite3_column_int64(st, 1);
+        *track = sqlite3_column_int(st, 2);
+    }
+    sqlite3_finalize(st);
+    return rc == SQLITE_ROW ? 1 : rc == SQLITE_DONE ? 0 : -1;
+}
+
+int qd_memory_set(sqlite3 *d, int music_id, long pos_ms, int is_cue, int is_iso, int track){
+    for(int pass = 0; pass < 2; pass++){
+        sqlite3_stmt *st;
+        if(sqlite3_prepare_v2(d, "UPDATE MEMORY_PLAY SET MUSIC_ID=?1, IS_PLAYING=1, POSITION=?2, IS_CUE=?3, IS_ISO=?4,"
+                                 " TRACK=?5, IS_NAS=0 WHERE ID=1;", -1, &st, NULL) != SQLITE_OK) return -1;
+        sqlite3_bind_int(st, 1, music_id);
+        sqlite3_bind_int64(st, 2, pos_ms);
+        sqlite3_bind_int(st, 3, is_cue);
+        sqlite3_bind_int(st, 4, is_iso);
+        sqlite3_bind_int(st, 5, track);
+        int rc = sqlite3_step(st);
+        sqlite3_finalize(st);
+        if(rc != SQLITE_DONE) return -1;
+        if(sqlite3_changes(d) == 1) return 0;
+        /* no row yet: the stock player's default row (ID 1) */
+        if(pass || exec_(d, "INSERT INTO MEMORY_PLAY (MUSIC_ID) VALUES (0);", NULL, 0) != 0) return -1;
+    }
+    return -1;
+}
+
+int qd_memory_pos(sqlite3 *d, long pos_ms){
+    sqlite3_stmt *st;
+    if(sqlite3_prepare_v2(d, "UPDATE MEMORY_PLAY SET POSITION=?1 WHERE ID=1;", -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int64(st, 1, pos_ms);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    return rc == SQLITE_DONE ? 0 : -1;
+}
+
+int qd_list_row_of_song(sqlite3 *d, int music_id){
+    sqlite3_stmt *st;
+    if(sqlite3_prepare_v2(d,
+        "SELECT L.ID FROM LIST_SONG_0 L JOIN SONG S ON S.PATH=L.PATH AND IFNULL(S.IS_CUE,0)=IFNULL(L.IS_CUE,0)"
+        " AND IFNULL(S.IS_ISO,0)=IFNULL(L.IS_ISO,0) AND IFNULL(S.TRACK,0)=IFNULL(L.TRACK,0)"
+        " WHERE S.ID=?1 ORDER BY L.ID LIMIT 1;", -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, music_id);
+    int rc = sqlite3_step(st), id = rc == SQLITE_ROW ? sqlite3_column_int(st, 0) : 0;
+    sqlite3_finalize(st);
+    return rc == SQLITE_ROW || rc == SQLITE_DONE ? id : -1;
+}

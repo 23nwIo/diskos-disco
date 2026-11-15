@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static int fails;
@@ -134,6 +135,9 @@ static void make_db(void){
     sql(d, "INSERT INTO CUSTOM_PLAYLIST_INDEX VALUES (5,'Later',''),(2,'Slot','');"
            "INSERT INTO CUSTOM_PLAYLIST (PLAYLIST_ID,PATH,TITLE,TRACK,IS_CUE,IS_ISO,DURATION) VALUES"
            "(2,'/s/c.flac','Echo',1,0,0,1),(5,'/s/a1.flac','Zulu',1,0,0,1),(2,'/s/a1.flac','Zulu',1,0,0,1);");
+    /* MEMORY_PLAY's columns as on a Disc (docs/PLAYER_PROTOCOL.md); empty, the player adds the stock default row */
+    sql(d, "CREATE TABLE MEMORY_PLAY (ID INTEGER PRIMARY KEY autoincrement, MUSIC_ID INT, IS_PLAYING INT, POSITION INT, "
+           "IS_CUE INT, IS_ISO INT, TRACK INT, IS_NAS INT, IS_M3U INT);");
     sqlite3_close(d);
     CHECK(sqlite3_open(sysp, &d) == SQLITE_OK);
     sql(d, "CREATE TABLE SYSCONFIG (ID INTEGER PRIMARY KEY, ARTIST_CLASS_TYPE INT); INSERT INTO SYSCONFIG VALUES (1, 0);");
@@ -317,12 +321,89 @@ static void test_playback(void){
     pb_close();
 }
 
+/* ---- resume (MEMORY_PLAY) ---- */
+static int mounted_now;
+static int is_mounted(void){ return mounted_now; }
+static double mono(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec / 1e9; }
+static char flagp[256];
+/* a new player start with resume mode m; the card is mounted from the start; ticks until the resume is due */
+static void restart_and_resume(pl_core_t *c, int m){
+    pb_close();
+    e_state = ENG_STOP; e_cur[0] = 0; e_cur_id = -1; e_ms = -1;
+    pl_core_init(c, cap_send, NULL, NULL);
+    c->resume_mode = m;
+    pb_init(c, dbp, sysp, quiet);
+    mounted_now = 1;
+    pb_resume_begin(is_mounted, flagp);
+    double t = mono();
+    pb_tick(t); pb_tick(t + 0.5); pb_tick(t + 1.2);
+}
+static void test_resume(void){
+    snprintf(flagp, sizeof flagp, "/tmp/pbtest_%d_flag", (int)getpid());
+    unlink(flagp);
+    pl_core_t c;
+    pl_core_init(&c, cap_send, NULL, NULL);
+    pb_init(&c, dbp, sysp, quiet);
+    sqlite3 *d = qd_open(dbp);
+    /* every track start writes the bookmark (MUSIC_ID = SONG.ID, as the UI reads it); a pause stores the position */
+    CHECK(pb_play_list(QD_ALBUM, 1, "Mixed") == 0 && !strcmp(e_cur, "/s/m2-96k.flac"));
+    pb_engine_event();
+    CHECK(count(d, "SELECT MUSIC_ID FROM MEMORY_PLAY WHERE ID=1;") == 8 && count(d, "SELECT POSITION FROM MEMORY_PLAY;") == 0);
+    CHECK(count(d, "SELECT TRACK FROM MEMORY_PLAY;") == 2 && count(d, "SELECT IS_PLAYING FROM MEMORY_PLAY;") == 1);
+    e_ms = 42000; e_state = ENG_PAUSE; pb_engine_event();
+    CHECK(count(d, "SELECT POSITION FROM MEMORY_PLAY;") == 42000);
+    /* mode 1 (position): the same song from the same spot, in the same queue (Up Next stays), playing, guarded by the
+     * flag until it has played 10 s */
+    restart_and_resume(&c, 1);
+    CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && e_ms == 42000 && e_state == ENG_PLAY && !strcmp(e_next, "/s/m3-96k.flac"));
+    CHECK(access(flagp, F_OK) == 0);
+    pb_engine_event();
+    pb_tick(mono() + 11.0);
+    CHECK(access(flagp, F_OK) != 0);
+    /* power off: the position goes into the bookmark */
+    e_ms = 50000; pb_engine_event(); pb_shutdown();
+    CHECK(count(d, "SELECT POSITION FROM MEMORY_PLAY;") >= 50000);
+    /* mode 2 (song): from its start; mode 0: nothing */
+    restart_and_resume(&c, 2);
+    CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && e_ms == 0);
+    unlink(flagp);
+    restart_and_resume(&c, 0);
+    CHECK(e_cur[0] == 0);
+    /* no card within the wait: the resume waits (here it never comes) */
+    pb_close(); e_cur[0] = 0; pl_core_init(&c, cap_send, NULL, NULL); c.resume_mode = 1; pb_init(&c, dbp, sysp, quiet);
+    mounted_now = 0; pb_resume_begin(is_mounted, flagp);
+    double t = mono(); pb_tick(t); pb_tick(t + 2.0);
+    CHECK(e_cur[0] == 0);
+    mounted_now = 1; pb_tick(t + 2.5); pb_tick(t + 3.6);       /* the card comes: resumed a second later */
+    CHECK(!strcmp(e_cur, "/s/m2-96k.flac"));
+    unlink(flagp);
+    /* a song played before the card was there: no resume */
+    pb_close(); pl_core_init(&c, cap_send, NULL, NULL); c.resume_mode = 1; pb_init(&c, dbp, sysp, quiet);
+    mounted_now = 0; pb_resume_begin(is_mounted, flagp);
+    CHECK(pb_play_list(QD_ALBUM, 0, "Bravo") == 0 && !strcmp(e_cur, "/s/b2.flac"));   /* album order: disc 0 (unknown) last */
+    mounted_now = 1; t = mono(); pb_tick(t); pb_tick(t + 1.2);
+    CHECK(!strcmp(e_cur, "/s/b2.flac") && access(flagp, F_OK) != 0);
+    /* the last resume crashed (the flag is still there): skipped, the bookmark is cleared */
+    sql(d, "UPDATE MEMORY_PLAY SET MUSIC_ID=5, POSITION=1000;");
+    FILE *f = fopen(flagp, "w"); CHECK(f != NULL); if(f) fclose(f);
+    restart_and_resume(&c, 1);
+    CHECK(e_cur[0] == 0 && access(flagp, F_OK) != 0 && count(d, "SELECT MUSIC_ID FROM MEMORY_PLAY;") == 0);
+    /* a song that is not in the queue: no resume (the stock "get list song idx fail") */
+    sql(d, "UPDATE MEMORY_PLAY SET MUSIC_ID=5, POSITION=1000;");   /* c.flac; the queue is album Bravo */
+    restart_and_resume(&c, 1);
+    CHECK(e_cur[0] == 0 && access(flagp, F_OK) != 0);
+    sqlite3_close(d);
+    pb_close();
+    unlink(flagp);
+}
+
 int main(void){
     make_db();
     test_queue();
     test_queuedb();
     test_orders_in_step();
     test_playback();
+    test_resume();
     unlink(dbp); unlink(sysp);
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     printf("playback_test: all checks passed\n");

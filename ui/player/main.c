@@ -111,6 +111,8 @@ static int core_play(void *ctx, int type, int pos, const char *name){ (void)ctx;
  * previous). While a key is held the driver repeats the long-press code every 40 ms (value 2, after 250 ms; device
  * log 2026-11-15), so a long press that changes the volume steps on the repeats, at most one step per RAMP_STEP_S. ---- */
 enum { KA_CLICK = 0, KA_DOUBLE = 1, KA_LONG = 2 };
+/* there while a resumed song has not played 10 s yet (playback.h pb_resume_begin); NAND, so it survives a crash */
+#define RESUME_FLAG OPL_DIR "/resume-pending"
 static const char *const KEY_COL[3] = { "KEY_SINGLE_CLICK_SLE", "KEY_DOUBLE_CLICK_SLE", "KEY_LONG_PRESS_SLE" };
 #define RAMP_STEP_S 0.12           /* at most one volume step this often while held (the stock rate is not measured) */
 static double g_ramp_last;
@@ -192,10 +194,16 @@ int main(int argc, char **argv){
     }
     logmsg("keys: click %d, double click %d, long press %d (1 volume, else track)",
            core.key_action[0], core.key_action[1], core.key_action[2]);
+    /* resume mode (0684), kept in SYSCONFIG.MEMORY_PLAY: the UI sends it a moment after the start, the resume needs it
+     * before */
+    int rv = use_wd ? qd_sys_get(QD_SYSCONFIG_DB, "MEMORY_PLAY") : -1;
+    core.resume_mode = rv >= 0 && rv <= 2 ? rv : 0;
+    int resume_saved = core.resume_mode;
 
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
     if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
+    if(use_wd) pb_resume_begin(sd_is_mounted, RESUME_FLAG);    /* host runs (-n) have no library */
     int att_vol = -1, att_gain = -1, att_bal = -1;
 
     /* The keys. The stock player grabs them, so the UI never sees them (ui/main.c reads the Power level from the GPIO
@@ -316,6 +324,11 @@ int main(int argc, char **argv){
             if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, KEY_COL[i], core.key_action[i]) != 0)
                 logmsg("keys: can't store %s in %s", KEY_COL[i], QD_SYSCONFIG_DB);
         }
+        if(core.resume_mode != resume_saved){
+            resume_saved = core.resume_mode;
+            if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, "MEMORY_PLAY", core.resume_mode) != 0)
+                logmsg("resume: can't store MEMORY_PLAY in %s", QD_SYSCONFIG_DB);
+        }
         if(core.usb_seq != usb_seq){                     /* 0642: the UI's "USB storage" source */
             usb_seq = core.usb_seq;
             if(core.usb_gadget == 1) us_start(!use_wd, logmsg);
@@ -329,6 +342,7 @@ int main(int argc, char **argv){
         if(sleep_at > 0 && t >= sleep_at){
             sleep_at = 0;
             logmsg("power off (sleep timer or held Power key)%s", use_wd ? "" : " (dry run, -n)");
+            pb_shutdown();
             hw_power_off(wd, !use_wd, logmsg);
             if(use_wd) logmsg("power off did not happen");
         }
@@ -343,6 +357,7 @@ int main(int argc, char **argv){
      * player; the next player start feeds it. */
     logmsg("=== diskos-player stop: %u frames, %u malformed, %u unknown", core.frames, core.bad_frames,
            core.unknown_tags);
+    pb_shutdown();
     eng_stop();
     pb_close();
     dac_close();

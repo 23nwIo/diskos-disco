@@ -49,4 +49,15 @@ typedef struct {
 } qd_row_t;
 /* Row id of LIST_SONG_0. 1 found, 0 not there, -1 error. */
 int qd_row(sqlite3 *db, int id, qd_row_t *r);
+
+/* MEMORY_PLAY, the resume bookmark (one row, ID 1; the stock player's statements, `strings mq_player`):
+ * MUSIC_ID = SONG.ID, POSITION in ms. qd_memory_get: 1 and the values, 0 no row, -1 error (no table). */
+int qd_memory_get(sqlite3 *db, int *music_id, long *pos_ms, int *track);
+/* A new song: the whole row (IS_PLAYING 1 and IS_NAS 0 as the stock player writes them); the row is added when it is
+ * missing. qd_memory_pos: only POSITION. 0 or -1. */
+int qd_memory_set(sqlite3 *db, int music_id, long pos_ms, int is_cue, int is_iso, int track);
+int qd_memory_pos(sqlite3 *db, long pos_ms);
+/* The queue row (LIST_SONG_0.ID) holding SONG.ID music_id, the first if it is there more than once (the same join as
+ * qd_row). The ID, 0 not in the queue, -1 error. */
+int qd_list_row_of_song(sqlite3 *db, int music_id);
 #endif

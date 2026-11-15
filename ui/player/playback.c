@@ -11,7 +11,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <time.h>
+#include <unistd.h>
 
 static pl_core_t *C;
 static pb_log_fn L;
@@ -28,6 +30,21 @@ static int g_told = -1;            /* the state the UI was last told: ENG_PLAY o
  * Next, Previous), 2 a natural track change */
 static int g_announce;
 static double g_announce_t;
+
+/* The resume bookmark (MEMORY_PLAY): the song in it is the one playing (g_mem_ok), its POSITION written every
+ * PB_MEM_EVERY_S while playing, on pause and at power off. */
+#define PB_MEM_EVERY_S 30.0
+static int g_mem_ok;
+static double g_mem_t;
+/* Resume at start (pb_resume_begin): waiting for the card (g_rs 1), the card first seen mounted, the give-up time */
+#define PB_RESUME_WAIT_S   30.0
+#define PB_RESUME_STABLE_S 1.0
+#define PB_RESUME_OK_S     10.0
+static int g_rs;
+static double g_rs_until, g_rs_mounted, g_rs_check;
+static int (*g_rs_mounted_fn)(void);
+static char g_rs_flag[256];
+static double g_rs_flag_t;          /* the resumed song started (the flag goes once it has played PB_RESUME_OK_S), 0 none */
 
 static double now_s(void){
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
@@ -59,6 +76,7 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
     eng_set_prepare(prepare);
     pq_free(&Q);
+    g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
 }
 void pb_close(void){ pq_free(&Q); g_next = g_pending = -1; }
 
@@ -185,6 +203,31 @@ out:
     free(r); free(song); free(json); free(frame);
 }
 
+/* The song that starts goes into the resume bookmark, with where it starts. Songs outside the library (no SONG.ID)
+ * leave the bookmark as it is: MUSIC_ID has to name a SONG row (the UI reads it too, ui/musicdb.c mdb_current_play). */
+static void remember_song(sqlite3 *d, const eng_status_t *s){
+    qd_row_t *r = malloc(sizeof *r);
+    g_mem_ok = 0;
+    if(r && qd_row(d, pq_id(&Q, Q.cur), r) == 1){
+        if(r->song_id <= 0) L("resume: %s is not in the library, not remembered", r->path);
+        else if(qd_memory_set(d, r->song_id, s->elapsed_ms, r->is_cue, r->is_iso, r->track) != 0)
+            L("resume: MEMORY_PLAY: %s", sqlite3_errmsg(d));
+        else { g_mem_ok = 1; g_mem_t = now_s(); }
+    }
+    free(r);
+}
+static void remember_position(const char *why){
+    if(!g_mem_ok || !g_es_valid) return;
+    long ms = g_es.elapsed_ms;
+    if(g_es.state == ENG_PLAY) ms += (long)((now_s() - g_es_t) * 1000.0);
+    if(g_es.duration_ms > 0 && ms > g_es.duration_ms) ms = g_es.duration_ms;
+    sqlite3 *d = db();
+    if(!d) return;
+    if(qd_memory_pos(d, ms) != 0) L("resume: position not stored (%s): %s", why, sqlite3_errmsg(d));
+    sqlite3_close(d);
+    g_mem_t = now_s();
+}
+
 /* The stock sequence around a track start (protocol capture 2026-11-15). */
 static void announce(const eng_status_t *s){
     sqlite3 *d = db();
@@ -197,6 +240,7 @@ static void announce(const eng_status_t *s){
     send_lit("aa05000C0001");
     send_lit("aa1c000C0000");
     tell_state(s->state, 1);
+    remember_song(d, s);
     sqlite3_close(d);
     g_announce = 0;
 }
@@ -236,11 +280,19 @@ void pb_engine_event(void){
         if(g_es.state != ENG_PLAY || g_es.rate) announce(&g_es);
         return;
     }
+    if(was == ENG_PLAY && g_es.state != ENG_PLAY) remember_position("paused");
     tell_state(g_es.state, 0);
 }
 
+static void resume_tick(double t);
 void pb_tick(double t){
+    resume_tick(t);
     if(g_announce && t - g_announce_t >= 1.0){ update_status(); if(g_es_valid) announce(&g_es); }
+    if(g_es_valid && g_es.state == ENG_PLAY && g_mem_ok && t - g_mem_t >= PB_MEM_EVERY_S) remember_position("playing");
+    if(g_rs_flag_t > 0 && g_es_valid && g_es.state == ENG_PLAY && t - g_rs_flag_t >= PB_RESUME_OK_S){
+        if(unlink(g_rs_flag) != 0) L("resume: unlink %s: %s", g_rs_flag, strerror(errno));
+        g_rs_flag_t = 0;
+    }
     if(g_es_valid && g_es.state == ENG_PLAY && t - g_last_a1 >= 1.0){   /* a1 once a second while playing */
         g_last_a1 = t;
         long ms = g_es.elapsed_ms + (long)((t - g_es_t) * 1000.0);
@@ -255,10 +307,12 @@ const eng_status_t *pb_status(double *when){
     return &g_es;
 }
 
-/* Load the queue the tables hold (after a restart of this player): LIST_SONG_0, and LIST_SONG_3 in shuffle. */
-static int load_tables(sqlite3 *d, int pos){
+/* Load the queue the tables hold (after a restart of this player): LIST_SONG_0, and LIST_SONG_3 in shuffle. The current
+ * song is base position pos, or the row with LIST_SONG_0.ID row when row > 0. */
+static int load_tables(sqlite3 *d, int pos, int row){
     int *ids = NULL, n = qd_ids(d, &ids);
     if(n <= 0){ free(ids); L("queue: no queue in %s", g_song_db); return -1; }
+    for(int i = 0; row > 0 && i < n; i++) if(ids[i] == row){ pos = i; break; }
     if(pq_set(&Q, ids, n, pos) != 0) return -1;
     if(C->play_mode == PQ_SHUFFLE){
         int *o = NULL, m = qd_shuffle_read(d, &o);
@@ -277,7 +331,7 @@ int pb_play_list(int type, int pos, const char *name){
     if(!d) return -1;
     int rc = -1;
     if(type == QD_RESUME){
-        if(Q.n <= 0 && load_tables(d, pos) != 0) goto out;
+        if(Q.n <= 0 && load_tables(d, pos, 0) != 0) goto out;
         int idx = pq_from_base(&Q, pos);
         if(idx < 0){ L("play list: position %d outside the queue (%d songs)", pos, Q.n); goto out; }
         rc = start_at(d, idx, +1, 0, 0);
@@ -300,11 +354,70 @@ out:
     return rc;
 }
 
+/* Resume at start, like the stock player's play_memory thread (docs/MQ_PLAYER_REPLACEMENT.md, "Resume"). */
+void pb_resume_begin(int (*mounted)(void), const char *flag_path){
+    g_rs_mounted_fn = mounted;
+    snprintf(g_rs_flag, sizeof g_rs_flag, "%s", flag_path ? flag_path : "");
+    g_rs = 1; g_rs_until = now_s() + PB_RESUME_WAIT_S; g_rs_mounted = g_rs_check = 0;
+}
+
+static void resume_now(void){
+    sqlite3 *d = db();
+    if(!d) return;
+    int music_id = 0, track = 0; long pos = 0;
+    int x = qd_memory_get(d, &music_id, &pos, &track);
+    if(x < 0){ L("resume: MEMORY_PLAY: %s", sqlite3_errmsg(d)); goto out; }
+    if(x == 0 || music_id <= 0){ L("resume: nothing remembered"); goto out; }
+    L("resume: song %d at %ld ms (mode %d: %s)", music_id, pos, C->resume_mode, C->resume_mode == 1 ? "position" : "song");
+    /* the last resume crashed or hung the player before its song had played a few seconds: don't loop into it again;
+     * forget the bookmark as the stock player does (it drops MEMORY_PLAY) */
+    if(g_rs_flag[0] && access(g_rs_flag, F_OK) == 0){
+        L("resume: the last resume did not play %.0f s (%s is there) - skipped, bookmark cleared", PB_RESUME_OK_S, g_rs_flag);
+        if(unlink(g_rs_flag) != 0) L("resume: unlink %s: %s", g_rs_flag, strerror(errno));
+        if(qd_memory_set(d, 0, 0, 0, 0, 0) != 0) L("resume: MEMORY_PLAY: %s", sqlite3_errmsg(d));
+        goto out;
+    }
+    int row = qd_list_row_of_song(d, music_id);
+    if(row <= 0){ L("resume: song %d is not in the queue (LIST_SONG_0)%s", music_id, row < 0 ? sqlite3_errmsg(d) : ""); goto out; }
+    if(load_tables(d, 0, row) != 0) goto out;
+    int idx = pq_find(&Q, row);
+    if(idx < 0){ L("resume: queue row %d not found", row); goto out; }
+    if(g_rs_flag[0]){
+        FILE *f = fopen(g_rs_flag, "w");
+        if(!f) L("resume: create %s: %s", g_rs_flag, strerror(errno));
+        else fclose(f);
+    }
+    if(start_at(d, idx, +1, C->resume_mode == 1 ? pos : 0, 0) == 0) g_rs_flag_t = now_s();
+    else if(g_rs_flag[0]) unlink(g_rs_flag);
+out:
+    sqlite3_close(d);
+}
+
+static void resume_tick(double t){
+    if(g_rs != 1 || t < g_rs_check) return;
+    g_rs_check = t + 0.25;
+    if(C->resume_mode == 0){ L("resume: off"); g_rs = 0; return; }
+    if(Q.n > 0 || g_told >= 0){ L("resume: something plays already, no resume"); g_rs = 0; return; }
+    if(t > g_rs_until){ L("resume: no card mounted within %.0f s, no resume", PB_RESUME_WAIT_S); g_rs = 0; return; }
+    if(!eng_ready()) return;
+    if(g_rs_mounted_fn && !g_rs_mounted_fn()){ g_rs_mounted = 0; return; }
+    if(g_rs_mounted == 0){ g_rs_mounted = t; return; }
+    if(t - g_rs_mounted < PB_RESUME_STABLE_S) return;     /* the stock player waits for "mount stable" too */
+    g_rs = 0;
+    resume_now();
+}
+
+void pb_shutdown(void){
+    remember_position("power off");
+    if(g_rs_flag[0] && g_rs_flag_t > 0) unlink(g_rs_flag);   /* an orderly end is no crash (the stock player does the same) */
+    g_rs_flag_t = 0;
+}
+
 int pb_transport(int op, long arg){
     if(!eng_ready() && op != PL_T_MODE){ L("transport %d: no engine", op); return -1; }
     switch(op){
     case PL_T_TOGGLE:
-        if(Q.n <= 0){ L("play/pause: nothing loaded"); return -1; }   /* resume from MEMORY_PLAY comes later */
+        if(Q.n <= 0){ L("play/pause: nothing loaded"); return -1; }
         return eng_toggle();
     case PL_T_PAUSE: pb_pause(); return 0;
     case PL_T_MODE: pb_mode_changed(); return 0;

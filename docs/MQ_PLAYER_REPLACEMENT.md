@@ -228,9 +228,39 @@ pulled (kernel uevents for `mmcblk0`, ui/player/sdcard.c; a dead mount left from
 It reads the headphone jack as the stock player does (`/dev/gpio` `pb20`, polled every 330 ms) and pauses on unplug. No kernel event exists for it (device-checked 2026-11-15: no switch/extcon, event0 has keys only, and exporting GPIO 52 via sysfs gives EBUSY because a driver holds the pin).
 USB storage mode (`0642 1`/`0`) exports the card to a USB host with the stock player's configfs gadget (ui/player/usbstorage.c);
 the cold-boot mount stays the UI's. Playback goes through MPD ([MPD_CORE.md](MPD_CORE.md)): the DAC sequences, the
-queue tables for `0100`, the play modes and the track frames are in place (2026-11-15, host-tested, not yet on a
-Disc); resume, CUE/ISO tracks and the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off
-with the own player) come next.
+queue tables for `0100`, the play modes and the track frames are in place (2026-11-15, audible on a Disc after the
+mixer fix cfac7ae); resume is in place (host-tested, see below); CUE/ISO tracks and the boot-time Bluetooth bring-up
+(done by the stock player, so Bluetooth stays off with the own player) come next.
+
+### Resume (MEMORY_PLAY)
+
+What the stock player does (`mq_player` strings and disassembly, 2026-11-15; functions `comm_play_memory`,
+`play_memory_loop_thread`, `update_memory_song`, `update_memory_song_pos` in table_memory.c):
+- The bookmark is the single row `ID=1` of `MEMORY_PLAY` in song.db: `MUSIC_ID` (= `SONG.ID`), `IS_PLAYING` (always
+  written as 1), `POSITION` (ms), `IS_CUE`, `IS_ISO`, `TRACK`, `IS_NAS`. A track start writes the whole row; the
+  command `0816` (seconds) writes only `POSITION` (`POSITION = v * 1000`). The stock UI presumably sends `0816`;
+  diskOS's UI never does, so with the stock player and diskOS's UI the remembered position is not kept up to date.
+- At start, in local work mode and with resume mode (`0684`, SYSCONFIG `MEMORY_PLAY`) 1 or 2, a thread waits until a
+  card is mounted and stable ("timeout, no device mounted" otherwise), cancels if something already plays, looks the
+  song up in the existing queue `LIST_SONG_0` ("get list song idx fail!" when it is not there) and plays it (mode 1 at
+  the position, mode 2 from the start); with Bluetooth output it only loads it ("BTSRC output, skip auto play").
+- Crash guard: before the resumed song starts it creates `/usr/data/fiio/memory_playing_flag`; the power off routine
+  deletes it. If the flag is there at the next start, the resume is skipped and `MEMORY_PLAY` is dropped. The check is
+  behind a setting whose source was not found.
+
+The own player (ui/player/playback.c, 2026-11-15):
+- Writes the row at every track start (only for songs in the library: `MUSIC_ID` must name a `SONG` row, the UI reads
+  it too) and `POSITION` every 30 s while playing, on pause and at power off or an orderly stop. `0816` is not
+  needed, because the player knows the position itself.
+- Keeps resume mode `0684` in SYSCONFIG `MEMORY_PLAY` (read at start, because the UI sends `0684` only a moment
+  later).
+- At start: waits up to 30 s for a card mounted for at least 1 s, then plays the song like the stock player (mode 1 at
+  the position, mode 2 from the start) in the queue from `LIST_SONG_0` (and `LIST_SONG_3` in shuffle). No resume
+  when something was played first, or when the song is not in the queue.
+- Crash guard: its own flag `/usr/data/diskos-own/resume-pending`, so it never affects the stock player. The flag is
+  created before the resumed song starts and removed once the song has played 10 s or at power off. When it is
+  found at start, that resume is skipped and the bookmark cleared. Unlike the stock player, a plain reboot after a
+  good resume therefore does not lose the next resume.
 The stock power off also writes "rfkill 0" (`/sys/class/rfkill/rfkill0/state`); copied.
 Host tests: `make -C ui/tests player_test playback_test && ui/tests/player_test ui/tests/diskos-player-host && ui/tests/playback_test`.
 

@@ -174,12 +174,12 @@ Then play normally (`0100...`). Reverse (BT->local) = `ui_route_analog()`: `0666
 | 0700 | 0x4123b0 | close network card (network.c) | V |
 | 0808 | 0x4123d0 | playback/system getter | I |
 | 0813 | 0x4123f0 | playback/system getter | I |
-| 0816 | 0x412410 | playback/system getter | I |
+| 0816 | 0x412410 | set MEMORY_PLAY position: `POSITION = v * 1000` (seconds; handler 0x4f1668 -> update_memory_song_pos; dispatch table 0x8388d0, 2026-11-15) | V |
 | 0818 | 0x412430 | playback/system getter | I |
 | 0817 | 0x412450 | playback/system getter | I |
 | 0811 | 0x412470 | playback/system getter | I |
 | 0809 | 0x412490 | playback/system getter | I |
-| 0815 | 0x4124b0 | set MEMORY_PLAY position (UPDATE ... POSITION) | V |
+| 0815 | 0x4124b0 | not the MEMORY_PLAY position (that is 0816, checked 2026-11-15); handler 0x4f1730 answers a813 | I |
 | 0810 | 0x4124d0 | playback/system getter/setter | I |
 | 0812 | 0x4124f0 | playback/system getter/setter | I |
 | 0806 | 0x412510 | playback/system getter | I |
