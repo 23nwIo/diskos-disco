@@ -18,6 +18,7 @@
 #include "theme.h"
 #include "curvelist.h"
 #include "musicdb.h"
+#include "sdio.h"
 #include "ipc.h"
 #include "config.h"
 #include "theme_kit.h"
@@ -33,6 +34,7 @@ LV_FONT_DECLARE(font_zune_regular_16)
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <sys/stat.h>
 
 #define QMAX 400
 #define RMAX 4000
@@ -161,6 +163,39 @@ static void changed(void){                         /* the queue's content change
     ui_queue_changed();                            /* the Now Playing badge */
     /* nothing else: the song that's playing is left alone; the queue is applied when it ends */
     if(screen_current() == SCR_QUEUE) view_reload();
+}
+/* Drop queued songs whose file is gone from the card (a swapped card, files deleted on a computer), so they can never
+ * block Next: the queue lives in /usr/data and outlives the card it was made for. Only a definite answer counts: the
+ * card has to be mounted (its own file system, not the bare /tmp mount point) and the file must be missing (ENOENT).
+ * Anything else - card away, a read error - leaves the queue as it is. *index (may be NULL) is a position in the queue
+ * that follows the removal; it becomes -1 when that song itself was dropped. Returns the number dropped. */
+static const char *g_card = "/tmp/sdcard", *g_card_parent = "/tmp";   /* variables so the host test can point them */
+static int prune_missing(int *index){
+    struct stat card, parent;
+    if(stat(g_card, &card) != 0 || stat(g_card_parent, &parent) != 0 || card.st_dev == parent.st_dev) return 0;
+    if(!sd_io_begin()) return 0;
+    int k = 0, dropped = 0;
+    for(int i = 0; i < g_qn; i++){
+        struct stat st;
+        if(stat(g_q[i].path, &st) != 0 && errno == ENOENT){
+            fprintf(stderr, "queue: dropped a queued song that is not on the card: %s\n", g_q[i].path);
+            if(index && *index == i) *index = -1;
+            else if(index && *index > i) (*index)--;
+            dropped++;
+            continue;
+        }
+        g_q[k++] = g_q[i];
+    }
+    sd_io_end();
+    if(dropped){
+        g_qn = k;
+        char m[80];
+        snprintf(m, sizeof m, dropped == 1 ? "Skipped a queued song that's not on the card"
+                                            : "Skipped %d queued songs that aren't on the card", dropped);
+        ui_toast(m);
+        changed();
+    }
+    return dropped;
 }
 int queue_count(void){ load(); return g_qn; }
 /* MPD server (mpd.c): read one queued song. 1 = filled. */
@@ -300,10 +335,13 @@ static int play_copy(int first){
     if(!g_copy) return 0;
     int candidate[QMAX+RMAX],n=0;
     for(int i=first;i<g_qn;i++){
-        mdb_song_t song; char path[256];
+        mdb_song_t song; char path[256]; path[0]=0;
         if(g_q[i].have_key) g_q[i].id=mdb_queue_resolve(g_q[i].path,g_q[i].track,g_q[i].cue,g_q[i].iso);
         else g_q[i].id=mdb_queue_current_id(g_q[i].path,0,"");
         if(!g_q[i].id || !mdb_queue_song(g_q[i].id,path,sizeof path,&song) || strcmp(path,g_q[i].path)){
+            fprintf(stderr, "queue: queued song %d not found in the library (id %d, key %d, track %d, cue %d, iso %d, "
+                    "library path %s): %s\n", i, g_q[i].id, g_q[i].have_key, g_q[i].track, g_q[i].cue, g_q[i].iso,
+                    g_q[i].id ? path : "-", g_q[i].path);
             ui_toast("Queue song unavailable - choose it again"); return 0;
         }
         if(!g_q[i].have_key){ g_q[i].track=song.track; g_q[i].cue=song.is_cue; g_q[i].iso=song.is_iso; g_q[i].have_key=1; }
@@ -357,7 +395,8 @@ static int start_fresh(int first){
 /* the Next button with songs queued: straight to the first one (the player never picks its own next) */
 int queue_next(void){
     load();
-    if(g_qn == 0) return 0;
+    if(g_qn > 0) prune_missing(NULL);
+    if(g_qn == 0) return 0;                                       /* nothing (left) queued: the player's own Next */
     if(!ui_local_playback_allowed() || modes_output_busy()) return -1;
     track_state_t st; ipc_get_state(&st);
     if(!g_active) g_resume_type = -1;                            /* a running queue keeps its way back */
@@ -374,6 +413,7 @@ int queue_next(void){
 void queue_jump(int i){                                       /* play queued song i now (the ones before it are skipped) */
     if(!ui_local_playback_allowed() || modes_output_busy()) return;
     load(); if(i < 0 || i >= g_qn) return;
+    prune_missing(&i); if(i < 0 || i >= g_qn) return;           /* the tapped song itself is not on the card */
     track_state_t st; ipc_get_state(&st);
     int current = st.have_track ? mdb_queue_current_id(st.path,st.pos_id,st.title) : 0;
     /* The queued song always starts. If the playing song can't be found in the library, or the list it plays from
@@ -423,6 +463,7 @@ void queue_tick(const track_state_t *st, int playing){
         if(!prev) return;                                  /* the first song we see: nothing to do */
         if(g_skip_change){ g_skip_change = 0; return; }       /* the user just started this one: the queue waits for it to end */
         if(mdb_is_book_path(st->path)) return;                /* a book plays alone */
+        if(g_qn > 0) prune_missing(NULL);                     /* songs no longer on the card never start */
         if(!g_active && g_qn == 0){ g_back_at = 0; return; }   /* no queue at all: no need to work out the direction */
         int natural = prev_dur > 0 && prev_pos >= prev_dur - 4000;
         /* forward or back? Works in any play mode (list order means nothing in Shuffle): going back = returning

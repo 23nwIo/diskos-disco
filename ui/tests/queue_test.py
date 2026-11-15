@@ -126,6 +126,20 @@ int main(int argc,char **argv){
      real_ticks=0;sql(player,"COMMIT;");sqlite3_close(player);
      assert(r==-2 && queue_count()==before && sec<2.5);
      printf("PASS a locked database stops a bulk add after one wait (%.1f s), adding nothing\n",sec);}
+    /* Jo 2026-11-15: songs queued from another card blocked Next ("Queue song unavailable") after a card swap.
+     * A queued song whose file is gone from a mounted card is dropped; Next then goes on normally. */
+    queue_clear();g_active=0;g_last_id=0;g_prev2=0;memset(&state,0,sizeof state);
+    {char q[600];snprintf(q,sizeof q,"INSERT INTO SONG(ID,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION) VALUES(30,'%s','db','OnCard','Album','Artist','',1,1,0,0,0,0,1000);",argv[1]);sql(db,q);}
+    assert(queue_add_path("/next.flac")==1 && queue_add_path(argv[1])==1 && queue_count()==2);
+    g_card="/";g_card_parent="/proc";                         /* "mounted": / and /proc are different file systems */
+    old=sends;queue_jump(1);
+    assert(sends==old+1 && queue_count()==0 && g_active && g_last_id==30);   /* index followed the removal */
+    queue_clear();g_active=0;assert(queue_add_path("/next.flac")==1);
+    old=sends;assert(queue_next()==0 && sends==old && queue_count()==0);     /* nothing left: the player's own Next */
+    g_card="/proc";g_card_parent="/proc";                     /* card not mounted: nothing is dropped */
+    assert(queue_add_path("/next.flac")==1);assert(prune_missing(NULL)==0 && queue_count()==1);
+    g_card="/tmp/sdcard";g_card_parent="/tmp";queue_clear();
+    puts("PASS queued songs that are not on the mounted card are dropped and never block Next");
     assert(!leases);sqlite3_close(db);
     puts("HARNESS COMPLETE");
 }
