@@ -23,6 +23,19 @@ int hw_screen_toggle(int dry_run, hw_log_fn log);
 int hw_jack_open(void);
 int hw_jack_read(int fd);
 
+/* The 4.4 mm balanced plug, as the stock player detects it (mq_player adc_bal_det_handler, read from the binary
+ * 2026-11-15, not device-checked): an ADC, /dev/jz_adc_aux_2, enabled once with _IO('A',11) and read as one 32-bit
+ * value every 330 ms (its log calls it a voltage). hw_bal_open: the descriptor or -1 (errno set); hw_bal_read: the
+ * value or -1 (errno set). hw_bal_level (pure): 1 plugged (>= 1501, or 801..949), 0 not (1151..1349), -1 for any
+ * other value, which leaves the state as it is. hw_debounce: the stock player takes a new level only after 4 reads in
+ * a row that differ from the current one; *state starts at -1 (unknown, the first known level is taken at once).
+ * Returns 1 when *state changed. */
+#define BAL_DEV  "/dev/jz_adc_aux_2"
+int hw_bal_open(void);
+int hw_bal_read(int fd);
+int hw_bal_level(int value);
+int hw_debounce(int *state, int *count, int level);
+
 /* Keys of /dev/input/event0 ("x2000_key", device-checked 2026-11-15). The driver reports clicks: press and release
  * arrive together, and a held Power key comes as its own code. */
 #define KEY_DEV        "/dev/input/event0"

@@ -88,6 +88,12 @@ unusually serious analog design for the form factor. *(Whether the physical jack
 balanced (4.4 mm) or sums to single-ended (3.5 mm) is a board question - confirm against
 the unit's connectors.)*
 
+The Disc has both a 3.5 mm and a 4.4 mm balanced jack. Per the stock mq_player binary (read 2026-11-15, not checked on
+a device) they share one audio path: the player only opens `/dev/cs43131` and `/dev/cs43131c` (its init functions for
+`b` and `d` have no caller), plays on `pcmC0D3p` either way and routes nothing differently. It detects the 3.5 mm plug
+on GPIO `pb20` and the 4.4 mm plug on the ADC `/dev/jz_adc_aux_2`, and with the 4.4 mm plug only picks a slightly
+quieter volume curve (docs/MPD_CORE.md, "4.4 mm balanced plug" and "Volume curve").
+
 Each CS43131 is a stereo DAC + integrated headphone amp; the family supports PCM to
 384 kHz and **DSD64/128/256**. Control is via a **custom FiiO `cs43131` kernel driver**
 exposing the four char devices above; stock `mq_player` drives them with **ioctl** (not

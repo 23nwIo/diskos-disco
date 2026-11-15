@@ -27,13 +27,28 @@ int dac_rate_code(unsigned r){
 
 static unsigned char clamp_byte(int v){ return (unsigned char)(v < 0 ? 0 : v > 0xff ? 0xff : v); }
 
-void dac_attenuation(int volume, int gain, int balance, unsigned char *a, unsigned char *c){
+/* The stock player's volume curve (mq_player 0x4e7980, read from the binary 2026-11-15; it matches the trace's data
+ * points): the CS43131 volume byte, 0.5 dB steps down from 0 dB, for volume 1..120 at high gain with the 3.5 mm
+ * plug in. Steps of 8 from volume 1 (218), then 6 from 4, 4 from 11, 2 from 23 and 1 from 37, down to 0 at 120. */
+int dac_curve(int v){
+    if(v <= 0) return 0xff;
+    if(v > 120) v = 120;
+    if(v < 4)  return 218 - 8 * (v - 1);
+    if(v < 11) return 196 - 6 * (v - 4);
+    if(v < 23) return 156 - 4 * (v - 11);
+    if(v < 37) return 110 - 2 * (v - 23);
+    return 83 - (v - 37);
+}
+
+void dac_attenuation(int volume, int gain, int balanced, int balance, unsigned char *a, unsigned char *c){
     if(volume <= 0){ *a = *c = 0xff; return; }
     if(volume > 120) volume = 120;
-    /* CS43131 volume byte: 0.5 dB steps down from 0 dB. One data point from trace 2026-11-15 02:41 (aa24 settings:
-     * volume 27, gain 1, balance 0x0102): C 0x66, A 0x68; run 3: 2 units per volume step, gain low 12 units more. That
-     * gives 156 - 2 x volume (0 dB at volume 78; louder levels clamp to 0 until more points are measured). */
-    int base = 156 - 2 * volume + (gain ? 0 : 12);
+    /* The stock player's four curves (0x4e7800 balanced/high, 0x4e78c0 balanced/low, 0x4e7980 3.5 mm/high,
+     * 0x4e7a40 3.5 mm/low): low gain is 12 units (6 dB) more everywhere; the 4.4 mm balanced output 4 units (2 dB)
+     * more up to volume 36, then 3, 2, 1 and none from 40. The stock player uses the low curve whenever no plug is
+     * seen; the caller passes gain 0 then. */
+    int base = dac_curve(volume) + (gain ? 0 : 12);
+    if(balanced){ int d = 40 - volume; base += d > 4 ? 4 : d > 0 ? d : 0; }
     int steps = balance & 0xff, side = (balance >> 8) & 1;
     /* 0713 0x01NN turned A (right) down by NN in that trace; 0x00NN is taken as the other side (C, left). */
     *a = clamp_byte(base + (side == 1 ? steps : 0));

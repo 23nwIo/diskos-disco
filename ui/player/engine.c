@@ -18,7 +18,7 @@
 #define ENG_TIMEOUT_MS   3000
 
 static pid_t g_pid = -1;
-static int g_out_bt;                       /* the output in use: 0 the DAC, 1 Bluetooth at g_out_rate */
+static int g_out_aux = 1, g_out_bt;        /* the outputs in use: the DAC, Bluetooth at g_out_rate */
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
 static eng_log_fn g_log;
@@ -120,7 +120,7 @@ static int spawn(void){
     char r[256];
     xcmd("consume 0", r, sizeof r);
     xcmd("single 0", r, sizeof r);
-    eng_output(g_out_bt, g_out_rate);           /* the DAC, or the Bluetooth output after a restart of MPD */
+    eng_output(g_out_aux, g_out_bt, g_out_rate);   /* the outputs in use, also after a restart of MPD */
     g_log("engine: connected");
     return 0;
 }
@@ -174,21 +174,27 @@ static int cmd(const char *c){
     return x == 0 ? 0 : -1;
 }
 
-int eng_output(int bt, unsigned rate){
-    g_out_bt = bt; g_out_rate = rate;
+int eng_output(int aux, int bt, unsigned rate){
+    g_out_aux = aux; g_out_bt = bt; g_out_rate = rate;
     if(!eng_ready()) return -1;
-    int want = !bt ? OUT_DAC : rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
+    int bt_out = rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
     char line[32], r[256];
-    snprintf(line, sizeof line, "enableoutput %d", want);
-    int x = xcmd(line, r, sizeof r);
-    if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); return -1; }
+    int fail = 0;
+    /* off first, so a Bluetooth output that is switched (another rate) or reopened (a new codec) is closed before */
     for(int i = 0; i < OUT_N; i++){
-        if(i == want) continue;
+        if((i == OUT_DAC && aux) || (i == bt_out && bt)) continue;
         snprintf(line, sizeof line, "disableoutput %d", i);
         xcmd(line, r, sizeof r);
     }
-    g_log("engine: output %s", !bt ? "dac" : want == OUT_BT48 ? "bt48" : want == OUT_BT96 ? "bt96" : "bt44");
-    return 0;
+    for(int i = 0; i < OUT_N; i++){
+        if(!((i == OUT_DAC && aux) || (i == bt_out && bt))) continue;
+        snprintf(line, sizeof line, "enableoutput %d", i);
+        int x = xcmd(line, r, sizeof r);
+        if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); fail = 1; }
+    }
+    g_log("engine: outputs%s%s%s", aux ? " dac" : "", bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
+          aux || bt ? "" : " none");
+    return fail ? -1 : 0;
 }
 
 int eng_cmd(const char *c, char *out, unsigned cap){

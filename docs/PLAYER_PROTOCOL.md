@@ -49,6 +49,10 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0687 | `0687000C000v` | Play through folders on/off | main.c | keep |
 | 0689 | `0689000C<p 4h>` | EQ preset 0..10, custom PEQ slots 11..20 | main.c `ui_apply_eq` | do |
 | 06b3 | `06b3001D<codec 4h><MAC>` | Bluetooth codec (0 SBC, 1 AAC, 2..4 LDAC) for the headphones `<MAC>` (17 chars) | bt.c, main.c | do (own player: MAC for the Bluetooth output, codec via bluealsa-cli) |
+| 0d01 | `0d01000C000v` | diskOS, own player only: outputs on, bit 0 AUX, bit 1 Bluetooth (0 refused; Bluetooth only with headphones routed) | settings.c (Outputs) | do |
+| 0d02 | `0d02000C<vol 4h>` | diskOS, own player only: AUX volume 0..120 | settings.c (Outputs) | do |
+| 0d03 | `0d03000C<vol 4h>` | diskOS, own player only: Bluetooth volume 0..120 | settings.c (Outputs) | do |
+| 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
 | 0713 | `0713000C<v 4h>` | Balance: 0 centre, `00NN` one side, `01NN` the other, N 1..10 | main.c `ui_set_balance` | do |
@@ -127,5 +131,5 @@ The UI decides "playing" from the `a1` position advancing (ui/playstate.c, 1.6 s
 ## Hardware side
 
 The DAC, ALSA, screen, power key and power off sequences the player performs are in
-[MQ_PLAYER_TRACE.md](MQ_PLAYER_TRACE.md) (third run). Volume `0715` 0..120 still has to be mapped to the DAC
-attenuation byte (the trace shows the byte, not the UI level at that moment).
+[MQ_PLAYER_TRACE.md](MQ_PLAYER_TRACE.md) (third run). Volume `0715` 0..120 maps to the DAC attenuation byte by the
+stock player's own curves (read from its binary; docs/MPD_CORE.md "Volume curve").

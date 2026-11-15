@@ -48,9 +48,11 @@ int eng_ready(void);
  *           queued only when its sample rate is that one. 0 queued, 1 not queued (another rate), -1 not added.
  * eng_advanced: after an event, 1 when MPD has moved on to that next song (it is now the current one; the caller then
  *           sets a new next), else 0. */
-/* The output MPD plays to: the DAC (bt 0), or the Bluetooth headphones whose MAC is in ENG_BT_DEV through the pipe
- * output for that stream rate (44100, 48000 or 96000; anything else uses 44100). Kept over a restart of MPD. 0 or -1. */
-int eng_output(int bt, unsigned rate);
+/* The outputs MPD plays to, any or both: the DAC (aux), the Bluetooth headphones whose MAC is in ENG_BT_DEV through
+ * the pipe output for the link's rate (44100, 48000 or 96000; anything else uses 44100). Outputs that are off are
+ * closed first, so calling it again with bt on reopens nothing that stays, but a Bluetooth output that was off is
+ * opened anew. Kept over a restart of MPD. 0 or -1. */
+int eng_output(int aux, int bt, unsigned rate);
 int eng_load(const char *path, long off_ms, long len_ms, long start_ms, int paused);
 int eng_set_next(const char *path, long off_ms, long len_ms, unsigned must_rate);
 /* Called with the stream's sample rate right before MPD starts a song (opens the PCM): the player starts the DAC. */

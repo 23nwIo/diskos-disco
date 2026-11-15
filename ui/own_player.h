@@ -40,6 +40,10 @@
 #define OPL_MAX_STARTS 3
 #define OPL_MAX_UNSTABLE 2
 #define OPL_STABLE_S 60     /* the player removes OPL_UNSTABLE after running this long */
+/* Outputs (Settings > Audio > Outputs): the own player writes their state here whenever it changes, one "key=value"
+ * per line (aux, bt, vol_aux, vol_bt, bt_ready, jack, bal, codec, codecs, switching); the UI reads it. tmpfs. */
+#define OPL_OUTPUTS "/tmp/diskos-player-outputs"
+#define OPL_VOLUMES OPL_DIR "/volumes"          /* the two output volumes, kept by the player: "vol_aux=N\nvol_bt=N" */
 
 enum { OPL_OFF = 0, OPL_ON, OPL_NO_BINARY, OPL_GAVE_UP };
 
@@ -119,5 +123,53 @@ static inline int opl_running(void){
     }
     closedir(d);
     return own;
+}
+/* The outputs state the own player writes to OPL_OUTPUTS (player/main.c write_outputs). opl_outputs_parse: 0, or -1
+ * when the text has no aux= / bt= lines; opl_outputs_read: the same from the file (-1 also when it can't be read). */
+typedef struct {
+    int aux, bt;                   /* 1 = playing to it */
+    int vol_aux, vol_bt;           /* 0..120 */
+    int bt_ready;                  /* headphones connected and routed */
+    int jack, bal;                 /* 3.5 mm / 4.4 mm plug: 1 in, 0 out, -1 unknown */
+    int switching;                 /* a codec switch is running */
+    char codec[16];                /* the link's codec, upper case ("LDAC"), "" when not on Bluetooth */
+    char codecs[64];               /* the codecs the headphones offer ("SBC AAC LDAC") */
+} opl_outputs_t;
+static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
+    memset(o, 0, sizeof *o);
+    o->jack = o->bal = -1;
+    int seen = 0;
+    for(const char *l = t; l && *l; ){
+        const char *e = strchr(l, '\n');
+        size_t n = e ? (size_t)(e - l) : strlen(l);
+        char line[96];
+        if(n >= sizeof line) n = sizeof line - 1;
+        memcpy(line, l, n); line[n] = 0;
+        char *v = strchr(line, '=');
+        if(v){
+            *v++ = 0;
+            if(!strcmp(line, "aux")){ o->aux = atoi(v); seen |= 1; }
+            else if(!strcmp(line, "bt")){ o->bt = atoi(v); seen |= 2; }
+            else if(!strcmp(line, "vol_aux")) o->vol_aux = atoi(v);
+            else if(!strcmp(line, "vol_bt")) o->vol_bt = atoi(v);
+            else if(!strcmp(line, "bt_ready")) o->bt_ready = atoi(v);
+            else if(!strcmp(line, "jack")) o->jack = atoi(v);
+            else if(!strcmp(line, "bal")) o->bal = atoi(v);
+            else if(!strcmp(line, "switching")) o->switching = atoi(v);
+            else if(!strcmp(line, "codec")) snprintf(o->codec, sizeof o->codec, "%s", v);
+            else if(!strcmp(line, "codecs")) snprintf(o->codecs, sizeof o->codecs, "%s", v);
+        }
+        l = e ? e + 1 : NULL;
+    }
+    return seen == 3 ? 0 : -1;
+}
+static inline int opl_outputs_read(opl_outputs_t *o){
+    char b[1024];
+    int fd = open(OPL_OUTPUTS, O_RDONLY | O_CLOEXEC);
+    if(fd < 0){ memset(o, 0, sizeof *o); return -1; }
+    ssize_t n = read(fd, b, sizeof b - 1);
+    close(fd);
+    b[n > 0 ? n : 0] = 0;
+    return opl_outputs_parse(b, o);
 }
 #endif

@@ -15,6 +15,8 @@
 #include <errno.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 static pl_core_t *C;
 static pb_log_fn L;
@@ -24,9 +26,17 @@ static int g_next = -1;            /* order index queued in MPD as the next song
 static int g_pending = -1;         /* order index to start when the current song ends (another sample rate: the DAC
                                     * needs its start sequence, so no gapless change), -1 none */
 static eng_status_t g_es;
-static int g_bt;                   /* playing to Bluetooth (pb_route): the DAC and its mixer route are left alone */
+static int g_bt;                   /* playing to Bluetooth (pb_route) */
+static int g_aux = 1;              /* playing to the DAC (pb_route); off: the DAC and its mixer route are left alone */
 static int g_bt_codec = -1;        /* the last codec asked of BlueALSA for g_bt_mac */
 static char g_bt_mac[18];
+static unsigned g_bt_rate;         /* the link's rate, as last read */
+static char g_bt_sel[16], g_bt_avail[64];   /* the link's codec and the codecs the headphones offer, as last read */
+/* a codec switch by hand (pb_codec): bluealsa-cli's pid, when it started, whether the music was playing */
+static int g_cs_pid = -1, g_cs_play;
+static double g_cs_t;
+#define PB_CODEC_WAIT_S 10.0
+static void codec_tick(double t);
 static double g_es_t, g_last_a1;
 static int g_es_valid;
 static int g_told = -1;            /* the state the UI was last told: ENG_PLAY or ENG_PAUSE, -1 nothing yet */
@@ -54,6 +64,10 @@ static double now_s(void){
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
 }
+void pb_attenuation(unsigned char *a, unsigned char *l){
+    /* the stock player: the high gain curve only with a plug in, the balanced curve with the 4.4 mm plug */
+    dac_attenuation(C->vol_aux, C->gain && pl_core_plugged(C), C->bal == 1, C->balance, a, l);
+}
 static void send_(const char *f, int n){ if(C && C->send && n > 0) C->send(C->ctx, f, n); }
 static void send_lit(const char *f){ send_(f, (int)strlen(f)); }
 static void tell_state(int state, int force){
@@ -66,10 +80,10 @@ static void tell_state(int state, int force){
 }
 /* before MPD opens the PCM: the DAC start sequence for this rate (eng_set_prepare) */
 static void prepare(unsigned rate){
-    if(g_bt) return;
+    if(!g_aux) return;
     mix_route_dac(L);                        /* DMA3 -> DAC; without it hw_params fails (mixer.h) */
     if(rate == dac_current_rate()) return;
-    unsigned char a, l; dac_attenuation(C->volume, C->gain, C->balance, &a, &l);
+    unsigned char a, l; pb_attenuation(&a, &l);
     dac_start(rate, a, l, L);
 }
 static unsigned rnd(unsigned k){ return k ? (unsigned)(random() % k) : 0; }
@@ -81,7 +95,7 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
     eng_set_prepare(prepare);
     pq_free(&Q);
-    g_bt = 0; g_bt_codec = -1; g_bt_mac[0] = 0;
+    g_bt = 0; g_aux = 1; g_bt_codec = -1; g_bt_mac[0] = 0; g_bt_rate = 0; g_bt_sel[0] = g_bt_avail[0] = 0; g_cs_pid = -1;
     g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
 }
 void pb_close(void){ pq_free(&Q); g_next = g_pending = -1; }
@@ -256,8 +270,8 @@ static void announce(const eng_status_t *s){
 static void update_status(void){
     eng_status_t s;
     if(eng_status(&s) != 0) return;
-    if(!g_bt && s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
-        unsigned char a, l; dac_attenuation(C->volume, C->gain, C->balance, &a, &l);
+    if(g_aux && s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
+        unsigned char a, l; pb_attenuation(&a, &l);
         dac_start(s.rate, a, l, L);
     }
     int was = g_es_valid ? g_es.state : ENG_STOP;
@@ -295,6 +309,7 @@ void pb_engine_event(void){
 static void resume_tick(double t);
 void pb_tick(double t){
     resume_tick(t);
+    codec_tick(t);
     if(g_announce && t - g_announce_t >= 1.0){ update_status(); if(g_es_valid) announce(&g_es); }
     if(g_es_valid && g_es.state == ENG_PLAY && g_mem_ok && t - g_mem_t >= PB_MEM_EVERY_S) remember_position("playing");
     if(g_rs_flag_t > 0 && g_es_valid && g_es.state == ENG_PLAY && t - g_rs_flag_t >= PB_RESUME_OK_S){
@@ -363,31 +378,76 @@ out:
 }
 
 /* The output route changed (0666, 06b3; ui/main.c ui_route_bt / ui_route_analog). */
-void pb_route(void){
-    if(C->route != PL_ROUTE_BT){
-        if(!g_bt) return;
-        g_bt = 0; g_bt_codec = -1;
-        L("route: DAC");
-        eng_output(0, 0);
-        return;
-    }
-    if(!C->bt_mac[0]){ L("route: Bluetooth, waiting for the headphones' address (06b3)"); return; }
-    int new_dev = !g_bt || strcmp(g_bt_mac, C->bt_mac);
-    if(new_dev){
-        FILE *f = fopen(ENG_BT_DEV, "we");
-        if(!f || fprintf(f, "%s\n", C->bt_mac) < 0){ L("route: write %s: %s", ENG_BT_DEV, strerror(errno)); if(f) fclose(f); return; }
-        fclose(f);
-        snprintf(g_bt_mac, sizeof g_bt_mac, "%s", C->bt_mac);
-        g_bt_codec = -1;
-    }
-    if(C->bt_codec > 0 && C->bt_codec != g_bt_codec) bto_codec(g_bt_mac, C->bt_codec, L);
-    g_bt_codec = C->bt_codec;
-    unsigned rate = bto_rate(g_bt_mac, L);
-    L("route: Bluetooth %s, link at %u Hz", g_bt_mac, rate);
-    g_bt = 1;
-    eng_output(1, rate);
-    bto_volume(g_bt_mac, C->volume, PL_VOL_MAX, L);
+static void bt_read(void){
+    if(bto_info(g_bt_mac, &g_bt_rate, g_bt_sel, sizeof g_bt_sel, g_bt_avail, sizeof g_bt_avail, L) != 0) g_bt_rate = 0;
 }
+
+void pb_route(void){
+    int bt = C->out_bt && C->route == PL_ROUTE_BT && C->bt_mac[0];
+    int aux = C->out_aux || !bt;                        /* one output always plays */
+    if(C->out_bt && !bt) L("route: Bluetooth, waiting for the headphones (0666 2 and 06b3)");
+    if(bt && (!g_bt || strcmp(g_bt_mac, C->bt_mac))){
+        FILE *f = fopen(ENG_BT_DEV, "we");
+        if(!f || fprintf(f, "%s\n", C->bt_mac) < 0){
+            L("route: write %s: %s", ENG_BT_DEV, strerror(errno));
+            if(f) fclose(f);
+            bt = 0; aux = 1;
+        } else {
+            fclose(f);
+            snprintf(g_bt_mac, sizeof g_bt_mac, "%s", C->bt_mac);
+            g_bt_codec = -1;
+        }
+    }
+    if(bt){
+        if(C->bt_codec > 0 && C->bt_codec != g_bt_codec) bto_codec(g_bt_mac, C->bt_codec, L);   /* 06b3 at the route */
+        g_bt_codec = C->bt_codec;
+        bt_read();
+    }
+    if(aux && !g_aux && g_es_valid && g_es.state != ENG_STOP && g_es.rate){
+        g_aux = 1;                                      /* the DAC joins a running stream: its start sequence first */
+        prepare(g_es.rate);
+    }
+    g_aux = aux; g_bt = bt;
+    L("route: %s%s%s, link at %u Hz", aux ? "DAC" : "", aux && bt ? " + " : "", bt ? g_bt_mac : "", bt ? g_bt_rate : 0);
+    if(g_cs_pid < 0) eng_output(aux, bt, g_bt_rate);    /* during a codec switch pb_tick sets the outputs once it is done */
+    if(bt) bto_volume(g_bt_mac, C->vol_bt, PL_VOL_MAX, L);
+}
+
+void pb_codec(int value){
+    if(!g_bt){ L("codec: Bluetooth is not playing"); return; }
+    if(g_cs_pid >= 0){ L("codec: a switch is still running, %s not asked", bto_codec_name(value)); return; }
+    char want[16]; snprintf(want, sizeof want, "%s", bto_codec_name(value));
+    for(char *p = want; *p; p++) if(*p >= 'a' && *p <= 'z') *p = (char)(*p - 32);
+    if(!strcmp(want, g_bt_sel)){ L("codec: already %s", g_bt_sel); return; }
+    /* the switch renegotiates the link: pause, close the Bluetooth output, switch, reopen at the new rate, play */
+    g_cs_play = g_es_valid && g_es.state == ENG_PLAY;
+    if(g_cs_play) eng_pause(1);
+    eng_output(g_aux, 0, 0);
+    g_cs_pid = bto_codec_start(g_bt_mac, value, L);
+    g_cs_t = now_s();
+    if(g_cs_pid < 0){ eng_output(g_aux, 1, g_bt_rate); if(g_cs_play) eng_pause(0); }
+}
+
+static void codec_tick(double t){
+    if(g_cs_pid < 0) return;
+    int st = 0;
+    pid_t r = waitpid((pid_t)g_cs_pid, &st, WNOHANG);
+    if(r == 0 && t - g_cs_t < PB_CODEC_WAIT_S) return;
+    if(r == 0){ L("codec: bluealsa-cli still running after %.0f s, going on", PB_CODEC_WAIT_S); kill((pid_t)g_cs_pid, SIGKILL); waitpid((pid_t)g_cs_pid, &st, 0); }
+    else L("codec: bluealsa-cli done (%d)", r > 0 && WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+    g_cs_pid = -1;
+    if(!g_bt){ eng_output(g_aux, 0, 0); return; }       /* Bluetooth went off meanwhile (pb_route left the outputs) */
+    bt_read();
+    L("codec: now %s, link at %u Hz", g_bt_sel[0] ? g_bt_sel : "?", g_bt_rate);
+    eng_output(g_aux, 1, g_bt_rate);
+    bto_volume(g_bt_mac, C->vol_bt, PL_VOL_MAX, L);
+    if(g_cs_play) eng_pause(0);
+}
+
+int pb_switching(void){ return g_cs_pid >= 0; }
+int pb_aux(void){ return g_aux; }
+const char *pb_bt_codec(void){ return g_bt ? g_bt_sel : ""; }
+const char *pb_bt_codecs(void){ return g_bt ? g_bt_avail : ""; }
 int pb_bluetooth(void){ return g_bt; }
 const char *pb_bt_mac(void){ return g_bt_mac; }
 

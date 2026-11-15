@@ -13,10 +13,12 @@ typedef void (*dac_log_fn)(const char *fmt, ...);
  * 3 = 88.2 and 5 = 176.4 follow the pattern (unverified). 0 for a rate the DAC does not take. */
 int dac_rate_code(unsigned rate_hz);
 
-/* The attenuation bytes for A (right) and C (left). volume 0..120 (UI scale), gain 0 low / 1 high, balance as 0713
- * sends it (0 centre, 0x00NN / 0x01NN = NN steps towards one side). See dac.c for the data points; the curve above
- * volume 78 is not measured yet. 0xff = muted. */
-void dac_attenuation(int volume, int gain, int balance, unsigned char *a_right, unsigned char *c_left);
+/* The stock volume byte for volume 0..120 at high gain on the 3.5 mm jack (0xff = muted at 0). */
+int dac_curve(int volume);
+/* The attenuation bytes for A (right) and C (left). volume 0..120 (UI scale), gain 0 low / 1 high (pass 0 when no
+ * plug is in, as the stock player does), balanced 1 when the 4.4 mm plug is in, balance as 0713 sends it (0 centre,
+ * 0x00NN / 0x01NN = NN steps towards one side). The curves are the stock player's (dac.c). 0xff = muted. */
+void dac_attenuation(int volume, int gain, int balanced, int balance, unsigned char *a_right, unsigned char *c_left);
 
 /* Open both devices (once); 0 or -1. dry_run: log only. */
 int dac_open(int dry_run, dac_log_fn log);

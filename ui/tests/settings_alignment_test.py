@@ -7,6 +7,9 @@ ui=Path(__file__).resolve().parents[1]
 roots=['Playback','Audio','Display','Connectivity','System','Battery & power','Help']
 playback=['Play Mode','Equalizer','Artists','Library seek','Resume Playback','Auto-tag','Play Through Folders','Up Next','SongSphere']
 audio=['Balance','DAC Filter','DSD Output','Gain','Max Volume','ReplayGain','Working Mode','DRE','Gapless']
+# DISKOS_TEST_OWN_PLAYER=1: render as if the own player ran (Settings > Audio > Outputs is only there then)
+own=bool(os.environ.get('DISKOS_TEST_OWN_PLAYER'))
+if own:audio=audio[:5]+['Outputs']+audio[5:]
 all_cases=[]
 with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
  p=Path(tmp);art=p/'art.png';art.write_bytes(png(64,64,(110,50,160)))
@@ -24,6 +27,8 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
    assert [x['label'] for x in pages['Playback']]==playback,(theme,pages['Playback'])
    assert [x['label'] for x in pages['Audio']]==audio,(theme,pages['Audio'])
    assert not any(x['label']=='Custom EQ' for items in pages.values() for x in items)
+   if own:assert [x['label'] for x in pages['Outputs']]==['AUX Volume','Bluetooth Codec','Bluetooth Volume','AUX','Bluetooth'],(theme,pages['Outputs'])
+   else:assert 'Outputs' not in pages,(theme,'Outputs shown without the own player')
    # Validate with an independent rule, not the production comparator.
    for page,items in pages.items():
     labels=[x['label'] for x in items];assert len(labels)==len(set(labels)),(theme,page,'duplicate',labels)

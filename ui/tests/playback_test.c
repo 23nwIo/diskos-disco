@@ -49,7 +49,7 @@ int eng_set_next(const char *p, long off, long len, unsigned must_rate){
 static int e_advanced_flag;
 int eng_advanced(const eng_status_t *s){ (void)s; int a = e_advanced_flag; e_advanced_flag = 0; return a; }
 int eng_toggle(void){ e_state = e_state == ENG_PLAY ? ENG_PAUSE : ENG_PLAY; e_armed = 0; return 0; }
-int eng_pause(int on){ if(on && e_state == ENG_PLAY) e_state = ENG_PAUSE; return 0; }
+int eng_pause(int on){ if(on && e_state == ENG_PLAY) e_state = ENG_PAUSE; else if(!on && e_state == ENG_PAUSE) e_state = ENG_PLAY; return 0; }
 int eng_seek_ms(long ms){ e_ms = ms; return 0; }
 int eng_status(eng_status_t *s){
     memset(s, 0, sizeof *s);
@@ -65,17 +65,34 @@ static void e_song_ends(void){
     e_ms = 0;
     pb_engine_event();
 }
-static int e_out_bt = 0; static unsigned e_out_rate;
-int eng_output(int bt, unsigned rate){ e_out_bt = bt; e_out_rate = rate; return 0; }
-static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8];
-unsigned bto_rate(const char *mac, bto_log_fn log){ (void)mac; (void)log; return bt_link_rate; }
+static int e_out_bt = 0, e_out_aux = 1, e_outputs_calls; static unsigned e_out_rate;
+int eng_output(int aux, int bt, unsigned rate){ e_out_aux = aux; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
+static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8], bt_sel[16] = "SBC";
+static int bt_codec_started = -1;
+int bto_info(const char *mac, unsigned *rate, char *sel, size_t selcap, char *avail, size_t availcap, bto_log_fn log){
+    (void)mac; (void)log;
+    if(rate) *rate = bt_link_rate;
+    if(sel) snprintf(sel, selcap, "%s", bt_sel);
+    if(avail) snprintf(avail, availcap, "SBC AAC LDAC");
+    return 0;
+}
+const char *bto_codec_name(int v){ return v == 1 ? "AAC" : v == 2 ? "LDAC" : "SBC"; }
+int bto_codec_start(const char *mac, int value, bto_log_fn log){   /* a child that is done at once, like a quick switch */
+    (void)mac; (void)log;
+    bt_codec_started = value;
+    pid_t p = fork();
+    if(p == 0) _exit(0);
+    return (int)p;
+}
 int bto_volume(const char *mac, int v, int max, bto_log_fn log){ (void)mac; (void)max; (void)log; bt_vol_set = v; return 0; }
 void bto_codec(const char *mac, int value, bto_log_fn log){ (void)mac; (void)log; snprintf(bt_codec_asked, sizeof bt_codec_asked, "%d", value); }
 int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(const char *, ...)){ (void)dev; (void)name; (void)value; (void)log; return 0; }
 static unsigned d_rate; static int d_starts;
 unsigned dac_current_rate(void){ return d_rate; }
-void dac_attenuation(int v, int g, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)b; *a = *c = 0; }
+void dac_attenuation(int v, int g, int bl, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)bl; (void)b; *a = *c = 0; }
 int dac_start(unsigned r, unsigned char a, unsigned char c, void (*l)(const char *, ...)){ (void)a; (void)c; (void)l; d_rate = r; d_starts++; return 0; }
+
+static double mono_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec / 1e9; }
 
 /* ---- frames to the UI ---- */
 static char sent[64][2048]; static int nsent;
@@ -333,18 +350,32 @@ static void test_playback(void){
     /* Bluetooth: 0666 2 waits for the headphones' address (06b3); then MPD plays to the pipe output for the link's
      * rate, the DAC is left alone, and the volume goes to the headphones; back to the DAC on 0666 6 */
     mkdir(ENG_RUN_DIR, 0755);
-    c.route = PL_ROUTE_BT; c.bt_mac[0] = 0; pb_route();
-    CHECK(!pb_bluetooth() && e_out_bt == 0);
-    snprintf(c.bt_mac, sizeof c.bt_mac, "AA:BB:CC:01:02:03"); c.bt_codec = 1; c.volume = 60; pb_route();
-    CHECK(pb_bluetooth() && e_out_bt == 1 && e_out_rate == 48000 && bt_vol_set == 60 && !strcmp(bt_codec_asked, "1"));
+    c.route = PL_ROUTE_BT; c.out_bt = 1; c.out_aux = 0; c.bt_mac[0] = 0; pb_route();
+    CHECK(!pb_bluetooth() && e_out_bt == 0 && e_out_aux == 1);
+    snprintf(c.bt_mac, sizeof c.bt_mac, "AA:BB:CC:01:02:03"); c.bt_codec = 1; c.vol_bt = 60; pb_route();
+    CHECK(pb_bluetooth() && !pb_aux() && e_out_bt == 1 && e_out_aux == 0 && e_out_rate == 48000 && bt_vol_set == 60
+          && !strcmp(bt_codec_asked, "1") && !strcmp(pb_bt_codecs(), "SBC AAC LDAC"));
     FILE *bf = fopen(ENG_BT_DEV, "r"); char bl[32] = ""; if(bf){ if(!fgets(bl, sizeof bl, bf)) bl[0] = 0; fclose(bf); }
     CHECK(!strcmp(bl, "AA:BB:CC:01:02:03\n"));
     starts = d_starts;
     CHECK(pb_play_list(QD_ALBUM, 1, "Mixed") == 0 && d_starts == starts);   /* a 96 kHz song: no DAC start */
     bt_codec_asked[0] = 0; pb_route();
     CHECK(bt_codec_asked[0] == 0);                            /* the same codec is not asked again */
-    c.route = PL_ROUTE_DAC; pb_route();
-    CHECK(!pb_bluetooth() && e_out_bt == 0);
+    /* both outputs: the DAC joins the running stream with its start sequence (the 96 kHz song plays) */
+    e_state = ENG_PLAY; pb_engine_event();
+    starts = d_starts; d_rate = 0;
+    c.out_aux = 1; pb_route();
+    CHECK(pb_aux() && pb_bluetooth() && e_out_aux == 1 && e_out_bt == 1 && d_rate == 96000 && d_starts == starts + 1);
+    /* a codec by hand: paused, the Bluetooth output closed, BlueALSA asked; then reopened at the new rate, playing */
+    pb_codec(1);
+    CHECK(bt_codec_started == 1 && pb_switching() && e_state == ENG_PAUSE && e_out_bt == 0 && e_out_aux == 1);
+    bt_link_rate = 44100; snprintf(bt_sel, sizeof bt_sel, "AAC");
+    for(int i = 0; i < 200 && pb_switching(); i++){ usleep(10000); pb_tick(mono_now()); }
+    CHECK(!pb_switching() && e_out_bt == 1 && e_out_rate == 44100 && e_state == ENG_PLAY && !strcmp(pb_bt_codec(), "AAC"));
+    bt_codec_started = -1; pb_codec(1);
+    CHECK(bt_codec_started == -1);                            /* already AAC: nothing to do */
+    c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
+    CHECK(!pb_bluetooth() && e_out_bt == 0 && e_out_aux == 1);
     /* headphones pulled */
     e_state = ENG_PLAY; pb_engine_event();
     CHECK(pb_transport(PL_T_PAUSE, 0) == 0 && e_state == ENG_PAUSE);

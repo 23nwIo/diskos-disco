@@ -65,21 +65,45 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   0.23 on a PC), so `a1`, `a2` and `0103` need no conversion. Consecutive tracks of one file queue gaplessly like
   any two songs.
 - **SACD ISO tracks** (`IS_ISO=1`) are skipped with a log line: MPD has no decoder for disc images.
-- **Bluetooth output** (2026-11-15, host-tested, not yet on a Disc). Our MPD is static (musl) and can't load the
+- **Bluetooth output** (2026-11-15, plays on a Disc with volume: Jo, build ebab3fe). Our MPD is static (musl) and can't load the
   device's BlueALSA ALSA plugin (a glibc .so), so the first way is the fallback of Jo's plan: three `pipe` outputs
   (`bt44`, `bt48`, `bt96`, 16 bit stereo at that rate) whose command is `/tmp/diskos-mpd/bt-out.sh <rate>`, which
   runs the device's `aplay -t raw -D "plug:'bluealsa:DEV=<MAC>,PROFILE=a2dp'"` (MAC from `/tmp/diskos-mpd/bt-dev`,
   aplay's messages in `/tmp/diskos-mpd/bt.log`). The UI's route (ui/main.c `ui_route_bt`: `0666 2`, then `06b3`
   with the codec and the headphones' MAC) makes the player write the MAC, read the link's rate with
   `bluealsa-cli info` and enable the matching output (any other rate: `bt44`, and `plug` converts); `0666 6`
-  switches back to the DAC. While on Bluetooth the DAC and its mixer route are left alone, the volume (`0715`, the
-  same 0..120) goes to the headphones with `bluealsa-cli volume` (0..127), the headphone jack does not pause, and
-  `06b3` codecs 1..4 are asked of BlueALSA with `bluealsa-cli codec` (AAC, LDAC; the LDAC quality not yet). MPD has
-  no pause for a pipe output, so a pause closes it and play starts aplay again.
+  switches back to the DAC. While on Bluetooth only, the DAC and its mixer route are left alone, the Bluetooth volume
+  goes to the headphones with `bluealsa-cli volume` (0..127), and `06b3` codecs 1..4 are asked of BlueALSA with
+  `bluealsa-cli codec` (AAC, LDAC; the LDAC quality not yet). MPD has no pause for a pipe output, so a pause closes
+  it and play starts aplay again.
   Device check (Jo, 2026-11-15, LDAC headphones): BlueALSA v4.0.0; `bluealsa-cli info` of the PCM prints
   `Format: S32_LE`, `Sampling: 96000 Hz`, `Selected codec: LDAC`, `SoftVolume: Y`, `Volume: L: 4 R: 4`; `aplay` with
   16 bit/44.1 kHz into `bluealsa:DEV=<MAC>,PROFILE=a2dp` and into `plug:'bluealsa:...'` both open and play (the
   plugin prints `D:` debug lines on stderr), so the link's format and rate are converted either way.
+- **Outputs** (2026-11-15, host-tested, not yet on a Disc; Settings > Audio > Outputs, own player only). MPD plays
+  to every output that is on: AUX (the DAC, i.e. both jacks), Bluetooth, or both at once (Bluetooth is a few hundred
+  ms behind; MPD can't delay one output). Automatic: a plug going in (3.5 mm or 4.4 mm) turns AUX on and Bluetooth
+  off; the UI's Bluetooth route (`0666 2` + `06b3` for new headphones) turns Bluetooth on and AUX off; `0666 6` (the
+  headphones gone) goes back to AUX. The last plug coming out pauses, unless Bluetooth is on (then AUX goes off and
+  the music plays on). By hand: `0d01` (docs/PLAYER_PROTOCOL.md). Each output has its own volume (`0d02`, `0d03`),
+  kept in `/usr/data/diskos-own/volumes`; the volume the UI shows (`a714`) is the lead output's (Bluetooth when on,
+  else AUX), and the volume keys and `0715` move every output that is on by the same step. When the DAC joins a
+  running stream, its start sequence and mixer route go first. The player writes the state for the UI to
+  `/tmp/diskos-player-outputs` (ui/own_player.h `opl_outputs_t`).
+- **Codec switch by hand** (`0d04`, Outputs > Bluetooth Codec): pause, close the Bluetooth output (aplay lets go of
+  the PCM), `bluealsa-cli codec <pcm> <codec>` as a child (at most 10 s), then read the link again (`bluealsa-cli
+  info`: rate, `Selected codec`, `Available codecs`), open the output at the new rate and play on. Only for this
+  connection; new connections use Connectivity > Bluetooth Codec as before.
+- **Volume curve** (2026-11-15): the stock player's own curves, read from mq_player (0x4e7800, 0x4e78c0, 0x4e7980,
+  0x4e7a40; ui/player/dac.c `dac_curve`, every value checked in ui/tests/player_test.c). 3.5 mm, high gain: 218 at
+  volume 1, then steps of 8 (from 2), 6 (4), 4 (11), 2 (23) and 1 (37) down to 0 (0 dB) at 120. Low gain is 12 more
+  (6 dB) everywhere; the 4.4 mm balanced curve 4 more up to volume 36, then 3, 2, 1 and the same from 40. The stock
+  player uses the high-gain curve only while a plug is in. The earlier estimate (156 - 2 x volume) matched below 37
+  but reached 0 dB at 78, so it was much too loud above 37.
+- **4.4 mm balanced plug**: detected like the stock player does it (`adc_bal_det_handler`): `/dev/jz_adc_aux_2`, enabled
+  with `_IO('A',11)`, one 32-bit value every 330 ms; plugged at >= 1501 or 801..949, not at 1151..1349, anything else
+  keeps the state; a change counts after 4 reads in a row. Same audio path as 3.5 mm (the stock player only switches
+  the volume curve). Not checked on a Disc (no 4.4 mm plug at hand); the player logs the first three values it reads.
 - Not yet: Previous restarting the song after a few seconds (stock behaviour not measured).
 
 ## Next

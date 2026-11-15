@@ -39,11 +39,22 @@ void pb_tick(double now);
  * flag_path: created while a resumed song has not played 10 s yet, removed then and by pb_shutdown; found at the
  * next start, it means the last resume crashed or hung the player, and that resume is skipped (NULL: no check). */
 void pb_resume_begin(int (*mounted)(void), const char *flag_path);
-/* The output route changed (core route / bt_mac / bt_codec): switch MPD between the DAC and the Bluetooth headphones
- * (engine.c eng_output, btout.c). pb_bluetooth: 1 while playing to Bluetooth; pb_bt_mac: their MAC then. */
+/* The outputs changed (core out_aux / out_bt / route / bt_mac / bt_codec): MPD plays to the DAC, the Bluetooth
+ * headphones or both (engine.c eng_output, btout.c). pb_bluetooth / pb_aux: 1 while playing to Bluetooth / the DAC;
+ * pb_bt_mac: the headphones' MAC; pb_bt_codec / pb_bt_codecs: the link's codec and the ones the headphones offer
+ * ("LDAC", "SBC AAC LDAC"; "" when not on Bluetooth). */
 void pb_route(void);
 int pb_bluetooth(void);
+int pb_aux(void);
 const char *pb_bt_mac(void);
+const char *pb_bt_codec(void);
+const char *pb_bt_codecs(void);
+/* 0d04: switch the Bluetooth codec of this connection now (ui/bt.c numbering). The music pauses for it and plays on
+ * once BlueALSA is done (pb_tick); pb_switching is 1 meanwhile. */
+void pb_codec(int value);
+int pb_switching(void);
+/* The DAC's attenuation bytes for the AUX volume, gain (only with a plug in), the 4.4 mm curve and the balance. */
+void pb_attenuation(unsigned char *a_right, unsigned char *c_left);
 /* Power off or an orderly stop: store the position in MEMORY_PLAY. */
 void pb_shutdown(void);
 /* The last engine status and when it was read (CLOCK_MONOTONIC seconds); NULL before the first. */

@@ -38,10 +38,22 @@ typedef struct {
     int route;                     /* 0666 output route; -1 none yet */
     char bt_mac[18];               /* 06b3: the Bluetooth headphones ("AA:BB:CC:DD:EE:FF"), "" none yet */
     int bt_codec;                  /* 06b3 VALUE1: 0 SBC, 1 AAC, 2/3/4 LDAC mobile/standard/high */
-    unsigned route_seq;            /* bumps on every accepted 0666 and 06b3, so the main loop switches the output */
+    unsigned route_seq;            /* bumps on every accepted 0666, 06b3 and 0d01 and when a plug turns an output on
+                                    * or off, so the main loop switches MPD's outputs (playback.c pb_route) */
     int idle_off_s, sleep_s;       /* 0 off */
     unsigned sleep_seq;            /* bumps on every 0806, so the main loop (re)starts or cancels the timer */
-    int jack;                      /* headphone plug: 1 in, 0 out, -1 not known */
+    int jack;                      /* 3.5 mm plug: 1 in, 0 out, -1 not known */
+    int bal;                       /* 4.4 mm balanced plug: 1 in, 0 out, -1 not known */
+    /* Outputs (diskOS, own player only; docs/PLAYER_PROTOCOL.md "Outputs"): MPD plays to every output that is on. A
+     * plug going in turns AUX on and Bluetooth off; headphones routed by the UI (0666 2 + 06b3) turn Bluetooth on and
+     * AUX off; 0d01 sets both by hand. Each has its own volume; core.volume (what the UI shows) is the lead output's:
+     * Bluetooth when it is on, else AUX. The volume keys and 0715 move every output that is on by the same step. */
+    int out_aux, out_bt;
+    int vol_aux, vol_bt;           /* 0..max_volume */
+    int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3) */
+    int bt_auto;                   /* 0666 2 seen: the next 06b3 turns Bluetooth on and AUX off */
+    int codec_want;                /* 0d04: the codec asked for this connection (ui/bt.c numbering), -1 none */
+    unsigned codec_seq;            /* bumps on every accepted 0d04 */
     int usb_gadget;                /* 0642: 0 none, 1 USB storage (2 and 5, the USB audio gadgets, not yet) */
     unsigned usb_seq;              /* bumps on every accepted 0642, so the main loop starts or stops the gadget */
     /* remembered only (Step 2 "keep") */
@@ -63,9 +75,19 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n);
 /* Volume key: one step up (+1) or down (-1), within 0..max_volume; the UI hears it as a714. */
 void pl_core_volume_step(pl_core_t *c, int dir);
 
-/* Headphone jack level changed (1 in, 0 out). Unplugging pauses playback, plugging in again leaves it paused (as the
- * stock player; Jo 2026-11-15). The first call only records the level. */
+/* Headphone jack level changed (1 in, 0 out): pl_core_jack for the 3.5 mm jack, pl_core_bal for the 4.4 mm one. The
+ * first call of each only records the level. A plug going in (none was in) turns AUX on and Bluetooth off; playback
+ * stays as it is (paused stays paused, as the stock player; Jo 2026-11-15). The last plug coming out pauses playback,
+ * unless Bluetooth is on: then AUX goes off and the music goes on. */
 void pl_core_jack(pl_core_t *c, int plugged);
+void pl_core_bal(pl_core_t *c, int plugged);
+/* 1 when a plug is in either jack (the stock player uses the high gain curve only then) */
+int pl_core_plugged(const pl_core_t *c);
+/* Set the volume shown in the UI to v (0715, keys): every output that is on moves by the same step, each within
+ * 0..max_volume. Tells the UI (a714) when the lead volume changed. */
+void pl_core_set_volume(pl_core_t *c, int v);
+/* Set both volumes as stored (at start); the UI is told the lead one. */
+void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt);
 
 /* Send the current state as an a2 frame (what 0202 answers). */
 void pl_core_send_state(pl_core_t *c);

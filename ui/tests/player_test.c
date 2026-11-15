@@ -8,6 +8,7 @@
 #include "../player/proto.h"
 #include "../player/sdcard.h"
 #include "../player/dac.h"
+#include "../player/hw.h"
 #include "../player/mpdcli.h"
 
 #include <errno.h>
@@ -91,9 +92,11 @@ static void test_core(void){
     CHECK(send1(&c, "0806000C0001") == 0 && c.sleep_s == 1 && c.sleep_seq == sq + 1);
     CHECK(send1(&c, "0806000C0000") == 0 && c.sleep_s == 0 && c.sleep_seq == sq + 2);
     CHECK(c.jack == -1);                                          /* jack: first level recorded, then changes */
+    c.transport = count_pause; npause = 0;
     pl_core_jack(&c, 1); CHECK(c.jack == 1);
-    pl_core_jack(&c, 0); CHECK(c.jack == 0);
-    pl_core_jack(&c, 1); CHECK(c.jack == 1);
+    pl_core_jack(&c, 0); CHECK(c.jack == 0 && npause == 1);       /* unplugged: pause */
+    pl_core_jack(&c, 1); CHECK(c.jack == 1 && npause == 1);       /* plugged in again: stays paused */
+    c.transport = NULL;
     unsigned uq = c.usb_seq;                                      /* 0642: storage on/off; the USB audio gadgets not yet */
     CHECK(send1(&c, "0642000C0001") == 0 && c.usb_gadget == 1 && c.usb_seq == uq + 1);
     CHECK(send1(&c, "0642000C0005") == 0 && c.usb_gadget == 1 && c.usb_seq == uq + 1);
@@ -109,7 +112,7 @@ static void test_core(void){
     CHECK(send1(&c, "0666000C0002") == 0 && c.route == 2 && c.route_seq == rs + 1);
     /* 06b3: codec + the headphones' MAC (ui/bt.c bt_codec_frame_value) */
     CHECK(send1(&c, "06b3001D0003AA:bb:CC:01:02:03") == 0 && c.bt_codec == 3 && !strcmp(c.bt_mac, "AA:bb:CC:01:02:03"));
-    CHECK(c.route_seq == rs + 2);
+    CHECK(c.route_seq > rs + 1 && c.bt_ready && c.out_bt == 1 && c.out_aux == 0);   /* headphones: Bluetooth on, AUX off */
     CHECK(send1(&c, "06b3001D0003AA:bb:CC:01:02") == -1 && send1(&c, "06b3001D0009AA:bb:CC:01:02:03") == -1);
     CHECK(send1(&c, "06b3001D0000AA-bb-CC-01-02-03") == -1 && c.bt_codec == 3);
     char bp[96];
@@ -117,12 +120,48 @@ static void test_core(void){
     CHECK(bto_pcm_path("aa:bb:CC:01:02", bp, sizeof bp) == -1 && bto_pcm_path("aa-bb-CC-01-02-03", bp, sizeof bp) == -1);
     CHECK(bto_parse_rate("Device: /org/bluez/hci0/dev_X\nFormat: S16_LE\nChannels: 2\nSampling: 48000 Hz\n") == 48000);
     CHECK(bto_parse_rate("Transport: A2DP-source\n  Rate: 44100\n") == 44100 && bto_parse_rate("Rate: 7\nVolume: 127\n") == 0);
+    CHECK(!strcmp(bto_codec_name(6), "aptX-HD") && !strcmp(bto_codec_name(3), "LDAC") && !strcmp(bto_codec_name(0), "SBC"));
+    {   /* bluealsa-cli info as on the Disc (docs/MPD_CORE.md) plus the codec lines of BlueALSA 4.0 */
+        const char *info = "Device: /org/bluez/hci0/dev_53_4A\nSequence: 1\nTransport: A2DP-source\nMode: sink\n"
+                           "Format: S32_LE\nChannels: 2\nSampling: 96000 Hz\nAvailable codecs: SBC AAC LDAC\n"
+                           "Selected codec: LDAC\nDelay: 150.0 ms\nSoftVolume: Y\n";
+        char sel[16], av[64];
+        bto_parse_selected(info, sel, sizeof sel); bto_parse_avail(info, av, sizeof av);
+        CHECK(!strcmp(sel, "LDAC") && !strcmp(av, "SBC AAC LDAC"));
+        bto_parse_selected("Codec: aac\n", sel, sizeof sel); bto_parse_avail("Volume: 4\n", av, sizeof av);
+        CHECK(!strcmp(sel, "AAC") && av[0] == 0);
+        bto_parse_avail("Available codecs:\n  SBC AAC\n  aptX aptX-HD\nSelected codec: SBC\n", av, sizeof av);
+        CHECK(!strcmp(av, "SBC AAC APTX APTX-HD"));
+    }
+    /* outputs: plugs, routes, 0d01..0d04 and the two volumes */
     c.transport = count_pause; npause = 0;
-    pl_core_jack(&c, 1); pl_core_jack(&c, 0);                         /* on Bluetooth the jack doesn't pause */
-    CHECK(npause == 0);
+    c.max_volume = 120; c.jack = 0; c.bal = -1;
+    c.vol_aux = 30; c.vol_bt = 50; c.volume = 50;                    /* Bluetooth is the lead now */
+    nsent = 0; CHECK(send1(&c, "0715000C0034") == 0);                /* 52: both outputs on move? only Bluetooth is on */
+    CHECK(c.volume == 52 && c.vol_bt == 52 && c.vol_aux == 30 && nsent == 1 && !strcmp(sent[0], "a714000C0034"));
+    pl_core_bal(&c, 0); CHECK(c.bal == 0 && c.out_bt == 1);          /* the first level is only recorded */
+    pl_core_jack(&c, 1);                                             /* a plug in: AUX on, Bluetooth off, AUX volume shown */
+    CHECK(c.out_aux == 1 && c.out_bt == 0 && c.volume == 30 && npause == 0);
+    pl_core_jack(&c, 0); CHECK(npause == 1);                         /* the last plug out, AUX only: pause */
+    CHECK(send1(&c, "0d01000C0003") == 0 && c.out_aux == 1 && c.out_bt == 1 && c.volume == 52);   /* both by hand */
+    pl_core_volume_step(&c, -1); CHECK(c.vol_bt == 51 && c.vol_aux == 29 && c.volume == 51);
+    CHECK(send1(&c, "0d02000C0014") == 0 && c.vol_aux == 20 && c.volume == 51);
+    CHECK(send1(&c, "0d03000C0010") == 0 && c.vol_bt == 16 && c.volume == 16);
+    pl_core_set_volume(&c, 0); CHECK(c.vol_bt == 0 && c.vol_aux == 4);  /* each within 0..max: the gap stays until a limit */
+    pl_core_set_volume(&c, 10); CHECK(c.vol_bt == 10 && c.vol_aux == 14);
+    pl_core_bal(&c, 1); CHECK(c.out_aux == 1 && c.out_bt == 0 && pl_core_plugged(&c));   /* the 4.4 mm plug counts too */
+    CHECK(send1(&c, "0d01000C0002") == 0 && c.out_aux == 0 && c.out_bt == 1);
+    npause = 0; pl_core_bal(&c, 0); CHECK(npause == 0 && c.out_bt == 1 && c.out_aux == 0);   /* Bluetooth plays on */
+    CHECK(send1(&c, "0d01000C0000") == -1 && c.out_bt == 1);         /* one output stays on */
+    CHECK(send1(&c, "0d04000C0001") == 0 && c.codec_want == 1);
+    CHECK(send1(&c, "0d04000C0003") == -1 && send1(&c, "0d04000C0007") == -1);   /* only SBC/AAC/LDAC 2/aptX/aptX HD */
+    CHECK(send1(&c, "0711000C0005") == 0 && c.vol_aux == 5 && c.vol_bt == 5);    /* max volume: both */
+    c.max_volume = 120;
     c.transport = NULL;
-    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6);
-    c.jack = -1;
+    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && !c.bt_ready && c.out_aux == 1 && c.out_bt == 0);
+    CHECK(send1(&c, "0d01000C0002") == -1 && c.out_bt == 0);         /* no headphones: refused */
+    CHECK(send1(&c, "0d04000C0001") == -1);
+    c.jack = -1; c.bal = -1;
 
     /* play list: answered with the state, name may be long */
     nsent = 0;
@@ -221,16 +260,68 @@ static void test_uevent(void){
     CHECK(sd_uevent_kind(add, 10) == SDEV_NONE);                  /* cut short: no keys */
 }
 
+static void test_bal(void){
+    CHECK(hw_bal_level(1501) == 1 && hw_bal_level(3300) == 1 && hw_bal_level(801) == 1 && hw_bal_level(949) == 1);
+    CHECK(hw_bal_level(1151) == 0 && hw_bal_level(1349) == 0);
+    CHECK(hw_bal_level(800) == -1 && hw_bal_level(950) == -1 && hw_bal_level(1000) == -1 && hw_bal_level(1500) == -1 && hw_bal_level(0) == -1);
+    int st = -1, n = 0;
+    CHECK(hw_debounce(&st, &n, -1) == 0 && st == -1);                /* nothing known yet */
+    CHECK(hw_debounce(&st, &n, 0) == 1 && st == 0);                  /* the first known level at once */
+    CHECK(hw_debounce(&st, &n, 1) == 0 && hw_debounce(&st, &n, 1) == 0 && hw_debounce(&st, &n, 1) == 0 && st == 0);
+    CHECK(hw_debounce(&st, &n, 1) == 1 && st == 1);                  /* the 4th read in a row */
+    CHECK(hw_debounce(&st, &n, 0) == 0 && hw_debounce(&st, &n, 1) == 0 && n == 0);   /* one odd read is forgotten */
+    CHECK(hw_debounce(&st, &n, -1) == 0 && st == 1);                 /* an in-between value keeps the state */
+}
+
 static void test_dac_mpd(void){
     CHECK(dac_rate_code(44100) == 1 && dac_rate_code(48000) == 2 && dac_rate_code(96000) == 4 && dac_rate_code(192000) == 6);
     CHECK(dac_rate_code(22050) == 0);
     unsigned char a, c;
-    dac_attenuation(27, 1, 0x0102, &a, &c); CHECK(a == 0x68 && c == 0x66);  /* trace 02:41: volume 27, balance 0x0102 */
-    dac_attenuation(78, 1, 0, &a, &c);  CHECK(a == 0 && c == 0);           /* 0 dB */
-    dac_attenuation(120, 1, 0, &a, &c); CHECK(a == 0 && c == 0);           /* above: clamped */
-    dac_attenuation(27, 0, 0, &a, &c);  CHECK(a == 0x72 && c == 0x72);     /* gain low: 12 more */
-    dac_attenuation(78, 1, 0x0003, &a, &c); CHECK(a == 0 && c == 3);       /* 0x00NN: C down */
-    dac_attenuation(0, 1, 0, &a, &c);   CHECK(a == 0xff && c == 0xff);     /* 0 = mute */
+    dac_attenuation(27, 1, 0, 0x0102, &a, &c); CHECK(a == 0x68 && c == 0x66);  /* trace 02:41: volume 27, balance 0x0102 */
+    dac_attenuation(27, 0, 0, 0, &a, &c);  CHECK(a == 0x72 && c == 0x72);     /* gain low: 12 more */
+    dac_attenuation(119, 1, 0, 0x0003, &a, &c); CHECK(a == 1 && c == 4);    /* 0x00NN: C down */
+    dac_attenuation(0, 1, 0, 0, &a, &c);   CHECK(a == 0xff && c == 0xff);     /* 0 = mute */
+    dac_attenuation(130, 1, 0, 0, &a, &c); CHECK(a == 0 && c == 0);           /* above 120: clamped */
+    /* the four curves read from the stock player's binary (mq_player 0x4e7800/0x4e78c0/0x4e7980/0x4e7a40) */
+    static const unsigned char BAL_HIGH[120] = {
+        222, 214, 206, 200, 194, 188, 182, 176, 170, 164, 160, 156, 152, 148, 144, 140, 136, 132, 128, 124,
+        120, 116, 114, 112, 110, 108, 106, 104, 102, 100, 98, 96, 94, 92, 90, 88, 86, 84, 82, 80,
+        79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60,
+        59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40,
+        39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20,
+        19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+    };
+    static const unsigned char BAL_LOW[120] = {
+        234, 226, 218, 212, 206, 200, 194, 188, 182, 176, 172, 168, 164, 160, 156, 152, 148, 144, 140, 136,
+        132, 128, 126, 124, 122, 120, 118, 116, 114, 112, 110, 108, 106, 104, 102, 100, 98, 96, 94, 92,
+        91, 90, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75, 74, 73, 72,
+        71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52,
+        51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32,
+        31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12,
+    };
+    static const unsigned char SE_HIGH[120] = {
+        218, 210, 202, 196, 190, 184, 178, 172, 166, 160, 156, 152, 148, 144, 140, 136, 132, 128, 124, 120,
+        116, 112, 110, 108, 106, 104, 102, 100, 98, 96, 94, 92, 90, 88, 86, 84, 83, 82, 81, 80,
+        79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60,
+        59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40,
+        39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20,
+        19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+    };
+    static const unsigned char SE_LOW[120] = {
+        230, 222, 214, 208, 202, 196, 190, 184, 178, 172, 168, 164, 160, 156, 152, 148, 144, 140, 136, 132,
+        128, 124, 122, 120, 118, 116, 114, 112, 110, 108, 106, 104, 102, 100, 98, 96, 95, 94, 93, 92,
+        91, 90, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75, 74, 73, 72,
+        71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52,
+        51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32,
+        31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12,
+    };
+    for(int v = 1; v <= 120; v++){
+        unsigned char x, y;
+        dac_attenuation(v, 1, 0, 0, &x, &y); CHECK(x == SE_HIGH[v - 1] && y == x);
+        dac_attenuation(v, 0, 0, 0, &x, &y); CHECK(x == SE_LOW[v - 1] && y == x);
+        dac_attenuation(v, 1, 1, 0, &x, &y); CHECK(x == BAL_HIGH[v - 1] && y == x);
+        dac_attenuation(v, 0, 1, 0, &x, &y); CHECK(x == BAL_LOW[v - 1] && y == x);
+    }
     char q[64];
     CHECK(mc_quote(q, sizeof q, "file:///a \"b\"\\c") > 0 && !strcmp(q, "\"file:///a \\\"b\\\"\\\\c\""));
     CHECK(mc_quote(q, 4, "abcdef") == -1);
@@ -246,6 +337,7 @@ static void test_dac_mpd(void){
 int main(int argc, char **argv){
     test_proto();
     test_dac_mpd();
+    test_bal();
     test_uevent();
     test_core();
     if(argc > 1) test_e2e(argv[1]);

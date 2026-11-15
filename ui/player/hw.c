@@ -120,3 +120,34 @@ int hw_jack_read(int fd){
     if(r < 0) return -1;
     return r ? 1 : 0;
 }
+
+#define ADC_IOC_ENABLE 0x2000410bUL       /* _IO('A',11), what the stock player sends after opening the ADC */
+
+int hw_bal_open(void){
+    int fd = open(BAL_DEV, O_RDWR | O_CLOEXEC);
+    if(fd < 0) return -1;
+    if(ioctl(fd, ADC_IOC_ENABLE, 0) < 0){ int e = errno; close(fd); errno = e; return -1; }
+    return fd;
+}
+
+int hw_bal_read(int fd){
+    int v = 0;
+    ssize_t n = read(fd, &v, sizeof v);
+    if(n != (ssize_t)sizeof v){ if(n >= 0) errno = EIO; return -1; }
+    return v;
+}
+
+int hw_bal_level(int v){
+    if(v >= 1501 || (v >= 801 && v <= 949)) return 1;
+    if(v >= 1151 && v <= 1349) return 0;
+    return -1;
+}
+
+int hw_debounce(int *state, int *count, int level){
+    if(level < 0) return 0;
+    if(*state < 0){ *state = level; *count = 0; return 1; }
+    if(level == *state){ *count = 0; return 0; }
+    if(++*count < 4) return 0;
+    *state = level; *count = 0;
+    return 1;
+}

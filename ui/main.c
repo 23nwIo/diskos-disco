@@ -499,7 +499,9 @@ int ui_route_bt(const char *mac){
         }
         if(i == 4) modes_output_reset();                /* no longer on SPDIF / USB audio */
     }
-    if(st.volume_seq){ char v[16]; snprintf(v, sizeof v, "0715000C%04X", st.volume); ipc_send_cmd(v); }
+    /* the stock player has one volume for every output: carry it over. The own player keeps one per output (Settings >
+     * Audio > Outputs) and tells us the headphones' one itself (a714), so nothing is sent then. */
+    if(st.volume_seq && !opl_running()){ char v[16]; snprintf(v, sizeof v, "0715000C%04X", st.volume); ipc_send_cmd(v); }
     /* Safe minimal resume; deterministic load/play remains a future improvement. */
     if(st.have_track && st.position_ms > 0) ui_seek_to(st.position_ms);  /* resume position, not restart */
     snprintf(g_route_mac, sizeof g_route_mac, "%s", norm);

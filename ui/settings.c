@@ -37,7 +37,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "command_spawn.h"
-#include "own_player.h"     /* opl_running: About > Player */
+#include "own_player.h"     /* opl_running: About > Player; the Outputs page */
+#include "ipc.h"
 #include "sdio.h"
 #include "art.h"
 #include "scanner.h"
@@ -161,6 +162,105 @@ static void apply_boot_stock(int v){
     }
     fprintf(stderr, "settings: next boot starts the %s player\n", v ? "stock" : "own"); fflush(stderr);
     ui_toast(v ? "Next boot: stock player" : "Next boot: own player");
+}
+/* ---- Outputs (Settings > Audio > Outputs): the own player plays to AUX (the 3.5 mm and 4.4 mm jacks), the Bluetooth
+ * headphones or both, each with its own volume (docs/PLAYER_PROTOCOL.md "Outputs"). The rows send the diskOS commands
+ * 0d01..0d04 and show the state the player writes to OPL_OUTPUTS; the stock player knows none of it, so the page is
+ * only there while the own player runs. ---- */
+static int own_player_cached(void){
+    static uint32_t t; static int v, known;
+    uint32_t now = lv_tick_get();
+    if(!known || now - t > 2000){ v = opl_running() || getenv("DISKOS_TEST_OWN_PLAYER") != NULL; t = now; known = 1; }
+    return v;
+}
+static opl_outputs_t g_out;
+static uint32_t g_out_t;
+/* what was just asked: shown until the player's file says so (it applies it within a quarter second) or 2 s pass */
+static int g_outp_aux = -1, g_outp_bt = -1, g_outp_va = -1, g_outp_vb = -1;
+static uint32_t g_outp_t;
+static const opl_outputs_t *outputs_now(void){
+    static opl_outputs_t v;
+    uint32_t now = lv_tick_get();
+    if(!g_out_t || now - g_out_t > 200){
+        if(opl_outputs_read(&g_out) != 0){ memset(&g_out, 0, sizeof g_out); g_out.aux = 1; g_out.jack = g_out.bal = -1; }
+        g_out_t = now ? now : 1;
+    }
+    v = g_out;
+    if(now - g_outp_t < 2000){
+        if(g_outp_aux >= 0) v.aux = g_outp_aux;
+        if(g_outp_bt >= 0) v.bt = g_outp_bt;
+        if(g_outp_va >= 0) v.vol_aux = g_outp_va;
+        if(g_outp_vb >= 0) v.vol_bt = g_outp_vb;
+    } else g_outp_aux = g_outp_bt = g_outp_va = g_outp_vb = -1;
+    return &v;
+}
+static int out_send(const char *tag, int v){ char f[16]; snprintf(f, sizeof f, "%s000C%04X", tag, (unsigned)v); return ipc_send_cmd(f); }
+static void out_set(int aux, int bt){
+    if(!aux && !bt){ ui_toast(tr("One output stays on")); return; }
+    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0)) < 0) return;      /* ipc tells the user when the player didn't take it */
+    g_outp_aux = aux; g_outp_bt = bt; g_outp_t = lv_tick_get();
+}
+static void apply_out_aux(int v){ out_set(v, outputs_now()->bt); }
+static void apply_out_bt(int v){
+    if(v && !outputs_now()->bt_ready){ ui_toast(tr("Connect Bluetooth headphones first")); return; }
+    out_set(outputs_now()->aux, v);
+}
+/* the sliders send while they are dragged, at most every 80 ms; the last value always goes out (a short timer) */
+static int g_outv_want[2] = { -1, -1 }, g_outv_sent[2] = { -1, -1 };
+static uint32_t g_outv_t;
+static lv_timer_t *g_outv_tm;
+static void outv_flush(void){
+    for(int i = 0; i < 2; i++){
+        if(g_outv_want[i] < 0 || g_outv_want[i] == g_outv_sent[i]) continue;
+        if(out_send(i ? "0d03" : "0d02", g_outv_want[i]) == 0) g_outv_sent[i] = g_outv_want[i];
+    }
+    g_outv_t = lv_tick_get();
+}
+static void outv_tm_cb(lv_timer_t *t){ (void)t; g_outv_tm = NULL; outv_flush(); }
+static void out_volume(int which, int v){
+    g_outv_want[which] = v;
+    if(which) g_outp_vb = v; else g_outp_va = v;
+    g_outp_t = lv_tick_get();
+    if(lv_tick_get() - g_outv_t >= 80){ outv_flush(); return; }
+    if(!g_outv_tm){ g_outv_tm = lv_timer_create(outv_tm_cb, 100, NULL); lv_timer_set_repeat_count(g_outv_tm, 1); }
+}
+static void apply_out_vol_aux(int v){ out_volume(0, v); }
+static void apply_out_vol_bt(int v){ out_volume(1, v); }
+static const char *const OUT_CODEC_OPTS[] = { "SBC", "AAC", "LDAC", "aptX", "aptX HD" };
+static const int OUT_CODEC_VAL[] = { 0, 1, 2, 5, 6 };                     /* ui/bt.c numbering, as 0d04 takes it */
+static const char *const OUT_CODEC_WORD[] = { "SBC", "AAC", "LDAC", "APTX", "APTX-HD" };   /* as BlueALSA spells them */
+static int out_has_word(const char *list, const char *w){
+    size_t n = strlen(w);
+    for(const char *p = list; (p = strstr(p, w)); p += n)
+        if((p == list || p[-1] == ' ') && (p[n] == 0 || p[n] == ' ')) return 1;
+    return 0;
+}
+static int out_codec_index(void){
+    const opl_outputs_t *o = outputs_now();
+    for(int i = 0; i < 5; i++) if(!strcmp(o->codec, OUT_CODEC_WORD[i])) return i;
+    return 0;
+}
+static void apply_out_codec(int i){
+    const opl_outputs_t *o = outputs_now();
+    if(i < 0 || i >= 5) return;
+    if(!o->bt){ ui_toast(tr("Bluetooth is off")); return; }
+    if(o->switching){ ui_toast(tr("Still switching - try again in a moment")); return; }
+    if(o->codecs[0] && !out_has_word(o->codecs, OUT_CODEC_WORD[i])){ ui_toast(tr("These headphones don't offer it")); return; }
+    if(out_send("0d04", OUT_CODEC_VAL[i]) == 0) ui_toast(tr("Switching codec..."));
+}
+static void apply_grp_outputs(int v);
+static int outputs_row(const setting_t *s){
+    return s->apply == apply_grp_outputs || s->apply == apply_out_aux || s->apply == apply_out_bt || s->apply == apply_out_vol_aux
+        || s->apply == apply_out_vol_bt || s->apply == apply_out_codec;
+}
+static int outputs_get(const setting_t *s){
+    const opl_outputs_t *o = outputs_now();
+    if(s->apply == apply_out_aux) return o->aux;
+    if(s->apply == apply_out_bt) return o->bt;
+    if(s->apply == apply_out_vol_aux) return o->vol_aux;
+    if(s->apply == apply_out_vol_bt) return o->vol_bt;
+    if(s->apply == apply_out_codec) return out_codec_index();
+    return 0;
 }
 static void apply_artcache(int v){ ui_set_prewarm_mode(v); }   /* every mode preloads album covers; the mode picks the per-track sweep */
 void ui_sd_quiesce_begin(void); int ui_sd_quiesce_drained(void); void ui_sd_quiesce_end(void);   /* main.c: Restart card drain */
@@ -856,6 +956,18 @@ static const setting_t TABLE[] = {
       "Cap the maximum volume level (protects your ears / headphones).", NULL },
     { "Audio",    "Balance",     ST_SLIDER, "balance",      -10,10,1, NULL,0, NULL, apply_balance, 0,
       "Left/right channel balance. 0 = centred; negative = left, positive = right.", NULL },
+    { "Audio",    "Outputs",     ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_grp_outputs, 0,
+      "AUX and Bluetooth, each on or off, with its own volume.", NULL },
+    { "Outputs",  "AUX",         ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_aux, 1,
+      "The headphone jacks (3.5 mm and 4.4 mm balanced). Plugging in turns AUX on and Bluetooth off.", NULL },
+    { "Outputs",  "Bluetooth",   ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_bt, 0,
+      "The connected Bluetooth headphones. Connecting them turns Bluetooth on and AUX off; turn the other one on here to play on both. Bluetooth is a little behind AUX.", NULL },
+    { "Outputs",  "AUX Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
+      "The volume keys move every output that is on by the same step.", NULL },
+    { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,
+      "The volume keys move every output that is on by the same step.", NULL },
+    { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, OUT_CODEC_OPTS, 5, NULL, apply_out_codec, 0,
+      "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
 #ifdef DISKOS_TEST_OUTPUTS   /* device-unverified: test builds only */
     { "Audio",    "SPDIF Output", ST_TOGGLE, "spdif",   0,1,1, NULL,0, NULL, apply_spdif, 0,
       "Use digital SPDIF instead of the internal DAC. Switching briefly pauses playback.", NULL },
@@ -1139,7 +1251,7 @@ static const char *setting_key(const setting_t *s){
     if(th_simple()&&s->cfg_key&&!strcmp(s->cfg_key,"np_font"))return "simple_track_font";
     return th_null() && s->cfg_key && !strcmp(s->cfg_key,"disco_hints")?"null_hints":s->cfg_key;
 }
-static int get_val(const setting_t *s){if(s->apply==apply_boot_stock)return boot_stock_now();const char *key=setting_key(s);return key?simple_cfg_get_int(key,th_simple()&&s->cfg_key&&!strcmp(s->cfg_key,"np_font")?2:s->def):0;}
+static int get_val(const setting_t *s){if(s->apply==apply_boot_stock)return boot_stock_now();if(outputs_row(s))return outputs_get(s);const char *key=setting_key(s);return key?simple_cfg_get_int(key,th_simple()&&s->cfg_key&&!strcmp(s->cfg_key,"np_font")?2:s->def):0;}
 static void set_val(const setting_t *s, int v){
     /* EQ selection persists in SCR_EQ. These rows retain their existing saved keys. */
     if(display_blocked(s))return;
@@ -1300,6 +1412,7 @@ static void apply_grp_datetime(int v){ (void)v; g_active_group = "Date & Time"; 
 static void apply_grp_library(int v){ (void)v; g_active_group = "Library"; setlist_refresh(); }
 static void apply_grp_controls(int v){ (void)v; g_active_group = "Controls"; setlist_refresh(); }
 static void apply_grp_maintenance(int v){ (void)v; g_active_group = "Maintenance"; setlist_refresh(); }
+static void apply_grp_outputs(int v){ (void)v; g_active_group = "Outputs"; setlist_refresh(); }
 static void apply_howto(int v){(void)v;g_active_group="How to";setlist_refresh();}
 static void apply_grp_about(int v){ (void)v; g_active_group = "About"; setlist_refresh(); }
 static void apply_volkeys_group(int v){ (void)v; g_active_group = "Volume Keys"; setlist_refresh(); }
@@ -1341,6 +1454,7 @@ static const struct { const char *child, *parent; } SUBGROUP[] = {
     { "Library", "System" },
     { "Controls", "System" },
     { "Maintenance", "System" },
+    { "Outputs", "Audio" },
     { "About", "Help" },
     { "How to", "Help" },
     { "MA Sendspin", "Connectivity" },
@@ -2267,7 +2381,7 @@ void settings_test_submenus(void){
         if(!parent||display_variant_hidden(s)||settings_hidden(s))continue;
         void (*f)(int)=s->apply;
         if(!(f==apply_theme_settings||f==apply_theme_navigation||f==apply_library_appearance||f==apply_sleep_settings||f==apply_bluetooth_settings||f==apply_shared_navigation||
-             f==apply_grp_musictext||f==apply_grp_musicinfo||f==apply_grp_clockinfo||f==apply_grp_musicprogress||f==apply_grp_immersive||f==apply_grp_zune||f==apply_grp_textlayout||f==apply_grp_screenstandby||f==apply_grp_onlineextras||f==apply_grp_musicscreen||f==apply_grp_discocolours||f==apply_grp_discoqs||f==apply_grp_discolayout||f==apply_grp_datetime||f==apply_grp_library||f==apply_grp_controls||f==apply_grp_maintenance||f==apply_grp_about||f==apply_volkeys_group||f==apply_ma_group||f==apply_remote_group||f==apply_howto))continue;
+             f==apply_grp_musictext||f==apply_grp_musicinfo||f==apply_grp_clockinfo||f==apply_grp_musicprogress||f==apply_grp_immersive||f==apply_grp_zune||f==apply_grp_textlayout||f==apply_grp_screenstandby||f==apply_grp_onlineextras||f==apply_grp_musicscreen||f==apply_grp_discocolours||f==apply_grp_discoqs||f==apply_grp_discolayout||f==apply_grp_datetime||f==apply_grp_library||f==apply_grp_controls||f==apply_grp_maintenance||f==apply_grp_outputs||f==apply_grp_about||f==apply_volkeys_group||f==apply_ma_group||f==apply_remote_group||f==apply_howto))continue;
         g_active_group=parent;f(0);
         int indices[N_SETTINGS];
         if(strcmp(g_active_group,"How to")&&!settings_collect(g_active_group,indices)){fprintf(stderr,"Empty submenu: %s\n",g_active_group);abort();}

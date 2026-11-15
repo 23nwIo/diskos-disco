@@ -27,7 +27,8 @@
  *     -n           do not touch the hardware watchdog, power off only as a logged dry run (host runs)
  *     -l <log>     log file instead of /tmp/diskos-player.log ("-" = stderr)
  *     -q <prefix>  queue names <prefix>player and <prefix>ui instead of /player and /ui (host runs, tests)
- *     -k <path>    key events from <path> instead of /dev/input/event0 (tests feed a FIFO) */
+ *     -k <path>    key events from <path> instead of /dev/input/event0 (tests feed a FIFO)
+ *     -o <path>    the outputs state file instead of OPL_OUTPUTS (host runs) */
 #include "core.h"
 #include "proto.h"
 #include "hw.h"
@@ -127,14 +128,58 @@ static void vol_key(pl_core_t *c, int which, int dir, double t){
     if(which == KA_LONG) g_ramp_last = t;
 }
 
+/* ---- Outputs (core.h): the two volumes are kept in OPL_VOLUMES (NAND, written a few seconds after the last change),
+ * the state goes to OPL_OUTPUTS (tmpfs) for the UI's Settings > Audio > Outputs whenever it changes. ---- */
+#define VOL_SAVE_DELAY_S 3.0
+static void load_volumes(pl_core_t *c){
+    FILE *f = fopen(OPL_VOLUMES, "re");
+    if(!f){ if(errno != ENOENT) logmsg("outputs: open %s: %s", OPL_VOLUMES, strerror(errno)); return; }
+    int va = c->vol_aux, vb = c->vol_bt;
+    char l[64];
+    while(fgets(l, sizeof l, f)){
+        if(!strncmp(l, "vol_aux=", 8)) va = atoi(l + 8);
+        else if(!strncmp(l, "vol_bt=", 7)) vb = atoi(l + 7);
+    }
+    fclose(f);
+    pl_core_load_volumes(c, va, vb);
+    logmsg("outputs: volumes AUX %d, Bluetooth %d (%s)", c->vol_aux, c->vol_bt, OPL_VOLUMES);
+}
+static void save_volumes(const pl_core_t *c){
+    char tmp[sizeof OPL_VOLUMES + 8];
+    snprintf(tmp, sizeof tmp, "%s.tmp", OPL_VOLUMES);
+    FILE *f = fopen(tmp, "we");
+    if(!f || fprintf(f, "vol_aux=%d\nvol_bt=%d\n", c->vol_aux, c->vol_bt) < 0 || fflush(f) != 0 || fsync(fileno(f)) != 0){
+        logmsg("outputs: write %s: %s", tmp, strerror(errno));
+        if(f) fclose(f);
+        return;
+    }
+    fclose(f);
+    if(rename(tmp, OPL_VOLUMES) != 0) logmsg("outputs: rename %s: %s", tmp, strerror(errno));
+}
+static void write_outputs(const pl_core_t *c, const char *path){
+    static char last[512];
+    char b[512];
+    snprintf(b, sizeof b, "aux=%d\nbt=%d\nvol_aux=%d\nvol_bt=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\ncodecs=%s\nswitching=%d\n",
+             pb_aux(), pb_bluetooth(), c->vol_aux, c->vol_bt, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
+             pb_switching());
+    if(!strcmp(b, last)) return;
+    char tmp[300];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "we");
+    if(!f || fputs(b, f) < 0 || fclose(f) != 0){ logmsg("outputs: write %s: %s", tmp, strerror(errno)); return; }
+    if(rename(tmp, path) != 0){ logmsg("outputs: rename %s: %s", tmp, strerror(errno)); return; }
+    snprintf(last, sizeof last, "%s", b);
+}
+
 int main(int argc, char **argv){
-    int use_wd = 1; const char *logpath = LOG_DEFAULT, *qprefix = "/", *keypath = KEY_DEV;
+    int use_wd = 1; const char *logpath = LOG_DEFAULT, *qprefix = "/", *keypath = KEY_DEV, *outpath = OPL_OUTPUTS;
     for(int i = 1; i < argc; i++){
         if(!strcmp(argv[i], "-n")) use_wd = 0;
         else if(!strcmp(argv[i], "-l") && i + 1 < argc) logpath = argv[++i];
         else if(!strcmp(argv[i], "-q") && i + 1 < argc) qprefix = argv[++i];
         else if(!strcmp(argv[i], "-k") && i + 1 < argc) keypath = argv[++i];
-        else { fprintf(stderr, "usage: diskos-player [-n] [-l <log>] [-q <prefix>] [-k <keys>]\n"); return 2; }
+        else if(!strcmp(argv[i], "-o") && i + 1 < argc) outpath = argv[++i];
+        else { fprintf(stderr, "usage: diskos-player [-n] [-l <log>] [-q <prefix>] [-k <keys>] [-o <outputs>]\n"); return 2; }
     }
     g_log = !strcmp(logpath, "-") ? stderr : fopen(logpath, "ae");
     if(!g_log) g_log = stderr;
@@ -201,12 +246,15 @@ int main(int argc, char **argv){
     core.resume_mode = rv >= 0 && rv <= 2 ? rv : 0;
     int resume_saved = core.resume_mode;
 
+    if(use_wd) load_volumes(&core);                            /* host runs (-n) keep the defaults */
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
     if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     if(use_wd) pb_resume_begin(sd_is_mounted, RESUME_FLAG);    /* host runs (-n) have no library */
-    int att_vol = -1, att_gain = -1, att_bal = -1, bt_vol = -1;
-    unsigned route_seq = core.route_seq;
+    int att_vol = -1, att_gain = -1, att_bal = -1, att_curve = -1, bt_vol = -1;
+    unsigned route_seq = core.route_seq, codec_seq = core.codec_seq;
+    int saved_aux = core.vol_aux, saved_bt = core.vol_bt;
+    double vol_changed = 0;
 
     /* The keys. The stock player grabs them, so the UI never sees them (ui/main.c reads the Power level from the GPIO
      * instead); we do the same. Without the device the player still runs, only without keys. */
@@ -221,6 +269,9 @@ int main(int argc, char **argv){
 
     int jack = use_wd ? hw_jack_open() : -1;           /* host runs have no /dev/gpio */
     if(use_wd && jack < 0) logmsg("jack: open %s: %s - no jack detection", JACK_DEV, strerror(errno));
+    int bal = use_wd ? hw_bal_open() : -1;             /* the 4.4 mm plug (hw.h) */
+    if(use_wd && bal < 0) logmsg("jack: open %s: %s - no 4.4 mm detection", BAL_DEV, strerror(errno));
+    int bal_state = -1, bal_count = 0, bal_logged = 0;
 
     double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0, last_jack = 0;
     int stable = 0; unsigned sleep_seq = 0, usb_seq = 0;
@@ -307,25 +358,46 @@ int main(int argc, char **argv){
             if(r < 0) logmsg("watchdog: feed failed: %s", strerror(-r));
             last_feed = t;
         }
-        if(jack >= 0 && (t - last_jack) * 1000.0 >= JACK_POLL_MS){
+        if((jack >= 0 || bal >= 0) && (t - last_jack) * 1000.0 >= JACK_POLL_MS){
             last_jack = t;
-            int lv = hw_jack_read(jack);
+            int lv = jack >= 0 ? hw_jack_read(jack) : 0;
             if(lv < 0){ logmsg("jack: read: %s - no jack detection from now on", strerror(errno)); close(jack); jack = -1; }
-            else pl_core_jack(&core, lv);
+            else if(jack >= 0) pl_core_jack(&core, lv);
+            if(bal >= 0){
+                int bv = hw_bal_read(bal);
+                if(bv < 0){ logmsg("jack: read %s: %s - no 4.4 mm detection from now on", BAL_DEV, strerror(errno)); close(bal); bal = -1; }
+                else {
+                    if(bal_logged < 3){ bal_logged++; logmsg("jack: %s reads %d", BAL_DEV, bv); }   /* first values, for the device check */
+                    if(hw_debounce(&bal_state, &bal_count, hw_bal_level(bv))){
+                        logmsg("jack: %s = %d -> 4.4 mm plug %s", BAL_DEV, bv, bal_state ? "in" : "out");
+                        pl_core_bal(&core, bal_state);
+                    }
+                }
+            }
         }
         eng_check();
-        if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.volume; }
-        if(pb_bluetooth() && core.volume != bt_vol){           /* the headphones' own volume (BlueALSA) */
-            bt_vol = core.volume;
-            bto_volume(pb_bt_mac(), core.volume, PL_VOL_MAX, logmsg);
+        if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.vol_bt; }
+        if(core.codec_seq != codec_seq){ codec_seq = core.codec_seq; pb_codec(core.codec_want); }
+        if(pb_bluetooth() && !pb_switching() && core.vol_bt != bt_vol){   /* the headphones' own volume (BlueALSA) */
+            bt_vol = core.vol_bt;
+            bto_volume(pb_bt_mac(), core.vol_bt, PL_VOL_MAX, logmsg);
         }
-        if(!pb_bluetooth() && dac_current_rate() && (core.volume != att_vol || core.gain != att_gain || core.balance != att_bal)){
+        int gain = core.gain && pl_core_plugged(&core), curve = core.bal == 1;
+        if(pb_aux() && dac_current_rate() && (core.vol_aux != att_vol || gain != att_gain || core.balance != att_bal || curve != att_curve)){
             unsigned char a, l;
-            dac_attenuation(core.volume, core.gain, core.balance, &a, &l);
+            pb_attenuation(&a, &l);
             dac_set_attenuation(a, l, logmsg);
-            att_vol = core.volume; att_gain = core.gain; att_bal = core.balance;
+            att_vol = core.vol_aux; att_gain = gain; att_bal = core.balance; att_curve = curve;
+        }
+        if(core.vol_aux != saved_aux || core.vol_bt != saved_bt){
+            if(!vol_changed) vol_changed = t;
+            if(t - vol_changed >= VOL_SAVE_DELAY_S){
+                saved_aux = core.vol_aux; saved_bt = core.vol_bt; vol_changed = 0;
+                if(use_wd) save_volumes(&core);
+            }
         }
         pb_tick(t);
+        write_outputs(&core, outpath);
         for(int i = 0; i < 3; i++) if(core.key_action[i] != key_saved[i]){   /* 0820-0822: kept like the stock player */
             key_saved[i] = core.key_action[i];
             if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, KEY_COL[i], core.key_action[i]) != 0)
@@ -350,6 +422,7 @@ int main(int argc, char **argv){
             sleep_at = 0;
             logmsg("power off (sleep timer or held Power key)%s", use_wd ? "" : " (dry run, -n)");
             pb_shutdown();
+            if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt)) save_volumes(&core);
             hw_power_off(wd, !use_wd, logmsg);
             if(use_wd) logmsg("power off did not happen");
         }
@@ -365,12 +438,14 @@ int main(int argc, char **argv){
     logmsg("=== diskos-player stop: %u frames, %u malformed, %u unknown", core.frames, core.bad_frames,
            core.unknown_tags);
     pb_shutdown();
+    if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt)) save_volumes(&core);
     eng_stop();
     pb_close();
     dac_close();
     if(wd >= 0){ wd_stop(wd); wd_close(wd); }
     if(keys >= 0) close(keys);
     if(jack >= 0) close(jack);
+    if(bal >= 0) close(bal);
     if(uev >= 0) close(uev);
     mq_close(pl);
     if(g_ui != (mqd_t)-1) mq_close(g_ui);
