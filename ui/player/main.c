@@ -12,6 +12,7 @@
  *     off, Volume up/down step the volume and tell the UI (a714);
  *   - mounts the SD card when it is inserted and unmounts it when it is pulled (sdcard.c, kernel uevents; the
  *     cold-boot mount is the UI's);
+ *   - reads the headphone jack like the stock player (hw.c) and pauses when it is unplugged (core.c);
  *   - USB storage mode (0642 1): hands the card to a USB host as a mass storage gadget, and back on 0642 0
  *     (usbstorage.c);
  *   - runs the stock power off routine when the sleep timer (0806) runs out (hw.c);
@@ -158,7 +159,10 @@ int main(int argc, char **argv){
     if(use_wd && uev < 0) logmsg("sd: uevent socket: %s - no card hot-plug", strerror(errno));
     else if(use_wd) logmsg("sd: listening for card events (fd %d)", uev);
 
-    double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0;
+    int jack = use_wd ? hw_jack_open() : -1;           /* host runs have no /dev/gpio */
+    if(use_wd && jack < 0) logmsg("jack: open %s: %s - no jack detection", JACK_DEV, strerror(errno));
+
+    double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0, last_jack = 0;
     int stable = 0; unsigned sleep_seq = 0, usb_seq = 0;
     while(!g_stop){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
@@ -223,6 +227,12 @@ int main(int argc, char **argv){
             if(r < 0) logmsg("watchdog: feed failed: %s", strerror(-r));
             last_feed = t;
         }
+        if(jack >= 0 && (t - last_jack) * 1000.0 >= JACK_POLL_MS){
+            last_jack = t;
+            int lv = hw_jack_read(jack);
+            if(lv < 0){ logmsg("jack: read: %s - no jack detection from now on", strerror(errno)); close(jack); jack = -1; }
+            else pl_core_jack(&core, lv);
+        }
         if(core.usb_seq != usb_seq){                     /* 0642: the UI's "USB storage" source */
             usb_seq = core.usb_seq;
             if(core.usb_gadget == 1) us_start(!use_wd, logmsg);
@@ -252,6 +262,7 @@ int main(int argc, char **argv){
            core.unknown_tags);
     if(wd >= 0){ wd_stop(wd); wd_close(wd); }
     if(keys >= 0) close(keys);
+    if(jack >= 0) close(jack);
     if(uev >= 0) close(uev);
     mq_close(pl);
     if(g_ui != (mqd_t)-1) mq_close(g_ui);

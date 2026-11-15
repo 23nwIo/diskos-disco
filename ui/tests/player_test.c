@@ -85,6 +85,10 @@ static void test_core(void){
     unsigned sq = c.sleep_seq;
     CHECK(send1(&c, "0806000C0001") == 0 && c.sleep_s == 1 && c.sleep_seq == sq + 1);
     CHECK(send1(&c, "0806000C0000") == 0 && c.sleep_s == 0 && c.sleep_seq == sq + 2);
+    CHECK(c.jack == -1);                                          /* jack: first level recorded, then changes */
+    pl_core_jack(&c, 1); CHECK(c.jack == 1);
+    pl_core_jack(&c, 0); CHECK(c.jack == 0);
+    pl_core_jack(&c, 1); CHECK(c.jack == 1);
     unsigned uq = c.usb_seq;                                      /* 0642: storage on/off; the USB audio gadgets not yet */
     CHECK(send1(&c, "0642000C0001") == 0 && c.usb_gadget == 1 && c.usb_seq == uq + 1);
     CHECK(send1(&c, "0642000C0005") == 0 && c.usb_gadget == 1 && c.usb_seq == uq + 1);

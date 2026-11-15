@@ -225,8 +225,9 @@ the menu's "Shut down" works. It owns the keys like the stock player (grabs `/de
 touch, panel, as traced), a held Power key powers off after 2 s (the stock delay is not measured), Volume up/down step
 the volume by 1 and report it with `a714`. It mounts the SD card when it is inserted and unmounts it when it is
 pulled (kernel uevents for `mmcblk0`, ui/player/sdcard.c; a dead mount left from a missed pull is detached first; ext4 first, then vfat/exfat with iocharset=utf8 like the stock player);
+It reads the headphone jack as the stock player does (`/dev/gpio` `pb20`, polled every 330 ms) and pauses on unplug.
 USB storage mode (`0642 1`/`0`) exports the card to a USB host with the stock player's configfs gadget (ui/player/usbstorage.c);
-the cold-boot mount stays the UI's. **No sound yet**: playback, the DAC sequences, the queue tables, the jack
+the cold-boot mount stays the UI's. **No sound yet**: playback, the DAC sequences, the queue tables
 and the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off with the own player) come next.
 The stock power off also writes "rfkill 0" (`/sys/class/rfkill/rfkill0/state`); copied.
 Host test: `make -C ui/tests player_test && ui/tests/player_test ui/tests/diskos-player-host`.

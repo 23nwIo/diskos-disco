@@ -23,6 +23,7 @@
 #define TOUCH_IOC_OFF   0x2000ef03UL      /* _IO(0xef,3) */
 #define TOUCH_IOC_ON    0x2000ef04UL      /* _IO(0xef,4) */
 #define RFKILL0         "/sys/class/rfkill/rfkill0/state"
+#define GPIO_IOC_LEVEL  0x2000477aUL      /* _IO('G',122): level of the pin named by the argument */
 #define BL_STOCK_LEVEL  "31"              /* what the stock player writes; the UI then sets its own level */
 
 static void run(const char *cmd, int dry, hw_log_fn log){
@@ -108,4 +109,14 @@ int hw_screen_toggle(int dry, hw_log_fn log){
         quiet_ioctl(TOUCH_DEV, TOUCH_IOC_ON, "touch on", log);
     }
     return !on;
+}
+
+int hw_jack_open(void){ return open(JACK_DEV, O_RDWR | O_CLOEXEC); }
+
+int hw_jack_read(int fd){
+    /* the stock player's buffer: "pb20", NUL padded (its next bytes are unrelated text, so the driver reads a string) */
+    char pin[16] = "pb20";
+    int r = ioctl(fd, GPIO_IOC_LEVEL, pin);
+    if(r < 0) return -1;
+    return r ? 1 : 0;
 }

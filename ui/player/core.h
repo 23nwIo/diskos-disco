@@ -29,6 +29,7 @@ typedef struct {
     int route;                     /* 0666 output route; -1 none yet */
     int idle_off_s, sleep_s;       /* 0 off */
     unsigned sleep_seq;            /* bumps on every 0806, so the main loop (re)starts or cancels the timer */
+    int jack;                      /* headphone plug: 1 in, 0 out, -1 not known */
     int usb_gadget;                /* 0642: 0 none, 1 USB storage (2 and 5, the USB audio gadgets, not yet) */
     unsigned usb_seq;              /* bumps on every accepted 0642, so the main loop starts or stops the gadget */
     /* remembered only (Step 2 "keep") */
@@ -47,6 +48,10 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n);
 
 /* Volume key: one step up (+1) or down (-1), within 0..max_volume; the UI hears it as a714. */
 void pl_core_volume_step(pl_core_t *c, int dir);
+
+/* Headphone jack level changed (1 in, 0 out). Unplugging pauses playback, plugging in again leaves it paused (as the
+ * stock player; Jo 2026-11-15). The first call only records the level. */
+void pl_core_jack(pl_core_t *c, int plugged);
 
 /* Send the current state as an a2 frame (what 0202 answers). */
 void pl_core_send_state(pl_core_t *c);

@@ -20,7 +20,7 @@ void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx){
     /* Defaults until the UI re-sends its settings (ui_reapply_audio does that once the player answers). The volume
      * starts low on purpose: a player that has not been told the volume yet must not be loud. */
     c->volume = 20; c->max_volume = PL_VOL_MAX;
-    c->gain = 0; c->dre = 0; c->work_mode = -1; c->route = -1;
+    c->gain = 0; c->dre = 0; c->work_mode = -1; c->route = -1; c->jack = -1;
 }
 
 void pl_core_send_state(pl_core_t *c){
@@ -43,6 +43,15 @@ void pl_core_volume_step(pl_core_t *c, int dir){
     c->volume = v;
     logf_(c, "volume key: volume = %d", v);
     send_volume(c);
+}
+
+void pl_core_jack(pl_core_t *c, int plugged){
+    int first = c->jack < 0;
+    if(c->jack == plugged) return;
+    c->jack = plugged;
+    if(first){ logf_(c, "jack: headphones %s", plugged ? "in" : "out"); return; }
+    if(plugged){ logf_(c, "jack: headphones in (playback stays paused)"); return; }
+    logf_(c, "jack: headphones out - pause (no playback yet, nothing to pause)");
 }
 
 /* a class 1 setting: store v in *slot if it is within lo..hi */

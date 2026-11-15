@@ -14,6 +14,15 @@ void hw_power_off(int wd_fd, int dry_run, hw_log_fn log);
  * UI follows the backlight (ui/main.c, PW-10) and puts its own brightness back on. Returns 1 = now on, 0 = now off. */
 int hw_screen_toggle(int dry_run, hw_log_fn log);
 
+/* Headphone jack, as the stock player reads it (trace runs 1-3): /dev/gpio ioctl _IO('G',122) = 0x2000477a with a
+ * pointer to the pin name "pb20"; the return value is the level, 1 = plug in, 0 = out. The stock player polls it about
+ * three times a second (no kernel event for it is known yet). hw_jack_open: the descriptor or -1 (errno set);
+ * hw_jack_read: 1, 0 or -1 (errno set). */
+#define JACK_DEV  "/dev/gpio"
+#define JACK_POLL_MS 330
+int hw_jack_open(void);
+int hw_jack_read(int fd);
+
 /* Keys of /dev/input/event0 ("x2000_key", device-checked 2026-11-15). The driver reports clicks: press and release
  * arrive together, and a held Power key comes as its own code. */
 #define KEY_DEV        "/dev/input/event0"
