@@ -148,6 +148,7 @@ typedef struct {
 } book_t;
 int  mdb_total_song_count(void);                            /* full SONG count incl. audiobooks (buffer sizing / empty check) */
 int  mdb_is_book_path(const char *path);                    /* 1 if this path is an audiobook (.m4b) */
+int  mdb_is_stream_path(const char *path);   /* 1 = a web stream (http/https): the station after the list, not a song */
 int  mdb_song_genre(const char *path, int track, char *out, int cap);   /* GENRE of the song row for `path` (sub-track `track` > 0, else the first row); 1 = found. Safe off the UI thread */
 int  mdb_books(book_t *out, int max);                       /* list audiobooks, continue-listening first */
 int  mdb_book_progress(const char *key, char *member_out, int member_cap, long *position_ms, int *completed_out, long *updated_out); /* 1 if bookmark */

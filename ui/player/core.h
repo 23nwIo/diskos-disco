@@ -17,6 +17,10 @@
 #define PL_AUTO_OFF    0           /* nothing: the choice stays as it is; a device that is not on gets a notice */
 #define PL_AUTO_NEWEST 1           /* the device just connected becomes the only output (as before 0d05) */
 #define PL_AUTO_ALL    2           /* every connected device plays: a plug in AUX, connected headphones Bluetooth */
+/* 0d11: what plays when the list ends (the last song of a list that doesn't repeat, the UI's queue included) */
+#define PL_END_STOP    0           /* nothing (the stock behaviour) */
+#define PL_END_SHUFFLE 1           /* every song in the library, shuffled */
+#define PL_END_STATION 2           /* the station of 0d12, until something else is played */
 #define PL_NOTICE_AUX  1           /* notice: a plug went in, AUX is off (auto off) */
 #define PL_NOTICE_BT   2           /* notice: headphones connected, Bluetooth is off (auto off) */
 
@@ -68,6 +72,8 @@ typedef struct {
     int bt_auto;                   /* 0666 2 seen: the next 06b3 turns Bluetooth on and AUX off */
     int codec_want;                /* 0d04: the codec asked for this connection (ui/bt.c numbering), -1 none */
     int auto_out;                  /* 0d05: PL_AUTO_*; PL_AUTO_NEWEST until the UI says */
+    int end_mode;                  /* 0d11: PL_END_*; PL_END_STOP until the UI says */
+    char end_name[128], end_url[600];   /* 0d12: the station for PL_END_STATION ("" none) */
     int notice;                    /* PL_NOTICE_* of the last notice, for the UI (OPL_OUTPUTS "notice=") */
     unsigned notice_seq;           /* bumps on every notice */
     unsigned codec_seq;            /* bumps on every accepted 0d04 */

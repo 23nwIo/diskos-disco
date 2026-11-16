@@ -93,6 +93,8 @@ static void test_station_frame(void){                      /* 0d10 for the own p
     CHECK(n == 12 + 11 + 29 && !strcmp(f, "0d100034000BJazz & Morehttp://radio.example/live?a=1"));
     CHECK(rc_station_frame(NULL, f, sizeof f) == 12 && !strcmp(f, "0d10000C0000"));
     CHECK(rc_station_frame(&s, f, 20) == -1);
+    CHECK(rc_station_frame_tag("0d12", NULL, f, sizeof f) == 12 && !strcmp(f, "0d12000C0000"));
+    CHECK(rc_station_frame_tag("0d1", &s, f, sizeof f) == -1);
 }
 static void test_upnp(void){
     char host[64], path[256], out[2048]; int port;

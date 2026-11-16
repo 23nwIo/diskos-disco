@@ -892,7 +892,7 @@ void lastfm_watch(const track_state_t *st){
      * a paused seek) must never advertise Now Playing. */
     /* Audiobooks are not music: never advertise Now Playing or scrobble them. Treated as "no track" so
      * the outgoing music candidate still finalizes and a book never becomes a candidate. */
-    int have = st->have_track && st->title[0] && st->artist[0] && !mdb_is_book_path(st->path);
+    int have = st->have_track && st->title[0] && st->artist[0] && !mdb_is_book_path(st->path) && !mdb_is_stream_path(st->path);
     if(!have){                          /* truly stopped / no track / a book: finalize + forget so a replay counts as new */
         lfm_finalize_candidate();
         g_have_cur=0; g_cur_track[0]=0; g_cur_artist[0]=0;

@@ -1634,6 +1634,9 @@ int mdb_song_genre(const char *path, int track, char *out, int cap){
 }
 
 /* ---- Audiobooks (v1: single-file .m4b books) ------------------------------ */
+int mdb_is_stream_path(const char *path){
+    return path && (!strncmp(path, "http://", 7) || !strncmp(path, "https://", 8));
+}
 int mdb_is_book_path(const char *path){
     if(!DISKOS_AUDIOBOOKS) return 0;   /* compile-time gate (currently 1): when built out, a .m4b is treated as ordinary audio, not a book */
     if(!path) return 0;

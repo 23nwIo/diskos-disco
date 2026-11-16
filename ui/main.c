@@ -1079,6 +1079,7 @@ static void reapply_sends(void){
         { void settings_radio_cert_sync(void); settings_radio_cert_sync(); }   /* Radio Certificates: the player's flag file */
         int ao = simple_cfg_get_int("out_auto", 1);    if(opl_running() && ao >= 0 && ao <= 2){   /* Auto Outputs (own player only) */
             char f[16]; snprintf(f, sizeof f, "0d05000C%04X", (unsigned)ao); ipc_send_cmd(f); }
+        radio_end_sync();                                                  /* After the List Ends (own player only) */
     }
 }
 /* When a play triggers a full list rebuild (seconds), we show "Starting..." and

@@ -159,6 +159,24 @@ title file.
   `player`); ui/radio.c reads it every 2 s instead of its own ICY connection (only when the own player runs). Checked
   under qemu: MPD names the ICY title of a test stream.
 
+## After the list ends
+
+Since 2026-11-16 (Jo, for the party mode of Remote Control): Settings > Playback > After the List Ends (cfg
+`end_mode`, own player only) says what plays when the last song of a list has ended and the UI queue is empty:
+**Stop** (as before), **Shuffle All** or **Last Station** (the radio station played last; cfg `end_st_name`,
+`end_st_url`, kept by `radio_play`). ui/radio.c `radio_end_sync` sends both to the player as `0d12` (the station) and
+`0d11` (the mode) at its start and after each change (PLAYER_PROTOCOL.md). In the player (`playback.c`
+`list_ended`, called when MPD stops after the last song with nothing next):
+- Shuffle All: play mode shuffle and a new list of all songs from a random one (`pb_play_list(QD_ALL,
+  PB_POS_RANDOM)`); the UI hears the play mode change (`a102`) and the new list as usual.
+- Last Station: MPD plays the URL in local work mode (`g_tail`), and the UI gets a local track frame: title = the
+  stream's title (ICY), else the station; artist = the station; album "Web radio". A new stream title sends a new
+  frame. Play/pause work, seek is refused, Next/Prev start the list again from its first song; any new list ends the
+  station. The UI does not count it in history, statistics or Last.fm (`mdb_is_stream_path`).
+- Songs added to the UI queue (ui/queue.c) while the station plays interrupt it: the queue plays them, and when they
+  have ended the list ends again and the station comes back. This is what Remote Control's party mode relies on.
+- Host-tested (playback_test `test_list_end`); not checked on a Disc.
+
 ## Next
 
 Web radio: use MPD's ICY title instead of the UI's poll. Bluetooth: bluealsa plugin built into MPD as the primary way (Jo 2026-11-15; needs a static

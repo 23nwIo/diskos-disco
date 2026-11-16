@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
    for line in r.stdout.splitlines():
     if not line.startswith('SETTINGS_ROW|'):continue
     _,page,label,toggle,key,kind=line.split('|');pages.setdefault(page,[]).append({'label':label,'toggle':int(toggle),'key':key,'kind':int(kind)})
-   assert [x['label'] for x in pages['Playback']]==playback,(theme,pages['Playback'])
+   want=playback[:2]+(['After the List Ends'] if own else [])+playback[2:]   # the own player only
+   assert [x['label'] for x in pages['Playback']]==want,(theme,pages['Playback'])
    assert [x['label'] for x in pages['Audio']]==audio,(theme,pages['Audio'])
    assert not any(x['label']=='Custom EQ' for items in pages.values() for x in items)
    if own:assert [x['label'] for x in pages['Outputs']]==['Auto Outputs','AUX Volume','Bluetooth Codec','Bluetooth Volume','AUX','Bluetooth'],(theme,pages['Outputs'])

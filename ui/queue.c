@@ -439,6 +439,16 @@ void queue_tick(const track_state_t *st, int playing){
     int was_playing = g_was_playing; g_was_playing = playing;
     if(!st || !st->have_track || !ui_local_playback_allowed() || modes_output_busy()) return;
     load();
+    /* The station after the list (own player, Settings > Playback > After the List Ends) plays as one endless song:
+     * songs queued meanwhile start at once (queue_next: the queue plays on its own), and the station comes back when
+     * they have ended. */
+    if(g_qn > 0 && playing && mdb_is_stream_path(st->path)){
+        static uint32_t tried;
+        if(tried && lv_tick_elaps(tried) < 3000) return;
+        tried = lv_tick_get() | 1;
+        if(queue_next() <= 0) fprintf(stderr, "queue: the station after the list didn't hand over to the queue\n");
+        return;
+    }
     /* The song's ID only changes with the track: look it up once per (path, list position, title), not every frame.
      * A busy database is retried at most twice a second and never waited on for long (it froze the UI in scans). */
     static char k_path[sizeof st->path], k_title[sizeof st->title]; static int k_pos = -1, k_id; static uint32_t k_retry, k_at;

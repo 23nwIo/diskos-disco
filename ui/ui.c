@@ -4268,7 +4268,7 @@ void ui_history_tick(const track_state_t *st)
     if(strcmp(seen, st->path)){ copy_cstr(seen, sizeof seen, st->path); seen_at = lv_tick_get(); }
     if(st->state==2 && st->path[0] && strcmp(g_stat_path, st->path) != 0 && lv_tick_elaps(seen_at) >= 1000){
         copy_cstr(g_stat_path, sizeof g_stat_path, st->path);          /* track identity always (so a music replay after a book still counts) */
-        if(!mdb_is_book_path(st->path)) mdb_record_play(st->path);     /* but audiobooks are excluded from play history */
+        if(!mdb_is_book_path(st->path) && !mdb_is_stream_path(st->path)) mdb_record_play(st->path);     /* but audiobooks and stations are excluded from play history */
     }
 
 }

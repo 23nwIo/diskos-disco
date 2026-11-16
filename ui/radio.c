@@ -680,6 +680,40 @@ int radio_play(const rc_station_t *s){
     g_shown_state = RS_STARTING;
     ui_toast("Tuning in...");
     poll_start();
+    radio_end_set(-1, s);                              /* the last station played is the one after the list */
+    return 0;
+}
+/* ================================================================ after the list ends */
+#define END_CFG_MODE "end_mode"
+#define END_CFG_NAME "end_st_name"
+#define END_CFG_URL  "end_st_url"
+int radio_end_get(rc_station_t *st){
+    if(st){
+        memset(st, 0, sizeof *st);
+        snprintf(st->name, sizeof st->name, "%s", cfg_get_str(END_CFG_NAME, ""));
+        snprintf(st->url, sizeof st->url, "%s", cfg_get_str(END_CFG_URL, ""));
+    }
+    int m = cfg_get_int(END_CFG_MODE, RADIO_END_STOP);
+    return m >= RADIO_END_STOP && m <= RADIO_END_STATION ? m : RADIO_END_STOP;
+}
+void radio_end_sync(void){
+    if(!opl_running()) return;                           /* the stock player knows none of this */
+    rc_station_t st; int m = radio_end_get(&st);
+    char f[16 + RC_NAME_LEN + RC_URL_LEN];
+    if(rc_station_frame_tag("0d12", st.url[0] ? &st : NULL, f, sizeof f) < 0 || ipc_send_cmd(f) < 0)
+        fprintf(stderr, "radio: the player didn't take the station after the list\n");
+    snprintf(f, sizeof f, "0d11000C%04X", (unsigned)m);
+    if(ipc_send_cmd(f) < 0) fprintf(stderr, "radio: the player didn't take \"after the list ends\" (%d)\n", m);
+}
+int radio_end_set(int mode, const rc_station_t *s){
+    if(mode != -1 && (mode < RADIO_END_STOP || mode > RADIO_END_STATION)) return -1;
+    if(s && (!rc_url_ok(s->url))) return -1;
+    int changed = 0;
+    if(mode != -1 && cfg_get_int(END_CFG_MODE, RADIO_END_STOP) != mode){ cfg_set_int(END_CFG_MODE, mode); changed = 1; }
+    if(s && (strcmp(cfg_get_str(END_CFG_URL, ""), s->url) || strcmp(cfg_get_str(END_CFG_NAME, ""), s->name))){
+        cfg_set_str(END_CFG_NAME, s->name); cfg_set_str(END_CFG_URL, s->url); changed = 1;   /* only when it changes: flash */
+    }
+    if(changed) radio_end_sync();
     return 0;
 }
 int radio_search(const char *query){

@@ -538,6 +538,62 @@ static void test_radio(void){
     pb_close();
 }
 
+/* ---- after the list (0d11 / 0d12) ---- */
+static void test_list_end(void){
+    pl_core_t c;
+    pl_core_init(&c, cap_send, NULL, NULL);
+    pb_close(); e_cur[0] = 0; e_state = ENG_STOP; e_title[0] = 0;
+    pb_init(&c, dbp, sysp, quiet);
+    /* the frames */
+    CHECK(pl_core_handle(&c, "0d11000C0002", 12) == 0 && c.end_mode == PL_END_STATION);
+    CHECK(pl_core_handle(&c, "0d11000C0003", 12) == -1 && c.end_mode == PL_END_STATION);
+    char st[128]; snprintf(st, sizeof st, "0d12%04X0003FM4https://fm4.example/live", (unsigned)(12 + 3 + 24));
+    CHECK(pl_core_handle(&c, st, (int)strlen(st)) == 0 && !strcmp(c.end_name, "FM4") && !strcmp(c.end_url, "https://fm4.example/live"));
+    /* Stop (the default): the last song ends, nothing more */
+    c.end_mode = PL_END_STOP;
+    CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
+    e_song_ends();
+    CHECK(e_state == ENG_STOP && !pb_tail_active());
+    /* Station: the station plays on as a local song, named by the station; a new title is a new track frame */
+    c.end_mode = PL_END_STATION;
+    CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
+    nsent = 0;
+    e_song_ends();
+    CHECK(pb_tail_active() && !strcmp(e_cur, "https://fm4.example/live") && e_state == ENG_PLAY);
+    CHECK(sent_count("\"work_mode\":\"LOCAL\"") == 1 && sent_count("\\\"song_name\\\":\\\"FM4\\\"") == 1);
+    nsent = 0;
+    snprintf(e_title, sizeof e_title, "Some Band - Song 1"); pb_engine_event();
+    CHECK(nsent >= 1 && sent_count("Some Band - Song 1") == 1);
+    nsent = 0; pb_engine_event();
+    CHECK(sent_count("Some Band - Song 1") == 0);              /* the same title: no new frame */
+    CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PAUSE);
+    CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PLAY);
+    CHECK(pb_transport(PL_T_SEEK, 1000) == -1);
+    /* Next: the list again from its start */
+    CHECK(pb_transport(PL_T_NEXT, 0) == 0 && !pb_tail_active() && !strcmp(e_cur, "/s/a1.flac"));
+    /* a new list (the UI's queue) ends the station too */
+    e_song_ends(); e_song_ends(); e_song_ends();
+    CHECK(pb_tail_active());
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0 && !pb_tail_active() && !strcmp(e_cur, "/s/a1.flac"));
+    e_title[0] = 0;
+    /* no station set: stops as before */
+    c.end_url[0] = 0;
+    CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
+    e_song_ends();
+    CHECK(!pb_tail_active() && e_state == ENG_STOP);
+    /* Shuffle: every song of the library, in the Shuffle play mode */
+    c.end_mode = PL_END_SHUFFLE; c.play_mode = PQ_IN_ORDER;
+    CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
+    nsent = 0;
+    e_song_ends();
+    CHECK(c.play_mode == PQ_SHUFFLE && e_state == ENG_PLAY && e_cur[0] == '/');
+    pb_engine_event();
+    CHECK(sent_count("a102000C0001") == 1);                     /* the UI hears the play mode */
+    sqlite3 *d; sqlite3_open(dbp, &d);
+    CHECK(count(d, "SELECT COUNT(*) FROM LIST_SONG_0;") == count(d, "SELECT COUNT(*) FROM SONG;"));
+    sqlite3_close(d);
+    c.play_mode = PQ_IN_ORDER; pb_mode_changed();
+}
 int main(void){
     make_db();
     test_queue();
@@ -546,6 +602,7 @@ int main(void){
     test_playback();
     test_resume();
     test_radio();
+    test_list_end();
     unlink(dbp); unlink(sysp);
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     printf("playback_test: all checks passed\n");

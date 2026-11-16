@@ -248,6 +248,7 @@ static void out_volume(int which, int v){
 /* Auto Outputs (cfg out_auto, 0d05): what connecting and disconnecting a plug or headphones does (player/core.h
  * PL_AUTO_*). Saved here and sent again whenever the player (re)starts (main.c reapply_sends). */
 static void apply_out_auto(int v){ if(own_player_cached()) out_send("0d05", v); }
+static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d11 + the station (0d12) */
 /* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
  * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
  * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX, 2 Bluetooth (v 0/1), 3 AUX volume, 4 Bluetooth volume
@@ -993,6 +994,10 @@ static const char *const OPT_DFILTER[]= { "Fast LL","Slow LL","Slow PC","Fast PC
 static const char *const OPT_MEMORY[] = { "Off", "Position", "Song" };
 static const char *const OPT_ARTISTCLASS[] = { "By Artist", "By Album Artist" };
 static const char *const OPT_RADIOFAV[] = { "On Player", "On SD Card" };
+static const char *const OPT_ENDMODE[] = { "Stop", "Shuffle All", "Last Station" };
+static const char *const OPT_ENDMODE_D[] = { "Playback stops, as always.",            /* short: Zune's dial */
+                                             "Every song, shuffled, endlessly.",
+                                             "The radio station played last." };
 static const char *const OPT_OUTAUTO[] = { "Off", "Newest", "All connected" };
 static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",          /* short: Zune's dial */
                                              "The newest device plays alone.",
@@ -1049,6 +1054,8 @@ static const setting_t TABLE[] = {
       "Disco has no verified DSD output selector. DSD handling remains with the stock player; this information row sends no command.", NULL },
     { "Playback", "Resume Playback", ST_CYCLER, "memory_play", 0,0,0, OPT_MEMORY, 3, NULL, apply_memory, 0,
       "On startup: Off starts fresh; Position resumes the spot; Song resumes the track. Stock player only for now.", NULL },
+    { "Playback", "After the List Ends", ST_CHOICE, "end_mode", 0,0,0, OPT_ENDMODE, 3, NULL, apply_end_mode, 0,
+      "What plays when the last song of a list and of the queue has ended. Queued songs interrupt the station. Own player only.", OPT_ENDMODE_D },
     { "Playback", "Artists",     ST_CYCLER, "artist_class", 0,0,0, OPT_ARTISTCLASS, 2, NULL, apply_artist_class, 0,
       "Group Artists by song artist or album artist, matching the stock player.", NULL },
     { "Playback", "SongSphere", ST_TOGGLE, "songsphere", 0,1,1, NULL, 0, NULL, NULL, 1,

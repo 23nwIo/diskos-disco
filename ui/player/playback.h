@@ -64,6 +64,7 @@ void pb_shutdown(void);
  * pause); pb_stream_start does both for a new station (0d10). */
 void pb_stream_mode(int on);
 int  pb_stream_active(void);
+int  pb_tail_active(void);              /* the station after the list plays (0d11 PL_END_STATION) */
 int  pb_stream_set(const char *uri, const char *title);
 int  pb_stream_play(void);
 int  pb_stream_pause(void);

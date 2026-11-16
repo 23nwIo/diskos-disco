@@ -36,6 +36,16 @@ int  radio_fav_nocard(void);                            /* 1 = the list is kept 
  * already saved; nothing is copied. 0 done, 1 done with a note in *why (no card). */
 int  radio_fav_move(int sd, const char **why);
 
+/* After the list ends (own player only; docs/MPD_CORE.md "After the list ends"): what plays when the last song of a
+ * list - the queue included - has ended. mode: RADIO_END_STOP, RADIO_END_SHUFFLE (every song, shuffled) or
+ * RADIO_END_STATION (the station named here; by default the last one played). Kept in diskos.conf (end_mode,
+ * end_st_name, end_st_url); the player gets 0d11 and 0d12. */
+#define RADIO_END_STOP    0
+#define RADIO_END_SHUFFLE 1
+#define RADIO_END_STATION 2
+int  radio_end_set(int mode, const rc_station_t *station);   /* mode -1 / station NULL: keep it; 0, -1 bad value */
+int  radio_end_get(rc_station_t *station);                    /* the mode; the station into *station (may be NULL) */
+void radio_end_sync(void);                                    /* tell the own player (at its start, after a change) */
 void radio_restart(void);                   /* main.c: the output was re-initialised (Bluetooth -> headphones): start the station again */
 void radio_mode_leaving(void);              /* main.c ui_set_source_mode: another source takes over (no mode switch here) */
 #endif

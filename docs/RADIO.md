@@ -82,3 +82,6 @@ For a front end such as Remote Control, `ui/radio.h` offers `radio_favorites`, `
 `radio_stop`, `radio_state`, `radio_station_name`, `radio_stream_title` ("Artist - Title", "" none), the directory search (`radio_search`, `radio_search_result`) and
 `radio_fav_add` / `radio_fav_remove`, `radio_fav_count` / `radio_fav_get` / `radio_fav_has` (main thread only). [Remote Control](REMOTE_CONTROL.md) uses them for
 its Radio tab, the [MPD Server](MPD.md#web-radio) for the stored playlist "Radio".
+`radio_end_set` / `radio_end_get` / `radio_end_sync` (`RADIO_END_STOP`, `_SHUFFLE`, `_STATION`) set what plays after the
+list ends with the own player, the station included ([MPD_CORE.md](MPD_CORE.md#after-the-list-ends)); the last station
+played becomes that station.

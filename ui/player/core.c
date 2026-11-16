@@ -316,6 +316,21 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         free(name); free(url);
         return r;
     }
+    case 0x0d12: {        /* the station for PL_END_STATION, as 0d10: name length (4 hex), the name, the URL; nothing = none */
+        long nl = f.dlen >= 4 ? strtol((char[]){ f.data[0], f.data[1], f.data[2], f.data[3], 0 }, NULL, 16) : -1;
+        if(f.dlen < 4 || nl < 0 || 4 + nl > f.dlen){ c->bad_frames++; logf_(c, "end station: bad frame"); return -1; }
+        long ul = f.dlen - 4 - nl;
+        if(nl >= (long)sizeof c->end_name || ul >= (long)sizeof c->end_url){ c->bad_frames++; logf_(c, "end station: too long"); return -1; }
+        memcpy(c->end_name, f.data + 4, (size_t)nl); c->end_name[nl] = 0;
+        memcpy(c->end_url, f.data + 4 + nl, (size_t)ul); c->end_url[ul] = 0;
+        logf_(c, "end station: \"%s\" %s", c->end_name, c->end_url[0] ? c->end_url : "(none)");
+        return 0;
+    }
+    case 0x0d11:
+        if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }
+        if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_SHUFFLE ? "shuffle all songs" : "station");
+        c->end_mode = v;
+        return 0;
     case 0x0d05:
         if(v < PL_AUTO_OFF || v > PL_AUTO_ALL){ c->bad_frames++; logf_(c, "auto outputs: bad value %d", v); return -1; }
         if(v == c->auto_out) return 0;

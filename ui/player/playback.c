@@ -65,6 +65,10 @@ static double g_rs_until, g_rs_mounted, g_rs_check;
 /* Web radio (pb_stream_*): the DLNA work mode (0657 0C), the station the renderer was given, whether it is in MPD, when
  * Play was given, whether its track frame went out, and the local song to come back to when the mode ends. */
 static int g_stream, g_st_loaded, g_st_told;
+/* The list ended and C->end_mode is PL_END_STATION: the station plays on in the local work mode, as one endless song,
+ * until something else is played (list_ended). g_tl_sent: the title the last track frame named. */
+static int g_tail;
+static char g_tl_url[600], g_tl_name[128], g_tl_sent[256];
 static char g_st_uri[1024], g_st_title[256];
 static double g_st_t;
 static int g_st_local = -1;
@@ -297,6 +301,47 @@ static void update_status(void){
 }
 
 static void stream_file(int on);
+static void stream_frame(int state, const char *uri, const char *title, const char *artist, const char *album,
+                         const char *work_mode);
+/* ---- after the list (0d11 PL_END_*, 0d12 the station) ---- */
+#define PB_POS_RANDOM (-2)                  /* pb_play_list: start at a random song */
+static void tail_frame(int force){
+    const char *t = g_es_valid && !strcmp(g_es.file, g_tl_url) && g_es.title[0] ? g_es.title : g_tl_name;
+    if(!force && !strcmp(t, g_tl_sent)) return;
+    snprintf(g_tl_sent, sizeof g_tl_sent, "%s", t);
+    stream_frame(g_es_valid && g_es.state == ENG_PLAY ? 0 : 1, g_tl_url, t, g_tl_name, "Web radio", "LOCAL");
+    if(strcmp(t, g_tl_name)) L("list end: station \"%s\" now \"%s\"", g_tl_name, t);
+}
+static void tail_event(void){
+    if(g_es.state == ENG_PLAY) tail_frame(0);          /* a new song named by the station: a new track frame */
+    if(g_es.state == ENG_STOP) L("list end: the station stopped (%s)", g_tl_url);
+    tell_state(g_es.state, 0);
+}
+static void tail_end(void){ g_tail = 0; g_tl_sent[0] = 0; }
+/* The last song of the list ended (no next one by the play mode). 0 when something plays on. */
+static int list_ended(void){
+    if(C->end_mode == PL_END_SHUFFLE){
+        L("list end: every song, shuffled");
+        if(C->play_mode != PQ_SHUFFLE){ C->play_mode = PQ_SHUFFLE; }   /* the UI hears it with the track (a102) */
+        return pb_play_list(QD_ALL, PB_POS_RANDOM, "");
+    }
+    if(C->end_mode == PL_END_STATION){
+        if(!C->end_url[0]){ L("list end: no station set (0d12)"); return -1; }
+        if(strncmp(C->end_url, "http://", 7) && strncmp(C->end_url, "https://", 8)){ L("list end: not a stream URL: %.80s", C->end_url); return -1; }
+        snprintf(g_tl_url, sizeof g_tl_url, "%s", C->end_url);
+        snprintf(g_tl_name, sizeof g_tl_name, "%s", C->end_name[0] ? C->end_name : "Web radio");
+        if(eng_cert_stale() && eng_restart() != 0) L("list end: MPD did not start again");
+        if(eng_load(g_tl_url, 0, 0, 0, 0) != 0){ L("list end: MPD can't play %s", g_tl_url); return -1; }
+        g_tail = 1; g_tl_sent[0] = 0; g_next = g_pending = -1; g_announce = 0;
+        L("list end: station \"%s\" %s", g_tl_name, g_tl_url);
+        update_status();
+        tail_frame(1);
+        tell_state(g_es_valid ? g_es.state : ENG_PLAY, 1);
+        return 0;
+    }
+    return -1;
+}
+int pb_tail_active(void){ return g_tail; }
 void pb_engine_event(void){
     int was = g_es_valid ? g_es.state : ENG_STOP;
     update_status();
@@ -308,6 +353,7 @@ void pb_engine_event(void){
         tell_state(g_es.state, 0);
         return;
     }
+    if(g_tail){ tail_event(); return; }
     if(g_es.state == ENG_STOP && was == ENG_PLAY && g_pending >= 0){   /* the song ended; the next needs the DAC restarted */
         int p = g_pending;
         sqlite3 *d = db();
@@ -325,6 +371,7 @@ void pb_engine_event(void){
         if(g_es.state != ENG_PLAY || g_es.rate) announce(&g_es);
         return;
     }
+    if(was == ENG_PLAY && g_es.state == ENG_STOP && g_next < 0 && Q.n > 0 && list_ended() == 0) return;
     if(was == ENG_PLAY && g_es.state != ENG_PLAY) remember_position("paused");
     tell_state(g_es.state, 0);
 }
@@ -374,6 +421,7 @@ static int load_tables(sqlite3 *d, int pos, int row){
 int pb_play_list(int type, int pos, const char *name){
     if(!eng_ready()){ L("play list: no engine"); return -1; }
     if(g_stream){ L("play list: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; }
+    if(g_tail){ L("play list: ends the station after the list"); tail_end(); }
     sqlite3 *d = db();
     if(!d) return -1;
     int rc = -1;
@@ -391,6 +439,7 @@ int pb_play_list(int type, int pos, const char *name){
     L("play list: type %d \"%s\": %d songs in %.0f ms", type, name, n, (now_s() - t0) * 1000.0);
     int *ids = NULL, m = qd_ids(d, &ids);
     if(m <= 0){ free(ids); pq_free(&Q); L("play list: the list is empty"); goto out; }
+    if(pos == PB_POS_RANDOM) pos = (int)rnd((unsigned)m);
     if(pq_set(&Q, ids, m, pos) != 0){ L("play list: out of memory"); goto out; }
     if(C->play_mode == PQ_SHUFFLE){
         if(pq_shuffle(&Q, 1, rnd) != 0 || qd_shuffle_write(d, Q.order, Q.n) != 0) L("play list: shuffle order not written");
@@ -544,6 +593,24 @@ int pb_transport(int op, long arg){
     case PL_T_STATE: if(!g_st_loaded) return -1; update_status(); stream_a2(g_es.state == ENG_PLAY ? 0 : 1); return 0;
     default: L("transport %d: not on the radio", op); return -1;
     }
+    if(g_tail) switch(op){                           /* the station after the list: play/pause; Next starts the list again */
+    case PL_T_TOGGLE: return eng_toggle();
+    case PL_T_PAUSE: pb_pause(); return 0;
+    case PL_T_MODE: return 0;
+    case PL_T_STATE: update_status(); tail_frame(1); return 0;
+    case PL_T_NEXT: case PL_T_PREV: {
+        if(Q.n <= 0) return -1;
+        tail_end();
+        sqlite3 *d = db();
+        if(!d) return -1;
+        int idx = pq_from_base(&Q, 0);
+        int r = start_at(d, idx >= 0 ? idx : 0, +1, 0, 0);
+        sqlite3_close(d);
+        L("list end: %s - the list again from its start", op == PL_T_NEXT ? "Next" : "Previous");
+        return r;
+    }
+    default: L("transport %d: not on the station after the list", op); return -1;
+    }
     switch(op){
     case PL_T_TOGGLE:
         if(Q.n <= 0){ L("play/pause: nothing loaded"); return -1; }
@@ -594,7 +661,9 @@ void pb_mode_changed(void){
 }
 
 /* ================================================================ web radio (the DLNA work mode) */
-static void stream_a2(int state){
+/* a station's track frame: the DLNA one for the Radio app, a local one for the station after the list (g_tail) */
+static void stream_frame(int state, const char *uri, const char *title, const char *artist, const char *album,
+                         const char *work_mode){
     char *song = malloc(PP_MAX_FRAME), *json = malloc(PP_MAX_FRAME), *frame = malloc(PP_MAX_FRAME);
     if(!song || !json || !frame){ L("radio: out of memory for the track frame"); goto out; }
     unsigned rate = g_es_valid ? g_es.rate : 0;
@@ -602,23 +671,29 @@ static void stream_a2(int state){
     jbuf_t j = { song, 0, PP_MAX_FRAME, 1 };
     song[0] = 0;
     jraw(&j, "{\"id\":0,\"pos_id\":0,\"song_name\":\"");
-    jstr(&j, g_st_title[0] ? g_st_title : g_st_uri);
+    jstr(&j, title);
     jraw(&j, "\",\"song_duration_time\":0,\"song_file_path\":\"");
-    jstr(&j, g_st_uri);
-    jraw(&j, "\",\"song_sample_rate\":%u,\"song_encoding_rate\":%d,\"song_bit_rate\":%d,\"song_artist_name\":\"Web radio\","
-         "\"song_album_name\":\"\",\"song_style_name\":\"(null)\",\"song_track\":0,\"song_channel\":%d,\"is_sacd\":false,"
-         "\"is_cue\":false,\"is_dsd\":false,\"is_m3u\":false,\"m3u_file_path\":\"(null)\"}", rate, bits,
-         g_es_valid ? g_es.kbps : 0, ch);
+    jstr(&j, uri);
+    jraw(&j, "\",\"song_sample_rate\":%u,\"song_encoding_rate\":%d,\"song_bit_rate\":%d,\"song_artist_name\":\"", rate, bits,
+         g_es_valid ? g_es.kbps : 0);
+    jstr(&j, artist);
+    jraw(&j, "\",\"song_album_name\":\"");
+    jstr(&j, album);
+    jraw(&j, "\",\"song_style_name\":\"(null)\",\"song_track\":0,\"song_channel\":%d,\"is_sacd\":false,"
+         "\"is_cue\":false,\"is_dsd\":false,\"is_m3u\":false,\"m3u_file_path\":\"(null)\"}", ch);
     jbuf_t o = { json, 0, PP_MAX_FRAME, j.ok };
     json[0] = 0;
     jraw(&o, "{\"song\":\"");
     jstr(&o, song);
-    jraw(&o, "\",\"love\":false,\"playerflag\":3,\"state\":%d,\"playing_num\":\"1/1\",\"work_mode\":\"DLNA\"}", state);
+    jraw(&o, "\",\"love\":false,\"playerflag\":3,\"state\":%d,\"playing_num\":\"1/1\",\"work_mode\":\"%s\"}", state, work_mode);
     int n = o.ok ? pp_fmt_a2(frame, PP_MAX_FRAME, json) : -1;
     if(n < 0){ L("radio: track frame too long"); goto out; }
     send_(frame, n);
 out:
     free(song); free(json); free(frame);
+}
+static void stream_a2(int state){
+    stream_frame(state, g_st_uri, g_st_title[0] ? g_st_title : g_st_uri, "Web radio", "", "DLNA");
 }
 /* OPL_STREAM: the song the station names now, as MPD has it, for ui/radio.c (no second connection to the station).
  * Written when it changes, removed when no station plays. */
@@ -646,6 +721,7 @@ static void stream_file(int on){
 }
 void pb_stream_mode(int on){
     if(on && !g_stream){
+        if(g_tail){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); tail_end(); update_status(); }
         g_stream = 1; g_st_loaded = 0; g_st_uri[0] = g_st_title[0] = 0;
         g_st_local = -1;
         if(Q.n > 0 && Q.cur >= 0 && g_es_valid){             /* the local song, to come back to */

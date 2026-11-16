@@ -59,7 +59,7 @@ static void rec_start(const track_state_t *st){
     snprintf(r_album, sizeof r_album, "%s", st->album);
     r_dur = st->duration_ms; r_ms = 0; r_last_ms = 0; r_last_pos = st->position_ms;
     r_at = (long long)time(NULL);
-    r_active = !mdb_is_book_path(st->path);                                      /* audiobooks have their own progress */
+    r_active = !mdb_is_book_path(st->path) && !mdb_is_stream_path(st->path);     /* audiobooks have their own progress; a station isn't a song */
 }
 static long long mono_ms(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000; }
 /* Listening time is how far the song's position moved while it played, never more than the time that really
