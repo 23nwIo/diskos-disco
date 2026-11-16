@@ -301,6 +301,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_SCREEN) return "screen";
     if(k == RMT_CMD_TOUCH) return "touch";
     if(k == RMT_CMD_OUTPUTS) return "outputs";
+    if(k == RMT_CMD_QUEUE) return "queue";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -319,7 +320,40 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
     if(!strcmp(rest, "/system")){ rt.kind = get ? RMT_R_SYS_PAGE : RMT_R_BAD_METHOD; return rt; }
     if(strncmp(rest, "/api/", 5)) return rt;
     const char *ep = rest + 5;
-    if(!strcmp(ep, "state")){ rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; return rt; }
+    if(!strcmp(ep, "state")){ long q = 0; rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; rt.cmd.arg = param(r, "q", &q) == 0 && q == 1; return rt; }
+    if(!strcmp(ep, "queue")){
+        if(get){
+            long l = 100; int pr = param(r, "limit", &l);
+            if(pr == -2 || l < 1 || l > 500){ rt.kind = RMT_R_BAD_PARAM; return rt; }
+            rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_QUEUE; rt.cmd.sub = RMT_Q_LIST; rt.cmd.limit = l; return rt;
+        }
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        static const char *const A[] = { "jump", "remove", "move", "clear", "add" };
+        char a[8], k[8]; int act = 0, ok; long ver = 0, i = 0, b = 0, to = 0;
+        if(!param_str(r, "action", a, sizeof a)) for(int j = 0; j < 5; j++) if(!strcmp(a, A[j])) act = j + RMT_Q_JUMP;
+        if(act == RMT_Q_ADD){
+            ok = !param_str(r, "kind", k, sizeof k);
+            if(ok && !strcmp(k, "song")){ rt.cmd.item = RMT_I_SONG; ok = !param(r, "song_id", &rt.cmd.song_id) && rt.cmd.song_id > 0; }
+            else if(ok && (!strcmp(k, "album") || !strcmp(k, "artist"))){
+                rt.cmd.item = k[1] == 'l' ? RMT_I_ALBUM : RMT_I_ARTIST;
+                ok = !param_str(r, "name", rt.cmd.name, sizeof rt.cmd.name) && rt.cmd.name[0];
+            } else ok = 0;
+            if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+            rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_QUEUE; rt.cmd.sub = act; return rt;
+        }
+        ok = act && !param(r, "ver", &ver) && ver > 0;
+        if(ok && act == RMT_Q_JUMP){
+            ok = !param_str(r, "kind", k, sizeof k);
+            if(ok && !strcmp(k, "queue")){ rt.cmd.item = 1; ok = !param(r, "i", &i) && i >= 0 && i < 1000; }
+            else if(ok && !strcmp(k, "next")){ rt.cmd.item = 2; ok = !param(r, "b", &b) && b > 0; }
+            else ok = 0;
+        }
+        if(ok && (act == RMT_Q_REMOVE || act == RMT_Q_MOVE)) ok = !param(r, "i", &i) && i >= 0 && i < 1000;
+        if(ok && act == RMT_Q_MOVE) ok = !param(r, "to", &to) && to >= 0 && to < 1000;
+        if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_QUEUE; rt.cmd.sub = act; rt.cmd.arg = ver; rt.cmd.pos = i; rt.cmd.id = b; rt.cmd.offset = to;
+        return rt;
+    }
     if(!strcmp(ep, "bluetooth") || !strcmp(ep, "bt_device")){
         int dev = ep[1] == 't';
         if(!dev && get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_BT_LIST; return rt; }
@@ -500,12 +534,12 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
                  s->out_auto, s->out_jack, s->out_bal, s->out_codec, cl, s->out_switching ? "true" : "false");
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
-        "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"play_mode\":%d,\"work_mode\":%d,"
+        "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"queue_ver\":%u,\"play_mode\":%d,\"work_mode\":%d,"
         "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"bt_codec\":\"%s\",\"bt_device\":\"%s\",\"station_fav\":%s,\"radio_error\":\"%s\","
         "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\",\"outputs\":%s}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
-        s->volume, s->volume_max, s->balance, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
+        s->volume, s->volume_max, s->balance, s->queue_ver, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
         s->radio_state ? s->radio_state : "off", st, su, sti, bc, bd, s->station_fav < 0 ? "null" : s->station_fav ? "true" : "false", re,
         fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn, ou);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }

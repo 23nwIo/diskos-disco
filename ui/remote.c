@@ -29,6 +29,7 @@
 #include "scanner.h"
 #include "system.h"
 #include "modes.h"
+#include "queueview.h"
 #include <sys/statvfs.h>
 #include <stdarg.h>
 #include "version.h"
@@ -244,6 +245,7 @@ static void snapshot(rmt_state_t *s){
         if(cf && stat(cf, &cs) == 0)                       /* the file is rewritten per track: its identity + time name it */
             snprintf(s->art, sizeof s->art, "%lx-%lx-%lx", (unsigned long)cs.st_ino, (unsigned long)cs.st_mtime, (unsigned long)cs.st_mtim.tv_nsec);
     }
+    if(rsrv_queue_watched()){ const qv_view_t *q = qv_view(s, 0); s->queue_ver = q ? q->ver : 0; }   /* a page shows the queue */
 }
 static int radio_fav_cmd(const rmt_cmd_t *c, const char **why);
 static const char *const NOT_LOCAL = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)";
@@ -824,6 +826,63 @@ static char *status_json(void){
     rmt_buf_printf(&s.b, ",\"scan\":{\"active\":%s,\"done\":%d},\"work_mode\":%d}", sact ? "true" : "false", sdone, ui_get_source_mode());
     return rmt_buf_take(&s.b);
 }
+/* ---------------------------------------------------------------- the queue (queueview.h, shared with MPD) */
+static const char *const Q_KIND[] = { "", "cur", "queue", "next", "other" };
+static char *queue_json(const qv_view_t *v, int limit){
+    rmt_buf_t b = {0}; int nexts = 0, left = 0;
+    rmt_buf_printf(&b, "{\"ok\":true,\"ver\":%u,\"shuffle\":%s,\"items\":[", v->ver, v->shuffle ? "true" : "false");
+    for(int i = 0, first = 1; i < v->n; i++){
+        const qv_entry_t *e = &v->e[i];
+        if(e->kind == QV_NEXT && nexts++ >= limit){ left++; continue; }
+        const char *f = e->kind == QV_OTHER ? "" : strrchr(e->path, '/');
+        rmt_buf_printf(&b, "%s{\"k\":\"%s\",\"i\":%d,\"b\":%d,\"d\":%d,\"st\":%s,\"t\":", first ? "" : ",", Q_KIND[e->kind], e->idx,
+                       e->base_id, e->dur_ms, e->kind == QV_OTHER && e->ord ? "true" : "false");
+        rmt_buf_str(&b, e->title); rmt_buf_put(&b, ",\"a\":"); rmt_buf_str(&b, e->artist);
+        rmt_buf_put(&b, ",\"f\":"); rmt_buf_str(&b, f ? f + 1 : e->path); rmt_buf_put(&b, "}");
+        first = 0;
+    }
+    rmt_buf_printf(&b, "],\"more\":%d}", left + v->more);
+    return rmt_buf_take(&b);
+}
+static int queue_cmd(const rmt_cmd_t *c, const char **why, char **body){
+    if(c->sub == RMT_Q_ADD){                               /* as the Disc's song / album / artist menu "Add to queue" */
+        int id = (int)c->song_id, r = c->item == RMT_I_SONG ? queue_add_ids(&id, 1) : queue_add_group(c->item == RMT_I_ALBUM ? "ALBUM" : "ARTIST", c->name);
+        if(r == -2){ *why = "The library is busy - try again"; return -1; }
+        if(r == -1){ *why = "The queue is full"; return -1; }
+        if(r <= 0){ *why = "Nothing new to add"; return -1; }
+        qv_invalidate();
+        *body = malloc(48); if(*body) snprintf(*body, 48, "{\"ok\":true,\"added\":%d}", r);
+        return 0;
+    }
+    rmt_state_t s; snapshot(&s);
+    const qv_view_t *v = qv_view(&s, 0);
+    if(!v){ *why = "Out of memory"; return -1; }
+    if(c->sub == RMT_Q_LIST){ *body = queue_json(v, (int)c->limit); if(!*body) *why = "Out of memory"; return *body ? 0 : -1; }
+    if((unsigned)c->arg != v->ver){ *why = "The queue changed - here it is again"; return -1; }
+    const qv_entry_t *e = NULL;
+    for(int i = 0; i < v->n && !e; i++){
+        const qv_entry_t *x = &v->e[i];
+        if(c->sub == RMT_Q_JUMP && c->item == 2 ? x->kind == QV_NEXT && x->base_id == c->id : x->kind == QV_QUEUE && x->idx == c->pos) e = x;
+    }
+    int rc = -1;
+    switch(c->sub){
+    case RMT_Q_CLEAR:
+        if(!queue_count()){ *why = "Nothing is queued"; return -1; }
+        queue_clear(); rc = 0; break;
+    case RMT_Q_JUMP:
+        if(!e){ *why = "The queue changed - here it is again"; return -1; }
+        rc = qv_play(e, why) ? -1 : 0; break;
+    case RMT_Q_REMOVE: case RMT_Q_MOVE:
+        if(!e){ *why = "Only songs you queued can be removed or moved"; return -1; }
+        if(c->sub == RMT_Q_MOVE && (c->offset < 0 || c->offset >= queue_count())){ *why = "No such place in the queue"; return -1; }
+        if(c->sub == RMT_Q_REMOVE ? !queue_remove_at(e->idx) : (c->offset != e->idx && !queue_move(e->idx, (int)c->offset))){
+            *why = "Couldn't change the queue"; return -1; }
+        rc = 0; break;
+    default: *why = "Unknown action"; return -1;
+    }
+    qv_invalidate();
+    return rc;
+}
 static char *eq_json(void){
     rmt_buf_t b; memset(&b, 0, sizeof b);
     int cur = simple_cfg_get_int("eq_preset", 0);
@@ -967,6 +1026,7 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
         return *body ? 0 : -1;
     }
     if(c->kind == RMT_CMD_EDIT) return edit(c, why, body);
+    if(c->kind == RMT_CMD_QUEUE) return queue_cmd(c, why, body);
     if(c->kind == RMT_CMD_BT_LIST){ *body = bt_json(); if(!*body) *why = "Out of memory"; return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_BT) return bt_cmd(c, why);
     if(c->kind == RMT_CMD_WORK_MODE){                      /* as a tap on the Working mode screen; its refusals are toasts */
@@ -1026,7 +1086,7 @@ void remote_pump(void){
     if(rsrv_take(&c)){
         const char *why = NULL; char *body = NULL;
         int rc = dispatch(&c, &why, &body);
-        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_SCREEN || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST;
+        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_SCREEN || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST || (c.kind == RMT_CMD_QUEUE && c.sub == RMT_Q_LIST);
         if(!ro || rc != 0){ fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr); }   /* pages poll the reads: log only changes and failures */
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);

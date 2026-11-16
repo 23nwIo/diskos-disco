@@ -20,6 +20,8 @@ int  rsrv_port(void);                     /* the bound port (useful with port 0 
 
 void rsrv_publish(const rmt_state_t *s);   /* main thread: the latest snapshot (strings copied) */
 void rsrv_set_notify(void (*cb)(void));  /* called on the server thread when a command waits or state is asked for */
+/* main thread: 1 while a page shows the queue (it asked for api/state?q=1 within the last 5 s) */
+int  rsrv_queue_watched(void);
 int  rsrv_take(rmt_cmd_t *out);            /* main thread: 1 = a command is waiting (now taken), 0 = none */
 void rsrv_done(int ok, const char *message);   /* main thread: result of the taken command (message: why not, or NULL) */
 void rsrv_done_body(int ok, const char *message, char *body);   /* same, with a JSON answer (malloc'd; ownership passes) */

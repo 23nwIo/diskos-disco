@@ -43,7 +43,8 @@ typedef enum {
     RMT_CMD_SCREEN,          /* the screen as it looks now (binary answer: BMP) */
     RMT_CMD_TOUCH,           /* a finger on the screen: pos,id = x,y down; offset,limit = x,y up; arg = ms down */
     RMT_CMD_BALANCE,         /* left/right balance arg -10..10 (as Settings > Audio > Balance) */
-    RMT_CMD_OUTPUTS          /* Settings > Audio > Outputs: sub = rmt_out_t, arg = its value */
+    RMT_CMD_OUTPUTS,         /* Settings > Audio > Outputs: sub = rmt_out_t, arg = its value */
+    RMT_CMD_QUEUE            /* what plays next (queueview.h): sub = rmt_queue_t; see api/queue below */
 } rmt_cmd_kind_t;
 /* POST api/touch x, y (0..359), optional x2, y2 (where it lifts; default x, y) and ms (0..3000, default 100). */
 #define RMT_SCREEN_PX 360
@@ -68,6 +69,12 @@ typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, R
 /* POST api/outputs: exactly one of aux=0/1 | bt=0/1 | vol_aux=0..120 | vol_bt=0..120 | auto=0..2 (0 off, 1 newest, 2 all connected)
  * | codec=0..4 (this Bluetooth connection: 0 SBC, 1 AAC, 2 LDAC, 3 aptX, 4 aptX HD) */
 typedef enum { RMT_OUT_AUX = 1, RMT_OUT_BT, RMT_OUT_VOL_AUX, RMT_OUT_VOL_BT, RMT_OUT_AUTO, RMT_OUT_CODEC } rmt_out_t;
+/* GET api/queue [limit=1..500 Up Next rows, default 100]: the list (JSON answer). POST api/queue with ver (the list's
+ * "ver", refused when it changed since: the page reads the list again) and action=jump (kind=queue i=N | kind=next b=ID)
+ * | remove (i) | move (i, to) | clear; action=add (no ver) kind=song song_id | kind=album name | kind=artist name adds
+ * to the end of the queue. cmd: sub = action, item = 1 queue / 2 next, pos = i, id = b, offset = to,
+ * arg = ver (list: limit). GET api/state?q=1 also reports queue_ver (only asked for while a page shows the queue). */
+typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR, RMT_Q_ADD } rmt_queue_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
 #define RMT_PL_NAME_MAX 64
@@ -124,6 +131,7 @@ typedef struct {
     long position_ms, duration_ms;
     int  volume, volume_max;
     int  balance;            /* -10..10, 0 centred (the saved setting) */
+    unsigned queue_ver;      /* the queue list's version (queueview.h); 0 while no page shows the queue */
     /* Settings > Audio > Outputs, only while the own player runs (out_own 1; else "outputs":null) */
     int  out_own, out_aux, out_bt, out_vol_aux, out_vol_bt, out_bt_ready, out_auto, out_jack, out_bal;
     int  out_codec, out_codecs, out_switching;   /* the link's codec 0..4 (-1 none), offered codecs (bit per id), a switch runs */

@@ -122,6 +122,22 @@ static void test_core(void){
     CHECK(req("POST", p("/api/outputs"), "aux=1&bt=1").kind == RMT_R_BAD_PARAM && req("POST", p("/api/outputs"), "").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/outputs"), "codec=4"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_CODEC && r.cmd.arg == 4);
     CHECK(req("POST", p("/api/outputs"), "codec=5").kind == RMT_R_BAD_PARAM);
+    r = req("GET", p("/api/queue"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_QUEUE && r.cmd.sub == RMT_Q_LIST && r.cmd.limit == 100);
+    r = req("GET", p("/api/queue?limit=500"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.limit == 500);
+    CHECK(req("GET", p("/api/queue?limit=501"), NULL).kind == RMT_R_BAD_PARAM && req("GET", p("/api/queue?limit=x"), NULL).kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/queue"), "action=jump&ver=7&kind=queue&i=3"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_JUMP && r.cmd.item == 1 && r.cmd.pos == 3 && r.cmd.arg == 7);
+    r = req("POST", p("/api/queue"), "action=jump&ver=7&kind=next&b=812"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_JUMP && r.cmd.item == 2 && r.cmd.id == 812);
+    r = req("POST", p("/api/queue"), "action=move&ver=2&i=4&to=0"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_MOVE && r.cmd.pos == 4 && r.cmd.offset == 0);
+    r = req("POST", p("/api/queue"), "action=remove&ver=2&i=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_REMOVE && r.cmd.pos == 1);
+    r = req("POST", p("/api/queue"), "action=clear&ver=2"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_CLEAR);
+    r = req("POST", p("/api/queue"), "action=add&kind=song&song_id=9"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_ADD && r.cmd.item == RMT_I_SONG && r.cmd.song_id == 9);
+    r = req("POST", p("/api/queue"), "action=add&kind=album&name=Blue%20Album"); CHECK(r.kind == RMT_R_CMD && r.cmd.item == RMT_I_ALBUM && !strcmp(r.cmd.name, "Blue Album"));
+    CHECK(req("POST", p("/api/queue"), "action=remove&i=1").kind == RMT_R_BAD_PARAM);             /* no ver */
+    CHECK(req("POST", p("/api/queue"), "action=jump&ver=1&kind=next").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/queue"), "action=move&ver=1&i=1").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/queue"), "action=add&kind=song").kind == RMT_R_BAD_PARAM && req("POST", p("/api/queue"), "action=nope&ver=1").kind == RMT_R_BAD_PARAM);
+    r = req("GET", p("/api/state?q=1"), NULL); CHECK(r.kind == RMT_R_STATE && r.cmd.arg == 1);
+    r = req("GET", p("/api/state"), NULL); CHECK(r.kind == RMT_R_STATE && r.cmd.arg == 0);
     CHECK(req("POST", p("/api/outputs"), "auto=x").kind == RMT_R_BAD_PARAM && req("GET", p("/api/outputs"), NULL).kind == RMT_R_BAD_METHOD);
     /* library */
     r = req("GET", p("/api/library/albums"), NULL);

@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +35,12 @@ static char *g_box_body;                     /* a JSON answer from the main thre
 static size_t g_box_len;                     /* its length when binary (0 = a NUL-terminated JSON string) */
 static const char *g_box_ctype;              /* its type when binary */
 static void (*g_notify)(void);
+static atomic_long g_queue_at;                 /* CLOCK_MONOTONIC s | 1 of the last api/state?q=1 (0 never) */
+int rsrv_queue_watched(void){
+    long at = atomic_load(&g_queue_at); if(!at) return 0;
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long)ts.tv_sec - at <= 5;
+}
 void rsrv_set_notify(void (*cb)(void)){ g_notify = cb; }
 
 static long long now_ms(void){
@@ -152,6 +159,7 @@ static void handle(int c){
         break;
     case RMT_R_STATE: {
         rmt_state_t s; int have;
+        if(rt.cmd.arg){ struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); atomic_store(&g_queue_at, (long)ts.tv_sec | 1); }   /* q=1 */
         if(g_notify) g_notify();                          /* a fresher snapshot for the next poll */
         pthread_mutex_lock(&g_mu); s = g_state; have = g_have_state; pthread_mutex_unlock(&g_mu);
         if(!have){ reply_json_err(c, "503 Service Unavailable", "starting", "Starting up"); break; }

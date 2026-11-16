@@ -12,6 +12,7 @@ sd = Path('/tmp/sdcard'); subprocess.run(['umount', str(sd)], capture_output=Tru
 sd.mkdir(parents=True); subprocess.run(['mount', '--bind', str(sd), str(sd)], check=True)   # a mounted card: the radio favourites live on it (default)
 (sd/'Music/Blue Album').mkdir(parents=True, exist_ok=True); (sd/'Music/Other').mkdir(parents=True)
 os.symlink('/etc', sd/'Music/escape')
+Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True)
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
 con = sqlite3.connect(db)
 cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
@@ -55,7 +56,12 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/playlist_rename id=2&name=Late+drive', 'GET /api/library/playlists',
         'POST /api/favorite on=1&song_id=6', 'GET /api/library/album?name=Other', 'POST /api/favorite on=0&song_id=2', 'GET /api/library/favorites',
         'POST /api/playlist_delete id=2', 'GET /api/library/playlists', 'POST /api/rescan action=stop', 'POST /api/eq preset=3', 'GET /api/status',
-        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55', 'POST /api/work_mode mode=3', 'GET /api/status', 'POST /api/radio_fav_add kind=radio_now']
+        'GET /api/bluetooth', 'POST /api/bluetooth action=search', 'POST /api/bt_device action=connect&mac=00:11:22:33:44:55', 'POST /api/work_mode mode=3', 'GET /api/status', 'POST /api/radio_fav_add kind=radio_now',
+        # 61.. the queue (queueview.c): the list's version starts at 1 on its first read and moves on every change
+        'POST /api/queue action=add&kind=song&song_id=1', 'POST /api/queue action=add&kind=album&name=Caf%C3%A9+%3CNoir%3E',
+        'GET /api/queue', 'POST /api/queue action=move&ver=1&i=2&to=0', 'POST /api/queue action=remove&ver=1&i=0', 'GET /api/queue',
+        'POST /api/queue action=remove&ver=2&i=0', 'GET /api/queue', 'POST /api/queue action=clear&ver=3', 'GET /api/queue',
+        'POST /api/queue action=jump&ver=4&kind=queue&i=0', 'POST /api/queue action=clear&ver=4', 'POST /api/queue action=add&kind=artist&name=Nobody']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -138,3 +144,17 @@ assert res[59]['body']['work_mode'] == 0, res[59]['body'].get('work_mode')
 assert res[60]['rc'] == -1 and res[60]['why'] == 'No station is playing', res[60]
 print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth, working mode, folder play')
 subprocess.run(['umount', str(sd)], capture_output=True)
+# the queue
+assert res[61]['rc'] == 0 and res[61]['body'] == {'ok': True, 'added': 1}, res[61]
+assert res[62]['rc'] == 0 and res[62]['body']['added'] == 2, res[62]
+q = res[63]['body']; assert q['ver'] == 1 and q['more'] == 0, q
+assert q['items'][0]['k'] == 'cur' and [(x['k'], x['i'], x['t'], x['a'], x['f']) for x in q['items'][1:]] == [('queue', 0, 'Uno', 'Ana & "Bo"', '01 Uno.flac'), ('queue', 1, 'Nuit', 'Céline', '01 Nuit.flac'), ('queue', 2, 'Jour', 'Céline', '02 Jour.flac')], q
+assert res[64]['rc'] == 0, res[64]
+assert res[65]['rc'] == -1 and res[65]['why'] == 'The queue changed - here it is again', res[65]
+q = res[66]['body']; assert q['ver'] == 2 and [x['t'] for x in q['items'][1:]] == ['Jour', 'Uno', 'Nuit'], q
+assert res[67]['rc'] == 0 and [x['t'] for x in res[68]['body']['items'][1:]] == ['Uno', 'Nuit'] and res[68]['body']['ver'] == 3, res[67:69]
+assert res[69]['rc'] == 0 and [x['k'] for x in res[70]['body']['items']] == ['cur'] and res[70]['body']['ver'] == 4, res[69:71]
+assert res[71]['rc'] == -1 and res[71]['why'] == 'The queue changed - here it is again', res[71]
+assert res[72]['rc'] == -1 and res[72]['why'] == 'Nothing is queued', res[72]
+assert res[73]['rc'] == -1 and res[73]['why'] == 'Nothing new to add', res[73]
+print('PASS Remote Control queue: add (song, album), list, move, remove, clear, stale version refused')
