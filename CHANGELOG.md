@@ -4,6 +4,11 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Bluetooth headphones: their battery level shows on their details screen and in Remote Control, with a note at 20 %
+  and 10 % (Settings > Connectivity > Headphone Battery, on by default; over the hands-free profile). With the own
+  player, their Play/Pause, Next and Previous buttons control the Disc, and headphones with absolute volume share the
+  Bluetooth volume with the Disc both ways. Battery checked on a Disc by hand (Hi-X25BT); the build is not yet tested
+  on a Disc. [Details](docs/BLUETOOTH.md#headphone-battery-buttons-and-volume)
 - Settings > System > Maintenance > Format SD Card: erase the microSD card as FAT32 (one MBR partition, as cards come
   from the factory; for other players and computers) or as ext4 on the whole card without a partition table (diskOS
   only). Shows the card size, needs Erase held for 3 seconds, closes and unmounts the card first (nothing is written if

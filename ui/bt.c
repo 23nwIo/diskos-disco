@@ -27,6 +27,7 @@
 #include <strings.h>
 #include <ctype.h>
 #include <time.h>
+#include "btbatt.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
@@ -516,8 +517,12 @@ static void bt_alsa_args_for(char *out, int cap, int born, int aptx){
         "--codec=-sbc --codec=-aac --codec=-ldac --codec=aptX --codec=-aptX-HD",         /* 3 aptX */
         "--codec=-sbc --codec=-aac --codec=-ldac --codec=-aptX --codec=aptX-HD" };      /* 4 aptX HD */
     if(born < 0 || born > 4 || (!aptx && born > 2) || (aptx && born == 2)) born = 0;
-    snprintf(out, cap, "-S --device=hci0 --profile=a2dp-source --sbc-quality=medium --ldac-abr --ldac-quality=%s "
-             "%s --initial-volume=48", bt_ldac_q(), aptx ? ax[born] : stock[born]);
+    /* Settings > Bluetooth > Headphone Battery (bt_hfp, default on): the hands-free profile too, over which headphones
+     * report their battery (AT+IPHONEACCEV -> org.bluealsa.RFCOMM1.Battery; device check 2026-11-16, Hi-X25BT).
+     * No calls, no microphone: nothing opens its SCO audio. */
+    snprintf(out, cap, "-S --device=hci0 --profile=a2dp-source%s --sbc-quality=medium --ldac-abr --ldac-quality=%s "
+             "%s --initial-volume=48", cfg_get_int("bt_hfp", 1) ? " --profile=hfp-ag" : "", bt_ldac_q(),
+             aptx ? ax[born] : stock[born]);
 }
 static void bt_alsa_args(char *out, int cap, int born){ bt_alsa_args_for(out, cap, born, 0); }   /* stock BlueALSA */
 /* The shell command that starts BlueALSA `kind` born as `born` (output redirection is the caller's): FiiO's exactly as
@@ -1708,6 +1713,8 @@ static int bt_info_fill(void){
       info_row("Paired",    (bt_info_prop(buf,"Paired:",   v,sizeof v) && !strcmp(v,"yes")) ? "Yes" : "No");
       if(bt_info_prop(buf,"Icon:",v,sizeof v)) info_row("Type", v); }
     info_row("Audio", "On (beta)");   /* routing works; SBC over this CPU can be rough. short: value label is 142px */
+    { int lv = btbatt_level(g_sel_mac);   /* over the hands-free link (btbatt.c); headphones without it show nothing */
+      if(lv >= 0){ char b[16]; snprintf(b, sizeof b, "%d %%", lv); info_row("Battery", b); } }
     info_action_row("Rename", info_rename_cb, 0);                 /* a local name, kept on the Disc */
     info_action_row("Forget This Device", info_forget_cb, 1);   /* C13: unpair + untrust */
     return 1;

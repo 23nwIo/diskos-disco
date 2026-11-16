@@ -56,6 +56,31 @@ Bluetooth** (on by default): while audio goes to Bluetooth, Wi-Fi saves power an
 isn't connected, so the headphones get more airtime. LDAC needs the most, so it gains the most. Wi-Fi still works;
 everything goes back to normal when audio leaves Bluetooth.
 
+## Headphone battery, buttons and volume
+
+**Battery.** Many headphones report their battery over the hands-free profile (HFP), the way they do to a phone.
+Disco connects that profile too (**Settings › Connectivity › Headphone Battery**, on by default; no calls, no
+microphone) and shows the level on the headphones' details screen (Settings › Connectivity › Bluetooth, tap the
+connected headphones) and in Remote Control's Bluetooth tab. At 20 % and at 10 % the Disc says so once. Headphones
+report in 10 % steps. With the own player it works from the next start; with the stock player only after Bluetooth
+is switched off and on once on the Disc (at boot the stock player starts Bluetooth itself, without that profile).
+
+**Buttons** (own player only). Play/Pause, Next and Previous on the headphones control the Disc. Headphones that send
+"Play" for both play and pause (the Austrian Audio Hi-X25BT does) toggle. The stock player handles the buttons itself.
+
+**Volume** (own player only). Headphones with AVRCP absolute volume get the Disc's Bluetooth volume as their own level,
+and their volume buttons move the Disc's Bluetooth volume (Settings › Audio › Outputs), like on a phone or a Linux PC.
+The Disc's level is sent to them as soon as they connect, so nothing gets louder. Headphones without it keep their own
+volume, and the Disc's Bluetooth volume scales the sound as before. To keep the Disc's volume separate even on
+headphones that have absolute volume: `touch /usr/data/diskos-own/no-abs-volume`.
+
+How it works (verified on a Disc with firmware V2.57, 2026-11-16): FiiO's BlueZ 5.54 hands AVRCP button presses and
+the headphones' volume only to a media player registered over D-Bus (`org.bluez.Media1.RegisterPlayer`); without one
+they would go to a uinput device, and the Disc has no `/dev/uinput`. The own player registers one
+(`ui/player/btavrcp.c`, with a small D-Bus client of its own, `ui/dbusmini.c`) and switches BlueALSA's
+`SoftVolume` off for headphones that report a volume. The battery comes from BlueALSA's `org.bluealsa.RFCOMM1.Battery`
+(`ui/btbatt.c`); BlueZ 5.54 is too old to show it itself. Log lines start with `avrcp:` in /tmp/diskos-player.log.
+
 ## Known limits
 
 - After changing headphones, press **Play** again.

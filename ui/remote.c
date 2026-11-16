@@ -11,6 +11,7 @@
  * Every command runs here, on the main thread, through the same functions the touch controls use
  * (ui_transport_command, ui_set_volume, ui_seek_to, ui_set_workmode), so all their guards apply: Music Assistant
  * routing, "local playback only", output switches in progress, audiobook skip-as-seek, the skip pacing. */
+#include "btbatt.h"
 #include "remote.h"
 #include "remote_srv.h"
 #include "remote_screen.h"
@@ -934,7 +935,9 @@ static char *bt_json(void){
         rmt_buf_put(&b, ",\"name\":"); rmt_buf_str(&b, d[i].shown);
         rmt_buf_put(&b, ",\"own\":"); rmt_buf_str(&b, d[i].own);
         rmt_buf_put(&b, ",\"alias\":"); rmt_buf_str(&b, d[i].alias);
-        rmt_buf_printf(&b, ",\"connected\":%s,\"codec\":", d[i].connected ? "true" : "false"); rmt_buf_str(&b, d[i].codec);
+        rmt_buf_printf(&b, ",\"connected\":%s,\"battery\":%d,\"codec\":", d[i].connected ? "true" : "false",
+                       d[i].connected ? btbatt_level(d[i].mac) : -1);
+        rmt_buf_str(&b, d[i].codec);
         rmt_buf_put(&b, "}");
     }
     /* the Bluetooth Codec setting as Settings > Connectivity offers it (only firmware V2.57 can apply it) */

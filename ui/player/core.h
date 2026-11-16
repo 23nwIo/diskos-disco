@@ -105,6 +105,9 @@ int pl_core_plugged(const pl_core_t *c);
 /* Set the volume shown in the UI to v (0715, keys): every output that is on moves by the same step, each within
  * 0..max_volume. Tells the UI (a714) when the lead volume changed. */
 void pl_core_set_volume(pl_core_t *c, int v);
+/* The headphones changed their own volume (AVRCP absolute volume, btavrcp.h): the Bluetooth volume becomes v (within
+ * 0..max_volume); the UI hears it (a714) when Bluetooth is the lead output. AUX is left alone. */
+void pl_core_set_bt_volume(pl_core_t *c, int v);
 /* Set both volumes as stored (at start); the UI is told the lead one. */
 void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt);
 

@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <time.h>
 #include <math.h>
@@ -42,6 +44,7 @@
 #include "own_player.h"    /* own player switch (development phase, docs/MQ_PLAYER_REPLACEMENT.md) */
 #include "pl_blob.h"       /* the own player carried inside mq_ui */
 #include "screens.h"
+#include "btbatt.h"
 #include "npshade.h"
 #include "ma.h"
 #include "modes.h"
@@ -198,6 +201,24 @@ void ui_clock_refresh(void){ clock_tick(NULL); }
  * One short popen on a slow timer - battery/link state changes slowly. */
 /* battery + wifi read directly (no shell spawn); only BT keeps a light call since the
  * device exposes no sysfs connection indicator and the HCI ioctl layout is fragile. */
+/* The headphones' battery (btbatt.c, over BlueALSA's hands-free link): read every status poll while Bluetooth is on
+ * and headphones are routed; a toast when it falls to 20 % and to 10 % (once each per pair, again after charging). */
+static void bb_log(const char *fmt, ...){ va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap); fflush(stderr); }
+static void bt_headphone_battery(int bt_on){
+    static char warned_mac[18]; static int warned;          /* the lowest level warned about: 0 none, 20, 10 */
+    const char *mac = bt_on ? ui_route_mac() : "";
+    btbatt_poll(mac, bb_log);
+    int lv = mac[0] ? btbatt_level(mac) : -1;
+    if(strcasecmp(warned_mac, mac)){ snprintf(warned_mac, sizeof warned_mac, "%s", mac); warned = 0; }
+    if(lv < 0) return;
+    if(lv > 20) warned = 0;
+    int step = lv <= 10 ? 10 : lv <= 20 ? 20 : 0;
+    if(step && (!warned || step < warned)){
+        warned = step;
+        char m[80]; snprintf(m, sizeof m, tr("Headphones battery %d %%"), lv);
+        ui_toast(m);
+    }
+}
 static void status_poll_cb(lv_timer_t *t){
     (void)t;
     modes_usb_poll();
@@ -237,6 +258,8 @@ static void status_poll_cb(lv_timer_t *t){
      * Using the cfg "bt_on" intent alone went stale when the stock firmware brought BT up at boot out
      * from under us (icon/tile said off while BT was really on). rfkill reflects reality either way. */
     bt = bt_radio_on();
+
+    bt_headphone_battery(bt);
 
     atomic_store(&g_net_up, wifi); g_batt_pct = batt; g_batt_chg = charging;
     usage_note_battery(batt,charging);

@@ -986,6 +986,7 @@ static const char *const OPT_DRE[]    = { "Off", "On" };
 static const char *const OPT_AUTOTAG[] = { "Off", "On" };
 static const char *const OPT_BTAPTX[] = { "Off", "On" };
 static const char *const OPT_BTWQ[] = { "Off", "On" };
+static const char *const OPT_BTHFP[] = { "Off", "On" };
 static const char *const OPT_REPLAYGAIN[] = { "Off", "Track", "Album" };
 static const char *const OPT_GAIN[]   = { "Low", "High" };
 static const char *const OPT_DFILTER[]= { "Fast LL","Slow LL","Slow PC","Fast PC","NOS","Wideband" };
@@ -1360,6 +1361,8 @@ static const setting_t TABLE[] = {
       "Lets Bluetooth Codec's aptX/LDAC choices use aptX HD and aptX on headphones without LDAC, using an open-source aptX BlueALSA built into Disco. Takes effect when Bluetooth next starts; the first connection after that can still use SBC, the next ones use aptX. Off uses FiiO's Bluetooth, as before.", NULL },
     { "Connectivity",  "Quiet Wi-Fi for Bluetooth", ST_CYCLER, "bt_wifi_quiet", 0,0,0, OPT_BTWQ, 2, NULL, NULL, 1,
       "Wi-Fi and Bluetooth share one radio. While you listen over Bluetooth, Wi-Fi saves power and stops searching for networks, so the headphones get more airtime (fewer dropouts). Wi-Fi still works.", NULL },
+    { "Connectivity",  "Headphone Battery", ST_CYCLER, "bt_hfp", 0,0,0, OPT_BTHFP, 2, NULL, NULL, 1,
+      "Shows the headphones' battery level (Bluetooth details, Outputs). Headphones report it over their hands-free profile, which is connected too; no calls, no microphone. Takes effect when Bluetooth next starts.", NULL },
 };
 #define N_SETTINGS ((int)(sizeof(TABLE)/sizeof(TABLE[0])))
 

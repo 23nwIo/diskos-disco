@@ -110,4 +110,5 @@ ui/tests/usbsync_core_test
 ui/tests/bookmarks_test
 ui/tests/wd_override_test
 ui/tests/playback_test
+ui/tests/btavrcp_test
 ui/tests/sqlite3_host.o

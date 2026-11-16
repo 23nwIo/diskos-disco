@@ -20,6 +20,7 @@
  *   - plays through MPD as its audio core (engine.c, docs/MPD_CORE.md) when /usr/data/diskos-own/mpd exists: owns
  *     the DAC (dac.c: start sequence per stream rate, volume/balance/gain as attenuation bytes), turns 0201/0103 into
  *     MPD commands and reports a1 (position, once a second while playing) and the state frames;
+ *   - registers with BlueZ as the headphones' player, so their buttons and absolute volume reach it (btavrcp.c);
  *   - builds the queue for 0100 from song.db like the stock player (LIST_SONG_0, LIST_SONG_3 in shuffle; queuedb.c),
  *     moves through it by the play mode and announces every track start with the full a2 frame (playback.c).
  *
@@ -37,6 +38,7 @@
 #include "dac.h"
 #include "mixer.h"
 #include "btout.h"
+#include "btavrcp.h"
 #include "engine.h"
 #include "mpdcli.h"
 #include "playback.h"
@@ -56,6 +58,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -114,6 +117,41 @@ static int core_radio(void *ctx, const char *name, const char *url){
     if(!url[0]) return pb_stream_stop();
     if(pb_stream_start(name, url) != 0){ logmsg("radio: \"%s\" %s does not play", name, url); return -1; }
     return 0;
+}
+
+/* ---- the headphones' buttons and volume (btavrcp.c, AVRCP through BlueZ) ---- */
+static pl_core_t *g_core;
+static int *g_bt_vol;                      /* main's bt_vol: the volume the headphones were last given */
+static char g_abs_mac[18];                 /* headphones whose own volume is the Bluetooth volume (native BlueALSA) */
+static void hp_transport(int op){ pb_transport(op, 0); }
+static void hp_volume(const char *mac, int v, int first){
+    pl_core_t *c = g_core;
+    if(!c || !pb_bluetooth() || strcasecmp(mac, pb_bt_mac())){
+        logmsg("avrcp: volume %d from %s, not the headphones that play - left alone", v, mac);
+        return;
+    }
+    if(first || strcasecmp(g_abs_mac, mac)){
+        /* The headphones have absolute volume. Until now BlueALSA scaled the samples (SoftVolume) and the headphones
+         * kept their own level; from here the Bluetooth volume is their level. The Disc's volume is given to them at
+         * once, on the same connection after the switch, so the loudness does not jump to whatever they were set to. */
+        if(access(BTAV_NO_ABS_VOLUME, F_OK) == 0){
+            logmsg("avrcp: %s has absolute volume, not used (%s)", mac, BTAV_NO_ABS_VOLUME);
+            return;
+        }
+        snprintf(g_abs_mac, sizeof g_abs_mac, "%s", mac);
+        if(btav_soft_volume(mac, 0) != 0 || btav_pcm_volume(mac, btav_to127(c->vol_bt, PL_VOL_MAX)) != 0){
+            logmsg("avrcp: could not switch %s to absolute volume", mac);
+            g_abs_mac[0] = 0;
+            return;
+        }
+        if(g_bt_vol) *g_bt_vol = c->vol_bt;
+        logmsg("avrcp: %s: absolute volume, the Bluetooth volume %d now sets the headphones' level", mac, c->vol_bt);
+        return;
+    }
+    if(btav_to127(c->vol_bt, PL_VOL_MAX) == v) return;     /* our own change coming back */
+    pl_core_set_bt_volume(c, btav_from127(v, PL_VOL_MAX));
+    /* the headphones have it already, so it is not sent back; above the volume limit (0716) the limit goes to them */
+    if(g_bt_vol) *g_bt_vol = btav_to127(c->vol_bt, PL_VOL_MAX) == v ? c->vol_bt : -1;
 }
 
 /* ---- volume keys: click, double click and long press each change the volume or switch track, as stored by the stock
@@ -277,6 +315,10 @@ int main(int argc, char **argv){
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     if(use_wd) pb_resume_begin(sd_is_mounted, RESUME_FLAG);    /* host runs (-n) have no library */
     int att_vol = -1, att_gain = -1, att_bal = -1, att_curve = -1, bt_vol = -1;
+    g_core = &core; g_bt_vol = &bt_vol;
+    btav_cb hp = { logmsg, hp_transport, hp_volume };
+    if(use_wd || getenv("DISKOS_PLAYER_BUS"))                /* host runs (-n) only on a bus they name */
+        btav_init(&hp, getenv("DISKOS_PLAYER_BUS"));        /* NULL: the system bus */
     unsigned route_seq = core.route_seq, codec_seq = core.codec_seq;
     int saved_aux = core.vol_aux, saved_bt = core.vol_bt;
     double vol_changed = 0;
@@ -303,8 +345,10 @@ int main(int argc, char **argv){
     int stable = 0; unsigned sleep_seq = 0, usb_seq = 0;
     while(!g_stop){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
-        struct pollfd pf[4] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 } };
-        int pr = poll(pf, 4, 250);
+        struct pollfd pf[5] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 },
+                                { btav_fd(), POLLIN, 0 } };
+        int pr = poll(pf, 5, 250);
+        if(pr > 0 && pf[4].fd >= 0 && pf[4].revents) btav_io();
         if(pr > 0 && pf[3].fd >= 0 && (pf[3].revents & (POLLIN | POLLHUP | POLLERR))){
             int ev = eng_idle_event();
             if(ev > 0) pb_engine_event();
@@ -409,6 +453,7 @@ int main(int argc, char **argv){
         eng_check();
         if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.vol_bt; }
         if(core.codec_seq != codec_seq){ codec_seq = core.codec_seq; pb_codec(core.codec_want); }
+        if(g_abs_mac[0] && (!pb_bluetooth() || strcasecmp(g_abs_mac, pb_bt_mac()))) g_abs_mac[0] = 0;   /* they left */
         if(pb_bluetooth() && !pb_switching() && core.vol_bt != bt_vol){   /* the headphones' own volume (BlueALSA) */
             bt_vol = core.vol_bt;
             bto_volume(pb_bt_mac(), core.vol_bt, PL_VOL_MAX, logmsg);
@@ -428,6 +473,11 @@ int main(int argc, char **argv){
             }
         }
         pb_tick(t);
+        btav_tick(t);
+        {
+            const eng_status_t *es = pb_status(NULL);
+            btav_status(es ? es->state : ENG_STOP, es ? es->title : "", es ? es->artist : "", es ? es->duration_ms : 0);
+        }
         write_outputs(&core, outpath);
         if(use_wd) volume_log(&core);
         for(int i = 0; i < 3; i++) if(core.key_action[i] != key_saved[i]){   /* 0820-0822: kept like the stock player */
@@ -470,6 +520,7 @@ int main(int argc, char **argv){
     logmsg("=== diskos-player stop: %u frames, %u malformed, %u unknown", core.frames, core.bad_frames,
            core.unknown_tags);
     pb_shutdown();
+    btav_close();
     if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt)) save_volumes(&core);
     eng_stop();
     pb_close();

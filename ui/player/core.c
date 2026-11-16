@@ -61,6 +61,14 @@ void pl_core_set_volume(pl_core_t *c, int v){
     send_volume(c);
 }
 
+void pl_core_set_bt_volume(pl_core_t *c, int v){
+    v = clampv(c, v);
+    if(v == c->vol_bt) return;
+    c->vol_bt = v;
+    logf_(c, "volume: Bluetooth %d (from the headphones)", v);
+    lead_volume(c, 1);
+}
+
 void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt){
     c->vol_aux = clampv(c, vol_aux); c->vol_bt = clampv(c, vol_bt);
     lead_volume(c, 1);
