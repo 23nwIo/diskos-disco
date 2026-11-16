@@ -66,6 +66,8 @@ static void test_core(void){
     CHECK(req("GET", "/aaaaaaaaaaaaaaaaaaaa/", NULL).kind == RMT_R_NOT_FOUND);
     CHECK(req("GET", p(""), NULL).kind == RMT_R_REDIRECT);
     CHECK(req("GET", p("/"), NULL).kind == RMT_R_PAGE);
+    CHECK(req("GET", p("/system"), NULL).kind == RMT_R_SYS_PAGE && req("POST", p("/system"), "").kind == RMT_R_BAD_METHOD);
+    CHECK(req("GET", p("/system/"), NULL).kind == RMT_R_NOT_FOUND);
     CHECK(req("POST", p("/"), "").kind == RMT_R_BAD_METHOD);
     CHECK(req("GET", p("/api/state"), NULL).kind == RMT_R_STATE);
     CHECK(req("GET", p("/api/state?x=1"), NULL).kind == RMT_R_STATE);
@@ -259,7 +261,7 @@ static void test_core(void){
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
     memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0; memset(s.bt_device, 1, sizeof s.bt_device - 1); s.bt_device[sizeof s.bt_device - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
-    CHECK(strlen(RMT_PAGE_HTML) < 32768);
+    CHECK(strlen(RMT_PAGE_HTML) < 32768 && strlen(RMT_SYS_HTML) < 32768);   /* each page stays light */
 }
 
 /* ---------------------------------------------------------------- server round trip */
@@ -471,6 +473,7 @@ static void test_server(void){
 
     CHECK(call("GET", p("/"), NULL, out, sizeof out) == 200);
     CHECK(strstr(out, "diskOS Remote") && strstr(out, "Content-Security-Policy:") && strstr(out, "Cache-Control: no-store"));
+    CHECK(call("GET", p("/system"), NULL, out, sizeof out) == 200 && strstr(out, "<title>diskOS System</title>") && strstr(out, "Content-Security-Policy:"));
     CHECK(call("GET", p(""), NULL, out, sizeof out) == 301 && strstr(out, "Location: /"));
     CHECK(call("GET", "/", NULL, out, sizeof out) == 404);
     CHECK(call("GET", "/aaaaaaaaaaaaaaaaaaaa/api/state", NULL, out, sizeof out) == 404);

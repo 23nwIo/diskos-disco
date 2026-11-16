@@ -4,6 +4,7 @@
  *
  * The control page and its JSON API live under a secret path: http://<wlan0-ip>:REMOTE_PORT/<token>/...
  *   GET  /<token>/                 the control page (HTML + JS, no external resources)
+ *   GET  /<token>/system           the system page: Status, Bluetooth, Screen
  *   GET  /<token>/api/state        playback state as JSON
  *   POST /<token>/api/<command>    play_pause | play | pause | next | previous
  *                                  volume (value=0..120 or step=-120..120) | seek (position_ms=N) | play_mode (mode=0..4)
@@ -87,6 +88,7 @@ typedef enum {
     RMT_R_NOT_FOUND = 0,   /* 404: wrong/missing token or unknown path */
     RMT_R_REDIRECT,        /* 301 to /<token>/ (the page uses relative URLs) */
     RMT_R_PAGE,            /* 200 the control page */
+    RMT_R_SYS_PAGE,        /* 200 the system page (/<token>/system) */
     RMT_R_STATE,           /* 200 state JSON */
     RMT_R_CMD,             /* run route.cmd */
     RMT_R_BAD_METHOD,      /* 405 */
@@ -163,6 +165,8 @@ void rmt_buf_printf(rmt_buf_t *b, const char *fmt, ...) __attribute__((format(pr
 void rmt_buf_str(rmt_buf_t *b, const char *s);   /* a quoted, escaped JSON string */
 char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NULL after oom */
 
-/* The control page (static HTML). */
-extern const char RMT_PAGE_HTML[];
+/* The pages (static HTML, remote_page.c, generated from ui/remote_page/ by ui/tools/gen_remote_page.py): the control
+ * page at /<token>/ (Now playing, queue, library) and the system page at /<token>/system (Status, Bluetooth, Screen).
+ * Both are self-contained and use relative URLs. */
+extern const char RMT_PAGE_HTML[], RMT_SYS_HTML[];
 #endif

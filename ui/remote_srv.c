@@ -146,8 +146,8 @@ static void handle(int c){
     case RMT_R_REDIRECT: {
         char loc[64]; snprintf(loc, sizeof loc, "Location: /%s/\r\n", g_token);
         reply(c, "301 Moved Permanently", "text/plain", "", loc); break; }
-    case RMT_R_PAGE:
-        reply(c, "200 OK", "text/html; charset=utf-8", RMT_PAGE_HTML,
+    case RMT_R_PAGE: case RMT_R_SYS_PAGE:
+        reply(c, "200 OK", "text/html; charset=utf-8", rt.kind == RMT_R_PAGE ? RMT_PAGE_HTML : RMT_SYS_HTML,
               "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'\r\n");
         break;
     case RMT_R_STATE: {

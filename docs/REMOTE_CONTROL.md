@@ -55,9 +55,15 @@ playing marks the song that is playing, through the player like the Disc's own h
 playlist and favourite functions; a Library list open on the Disc refreshes. Songs cannot be reordered inside a
 playlist (the Disc has no reorder function either).
 
+### System page
+
+**System ›** at the top right opens a second page, `http://<address>:8088/<link code>/system`, with the **Status**,
+**Bluetooth** and **Screen** tabs; **‹ Remote** goes back. The address ends in `#status`, `#bt` or `#scr`, so a bookmark
+opens that tab. Keeping them apart keeps the control page small and quick to load on a phone.
+
 ### Page look
 
-Below **Restart the Disc** in the Status tab: **Page colour** (orange, the default, blue, green, purple or red: buttons,
+Below **Restart the Disc** in the system page's Status tab: **Page colour** (orange, the default, blue, green, purple or red: buttons,
 tabs, sliders and scroll bars) and **Favourites** (red hearts, the default, or yellow stars). Both are kept in the
 browser, so each phone or computer has its own; light and dark mode follow the device.
 
@@ -82,7 +88,7 @@ open; the Disc shows its usual messages ("Connected: …") on its own screen.
 
 ### Radio
 
-The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md). Tap one to play it; the star removes it.
+The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md). Tap one to play it; the heart removes it.
 **Find stations** searches the same station directory as the Radio app (radio-browser.info, through the Disc's own
 search): an empty field shows the popular stations, typing searches by name. The Disc downloads the answer, which takes
 a few seconds. Tap a hit to play it, or its star to save it as a favourite. The Disc and the page share one search, so
@@ -156,7 +162,8 @@ curl "http://192.168.1.50:8088/<link code>/api/state"
 
 | File | Role |
 |---|---|
-| `ui/remote_core.c` | Request parsing, routing, link code, JSON, the control page (pure, host-tested). |
+| `ui/remote_core.c` | Request parsing, routing, link code, JSON (pure, host-tested). |
+| `ui/remote_page/` | The two pages' source: `remote.html` (control page), `system.html` (system page), shared `style.css` and `common.js`. `python3 ui/tools/gen_remote_page.py` writes them into `ui/remote_page.c` (generated, committed; `--check` tells whether it is up to date). |
 | `ui/remote_srv.c` | The server thread and the one-slot command mailbox to the UI (no LVGL). |
 | `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to`, `ui_set_workmode`, the `mdb_*` library queries, the `ui_play_*` entry points and the Radio app's `radio.h`. |
 | `ui/tests/remote_test.c` | Unit tests and the HTTP round trip (`make -C ui/tests remote_test`); `./remote_test --serve PORT` serves the page with a stand-in player for browser checks. |

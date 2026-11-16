@@ -21,8 +21,8 @@ fileops_test: fileops_test.c ../fileops.c
 apps_shortcut_test: apps_shortcut_test.c ../apps.c ../config.c ../md5.c
 	$(CC) $(CFLAGS) $(subst diskos_cfgtest,diskos_shortcuttest,$(DEFS)) -D_GNU_SOURCE -DLV_CONF_INCLUDE_SIMPLE -ffunction-sections -fdata-sections -I.. $< ../config.c ../md5.c -Wl,--gc-sections -o $@
 
-remote_test: remote_test.c ../remote_core.c ../remote_srv.c ../remote_core.h ../remote_srv.h
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_srv.c -pthread -o $@
+remote_test: remote_test.c ../remote_core.c ../remote_page.c ../remote_srv.c ../remote_core.h ../remote_srv.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_page.c ../remote_srv.c -pthread -o $@
 
 mpd_test: mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c ../mpd_core.h ../mpd_srv.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c -pthread -o $@

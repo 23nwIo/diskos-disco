@@ -1,0 +1,122 @@
+<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
+<meta name=referrer content=no-referrer><title>diskOS Remote</title>
+<style>
+@@STYLE@@
+</style><main><div class=top><h1>diskOS Remote</h1><a href=system>System &#8250;</a></div>
+<div class=seg id=tabs><button data-v=np class=on>Now playing</button><button data-v=albums>Albums</button><button data-v=artists>Artists</button>
+<button data-v=playlists>Playlists</button><button data-v=favorites>Favourites</button><button data-v=songs>Songs</button><button data-v=folder>Folders</button><button data-v=radio>Radio</button></div>
+<div id=np><div class=card><img id=cv class=hide alt=''><button id=fv class=hide aria-label=Favourite></button><div id=t>-</div><div id=a></div><div id=al></div><div id=tx></div>
+<input id=pos type=range min=0 max=1 value=0 aria-label=Position><div class=row><span id=pc>0:00</span><span id=du>0:00</span></div></div>
+<button id=rs class='more hide'>Stop radio</button>
+<div class=tr><button id=pv aria-label=Previous>&#9198;</button><button id=pp class=pp aria-label='Play or pause'>&#9199;</button>
+<button id=nx aria-label=Next>&#9197;</button></div>
+<div class=card><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=120 value=0>
+<div class=hd><label for=bal style=flex:1>Balance <span id=bv></span></label><button id=bc class=more style=margin:0>Centre</button></div>
+<input id=bal type=range min=-10 max=10 step=1 value=0>
+<div id=ow class=hide><div class=hint>Outputs: the Volume above moves every output that is on.</div><div class=hd><label style=flex:1><input type=checkbox id=oa> AUX <span id=oav></span></label></div><input id=ova type=range min=0 max=120 value=0 aria-label='AUX volume'>
+<div class=hd><label style=flex:1><input type=checkbox id=ob> Bluetooth <span id=obv></span></label></div><input id=ovb type=range min=0 max=120 value=0 aria-label='Bluetooth volume'>
+<div id=ocw class=hide><label for=oc>Bluetooth codec (this connection; the music pauses briefly) <span id=ocs></span></label><select id=oc></select></div>
+<label for=oau>Auto Outputs (when something connects)</label><select id=oau><option value=0>Off<option value=1>Newest<option value=2>All connected</select></div>
+<label for=eqs>EQ</label><select id=eqs></select>
+<div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one
+<option value=3>Repeat all<option value=4>Single</select></div></div></div>
+<div id=lib class=hide><input id=q type=search placeholder=Search aria-label=Search>
+<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label='More' class=hide>&#8943;</button><button id=pa class=pa>Play all</button></div>
+<div id=list></div><button id=mo class='more hide'>Load more</button></div>
+<div id=shb class=hide></div><div id=sh class=hide></div>
+<div id=msg></div></main>
+<script>
+@@COMMON@@
+var fav=null,art='',drag={},busy=0,V='np',st=[],items=[],tot=0;
+function play(o){cmd('play_item',enc(o)).then(function(ok){if(ok)say('Playing',1)})}
+function poll(){if(document.hidden||busy||V!=='np')return;busy=1;fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){busy=0;
+$('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;
+var ra=s.source==='radio';if(ra){var sn=s.station||'Web radio',ok=s.radio_state!=='starting'&&s.radio_state!=='error';$('t').textContent=ok&&s.stream_title?s.stream_title:sn;$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):s.stream_title?sn:'Web radio';$('al').textContent=s.station_url||''}$('al').classList.toggle('u',ra);
+$('rs').classList.toggle('hide',!ra);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||s.play_mode<0);
+var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');if(s.bt_codec||s.bt_device)tx+=(tx?' · ':'')+'Bluetooth '+[s.bt_codec,s.bt_device].filter(Boolean).join(' · ');$('tx').textContent=s.has_track||ra?tx:'';
+fav=ra?s.station_fav:s.favorite;$('fv').classList.toggle('hide',fav===null||fav===undefined);$('fv').dataset.r=ra?1:'';star($('fv'),fav);
+if(s.art!==art){art=s.art;if(art)$('cv').src='api/cover?v='+encodeURIComponent(art);else $('cv').classList.add('hide')}
+$('pp').innerHTML=s.playing?'&#9208;':'&#9654;';
+if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}
+$('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);
+if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=Math.max(0,s.volume)}$('vv').textContent=s.volume<0?'(not known yet)':s.volume;
+if(!drag.bal){$('bal').value=s.balance}$('bv').textContent=bl($('bal').value);
+var o=s.outputs;$('ow').classList.toggle('hide',!o);if(o){$('oa').checked=o.aux;$('ob').checked=o.bt;$('ob').disabled=!o.bt&&!o.bt_ready;
+if(!drag.ova)$('ova').value=o.vol_aux;if(!drag.ovb)$('ovb').value=o.vol_bt;$('ovb').disabled=!o.bt_ready;
+$('oav').textContent=$('ova').value+(o.bal===1?' · 4.4 mm':o.jack===1?' · 3.5 mm':'');$('obv').textContent=$('ovb').value+(o.bt_ready?'':' · not connected');
+if(document.activeElement!==$('oau'))$('oau').value=o.auto;
+$('ocw').classList.toggle('hide',!o.bt||!o.bt_ready);var oc=$('oc'),k=o.codecs.join();$('ocs').textContent=o.switching?'· switching…':'';
+if(oc.dataset.k!==k){oc.dataset.k=k;oc.innerHTML='';o.codecs.forEach(function(i){oc.add(new Option(CN[i],i))})}
+if(document.activeElement!==oc)oc.value=o.codec<0?'':o.codec}
+if(s.play_mode>=0&&document.activeElement!==$('pm'))$('pm').value=s.play_mode;
+if(document.activeElement!==$('eqs')){if(!$('eqs').options.length||$('eqs').dataset.n!==s.eq_name)eqload(s.eq);else $('eqs').value=s.eq}
+if(!s.controllable)say(s.source==='other'?'The player is in another mode (e.g. USB or Bluetooth)':'')
+}).catch(function(){busy=0;say('Player not reachable')})}
+$('pp').onclick=function(){cmd('play_pause')};$('nx').onclick=function(){cmd('next')};$('pv').onclick=function(){cmd('previous')};
+function bl(v){v=+v;return v?Math.abs(v)+(v<0?' left':' right'):'centre'}
+var SL={pos:['seek','position_ms='],vol:['volume','value='],bal:['balance','value='],ova:['outputs','vol_aux='],ovb:['outputs','vol_bt=']};
+Object.keys(SL).forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value;if(i==='bal')$('bv').textContent=bl(e.value);if(i[0]==='o')$(i==='ova'?'oav':'obv').textContent=e.value};
+e.onchange=function(){drag[i]=0;cmd(SL[i][0],SL[i][1]+e.value)}});
+$('oa').onchange=function(){cmd('outputs','aux='+(this.checked?1:0))};$('ob').onchange=function(){cmd('outputs','bt='+(this.checked?1:0))};
+$('oau').onchange=function(){cmd('outputs','auto='+this.value)};
+var CN=['SBC','AAC','LDAC','aptX','aptX HD'];$('oc').onchange=function(){var e=this;cmd('outputs','codec='+e.value).then(function(ok){if(ok)say('Switching codec…',1)});e.blur()};
+$('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};
+$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};
+$('fv').onclick=function(){(($('fv').dataset.r)?cmd(fav?'radio_fav_remove':'radio_fav_add','kind=radio_now'):cmd('favorite','on='+(fav?0:1))).then(function(ok){if(ok)say(fav?'Removed from favourites':'Added to favourites',1)})};
+$('rs').onclick=function(){cmd('radio_stop')};function eqload(cur){fetch('api/eq',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok)return;var e=$('eqs');e.textContent='';
+j.presets.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;e.appendChild(o)});e.value=j.current;e.dataset.n=(j.presets[j.current]||{}).name||''})}
+$('eqs').onchange=function(){cmd('eq','preset='+$('eqs').value).then(function(){$('eqs').dataset.n=''})};
+$('pm').onchange=function(){cmd('play_mode','mode='+$('pm').value)};
+/* library: st = stack of views {l:list, p:params, t:title, play:item for Play all, row:function(item)->[title,sub,action]} */
+var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,{kind:'album',name:x.name},function(s){return song(s,{kind:'album',name:x.name,song_id:s.id})},null,function(){return[['Add album to a playlist…',function(){addto({kind:'album',name:x.name},x.name)}]]})}]}],
+artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,{kind:'artist',name:x.name},function(s){return song(s,{kind:'artist',name:x.name,song_id:s.id})},null,function(){return[['Add all songs to a playlist…',function(){addto({kind:'artist',name:x.name},x.name)}]]})}]}],
+playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,{kind:'playlist',id:x.id},function(s){return song(s,{kind:'playlist',id:x.id,pos:s.pos})},null,function(){return plmenu(x)})}]},null,['New playlist',function(){newpl(function(){load(0)})}]],
+favorites:['Favourites',function(s){return song(s,{kind:'favorites',pos:s.pos})},{kind:'favorites'}],
+songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all'}],
+folder:['Folders',null,{kind:'folder',path:''}],
+radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}]]};
+function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},
+{f:!!x.fav,fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}},x.url]}
+function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},[{f:!!s.fav,fn:function(b){var on=!s.fav;cmd('favorite',enc({on:on?1:0,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=on;star(b,on);say(on?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]]}
+function smenu(s,o){var a=[[s.fav?'Remove from favourites':'Add to favourites',function(){cmd('favorite',enc({on:s.fav?0:1,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=!s.fav;say(s.fav?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}],
+['Add to a playlist…',function(){addto({kind:'song',song_id:s.id},s.title)}]];
+if(o.kind==='playlist')a.push(['Remove from this playlist',function(){cmd('playlist_remove',enc({id:o.id,pos:s.pos,song_id:s.id})).then(function(ok){if(ok){say('Removed',1);load(0)}})}]);sheet(s.title,a)}
+function addto(o,t){fetch('api/library/playlists?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+var a=(j.items||[]).map(function(p){return[p.name,function(){add(p,o)}]});a.unshift(['New playlist…',function(){newpl(function(p){add(p,o)})}]);sheet('Add “'+t+'” to',a)}).catch(function(){say('Player not reachable')})}
+function add(p,o){var q={id:p.id};for(var k in o)q[k]=o[k];cmdj('playlist_add',enc(q)).then(function(j){if(j.ok)say((j.added>1?j.added+' songs added to ':'Added to ')+p.name,1)})}
+function newpl(then){var n=prompt('Name of the new playlist');if(!n||!n.trim())return;cmdj('playlist_create',enc({name:n.trim()})).then(function(j){if(j.ok){say('Playlist created',1);then({id:j.id,name:n.trim()})}})}
+function plmenu(x){return[['Rename…',function(){var n=prompt('New name',cur().t);if(!n||!n.trim())return;cmd('playlist_rename',enc({id:x.id,name:n.trim()})).then(function(ok){if(ok){cur().t=n.trim();$('ti').textContent=n.trim();say('Renamed',1)}})}],
+['Delete playlist',function(){if(!confirm('Delete the playlist “'+cur().t+'”? The songs stay on the card.'))return;cmd('playlist_delete',enc({id:x.id})).then(function(ok){if(ok){say('Playlist deleted',1);st.pop();load(0)}})}]]}
+function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[(x.dir?'📁 ':'')+x.name,'',x.dir?function(){open('folder',{path:p},x.name,{kind:'folder',path:p},frow(p))}:function(){play({kind:'file',path:p})}]}}
+function open(l,p,t,pl,row,act,menu){st.push({l:l,p:p,t:t,play:pl,row:row,act:act,menu:menu});$('q').value='';load(0)}
+function act(v){return v.act||(v.play?['Play all',function(){play(v.play)}]:null)}
+function cur(){return st[st.length-1]}
+function load(off){var v=cur(),p={};for(var k in v.p)p[k]=v.p[k];if($('q').value)p.q=$('q').value;p.offset=off;p.limit=100;
+$('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';var a=act(v);$('pa').classList.toggle('hide',!a);$('hm').classList.toggle('hide',!v.menu);if(a)$('pa').textContent=a[0];
+$('q').placeholder=v.l==='radio_search'?'Search all stations':'Search';
+if(!off){items=[];$('list').textContent='Loading…'}
+if(v.l==='radio_search'){rsearch(v);return}
+fetch('api/library/'+v.l+'?'+enc(p),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){render(v,j,off)}).catch(function(){say('Player not reachable')})}
+function render(v,j,off){if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}say('');
+if(!off)$('list').textContent='';tot=j.total;j.items.forEach(function(x){items.push(x);var r=v.row(x),b=document.createElement('button');b.className='r';
+var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);if(r[1]){var s=document.createElement('small');s.textContent=r[1];b.appendChild(s)}if(r[4]){var u=document.createElement('small');u.className='u';u.textContent=r[4];b.appendChild(u)}
+b.onclick=r[2];if(r[3]){var w=document.createElement('div');w.className='rw';w.appendChild(b);[].concat(r[3]).forEach(function(k){var f=document.createElement('button');f.className='st';if('f' in k)star(f,k.f);else{f.innerHTML=k.g;f.setAttribute('aria-label',k.a||'More')}
+f.onclick=function(){k.fn(f)};w.appendChild(f)});b=w}$('list').appendChild(b)});
+if(!tot)$('list').textContent=v.l==='radio_search'?'No stations found':$('q').value?'No matches':v.l==='radio'?'No favourites yet - press Find stations':'Empty';$('mo').classList.toggle('hide',items.length>=tot)}
+/* station search: the Disc downloads from the directory (a few seconds), the page asks for the result */
+function rsearch(v){var g=v.gen=(v.gen||0)+1;$('mo').classList.add('hide');$('list').textContent='Searching…';
+cmd('radio_search',enc({q:$('q').value})).then(function(ok){if(ok)rpoll(v,g,0);else if(v===cur()&&g===v.gen)$('list').textContent=''})}
+function rpoll(v,g,n){if(v!==cur()||g!==v.gen)return;fetch('api/library/radio_search?limit=100',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+if(v!==cur()||g!==v.gen)return;if(j.ok&&j.search==='busy'){if(n<40)setTimeout(function(){rpoll(v,g,n+1)},750);else $('list').textContent='The station directory did not answer - try again';return}
+if(j.ok&&j.search==='failed'){$('list').textContent='The station directory did not answer - try again';return}render(v,j,0)}).catch(function(){say('Player not reachable')})}
+function refresh(){poll()}
+function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});
+$('np').classList.toggle('hide',v!=='np');$('lib').classList.toggle('hide',v==='np');say('');
+if(v==='np'){poll();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}
+[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
+$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};
+$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('shb').onclick=shut;
+$('pa').onclick=function(){var a=act(cur());if(a)a[1]()};$('mo').onclick=function(){load(items.length)};
+var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},cur().l==='radio_search'?600:300)};
+setInterval(poll,1000);document.addEventListener('visibilitychange',poll);poll();
+</script></html>

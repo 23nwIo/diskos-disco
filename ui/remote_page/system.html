@@ -1,0 +1,62 @@
+<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
+<meta name=referrer content=no-referrer><title>diskOS System</title>
+<style>
+@@STYLE@@
+</style><main><div class=top><h1>diskOS System</h1><a href=./>&#8249; Remote</a></div>
+<div class=seg id=tabs><button data-v=status id=statust>Status</button><button data-v=bt id=btt>Bluetooth</button><button data-v=scr id=scrt>Screen</button></div>
+<div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div><div id=btc class='card hide'><label for=btk>Bluetooth codec <span id=btn></span></label><select id=btk></select><div id=bth class=hint></div></div></div>
+<div id=sys class='card hide'><label for=wm>Working mode</label><select id=wm><option value=0>Playback<option value=1>USB DAC<option value=2>Bluetooth DAC
+<option value=4>Bluetooth streaming<option value=5>AirPlay<option value=3>USB storage</select><button id=rbt class=more>Restart the Disc</button>
+<label for=lka>Page colour (this browser)</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
+<label for=lkf>Favourites</label><select id=lkf><option value=heart>Hearts (red)<option value=star>Stars (yellow)</select></div>
+<div id=stv class=hide></div>
+<div id=scv class=hide><div class=card><img id=si alt='The Disc screen'><div class=hd><button id=srf class=pa>Refresh</button><b></b><label><input type=checkbox id=sau> Live</label></div>
+<div class=hint>Tap or drag on the picture to touch the Disc; hold for a long press.</div></div></div>
+<div id=shb class=hide></div><div id=sh class=hide></div>
+<div id=msg></div></main>
+<script>
+@@COMMON@@
+var V='status';
+function status(){if(V!=='status'||document.hidden)return;fetch('api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='status'||!j.ok)return;var d=$('stv');d.textContent='';
+if(document.activeElement!==$('wm')&&j.work_mode>=0&&j.work_mode<6)$('wm').value=j.work_mode;var sc=j.scan&&j.scan.active,rb=document.createElement('button');rb.className='more';rb.textContent=sc?'Stop library scan':'Rescan library';
+rb.onclick=function(){if(!sc&&!confirm('Rescan the library on the SD card now? Large cards take a while.'))return;cmd('rescan','action='+(sc?'stop':'start')).then(function(ok){if(ok){say(sc?'Stopping the scan':'Scanning the library',1);setTimeout(status,500)}})};d.appendChild(rb);
+j.groups.forEach(function(g){if(!g.rows.length)return;var h=document.createElement('h2');h.textContent=g.name;d.appendChild(h);var c=document.createElement('div');c.id='';c.className='card';c.style.padding='0';
+g.rows.forEach(function(r){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');a.textContent=r[0];b.textContent=r[1];k.appendChild(a);k.appendChild(b);c.appendChild(k)});d.appendChild(c)})}).catch(function(){say('Player not reachable')})}
+setInterval(status,3000);
+$('wm').onchange=function(){var m=$('wm').value;if(m==='3'&&!confirm('Switch to USB storage? The card goes to the computer: the library, playback and this page\u2019s lists stop until you switch back.'))return status();
+cmd('work_mode','mode='+m).then(function(ok){if(ok)say('Switching mode',1);setTimeout(status,3500)})};
+$('rbt').onclick=function(){if(!confirm('Restart the Disc now? This page reconnects once it is back (about a minute).'))return;cmd('reboot','confirm=1').then(function(ok){if(ok)say('Restarting…',1)})};
+/* Bluetooth: the Disc's own Bluetooth screen calls; a search takes ~15 s, connecting a few seconds */
+var bton=0;function bt(){if(V!=='bt'||document.hidden)return;fetch('api/bluetooth',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='bt'||!j.ok)return;
+var k=j.codec,e=$('btk');$('btc').classList.toggle('hide',!k||!k.settable);if(k&&k.settable&&document.activeElement!==e){if(e.options.length!==k.choices.length){e.textContent='';k.choices.forEach(function(c){var o=document.createElement('option');o.value=c.id;o.textContent=c.name;e.appendChild(o)})}
+e.value=k.current;$('bth').textContent=(k.choices[k.current]||{}).hint||''}$('btn').textContent=k&&k.live?'· now '+k.live:'';
+var on=j.state==='on';bton=j.state!=='off';$('bts').textContent=on?(j.busy?'Looking for devices…':'Bluetooth is on'):j.state==='off'?'Bluetooth is off':'Turning on…';
+$('bto').textContent=bton?'Turn off':'Turn on';$('bto').className=bton?'':'pa';$('btf').disabled=!on||j.busy;var l=$('btl');l.textContent='';
+if(on&&!j.devices.length){l.className='card';l.textContent=j.busy?'Searching…':'No audio devices found. Put your headphones in pairing mode and search.';return}l.className=j.devices.length?'card':'';l.style.padding='0';
+j.devices.forEach(function(d){var w=document.createElement('div');w.className='rw';var b=document.createElement('button');b.className='r';var t=document.createElement('b'),m=document.createElement('small');
+t.textContent=(d.connected?'\u25cf ':'')+d.name;m.textContent=d.connected?'Connected'+(d.codec?' · '+d.codec:'')+' · tap to disconnect':(d.alias&&d.own?d.own+' · ':'')+d.mac;b.appendChild(t);b.appendChild(m);
+b.onclick=function(){cmd('bt_device',enc({action:d.connected?'disconnect':'connect',mac:d.mac})).then(function(ok){if(ok){say(d.connected?'Disconnecting…':'Connecting to '+d.name+'…',1);setTimeout(bt,1500)}})};
+var x=document.createElement('button');x.className='st';x.innerHTML='&#8943;';x.setAttribute('aria-label','More');x.onclick=function(){sheet(d.name,[['Rename…',function(){var n=prompt('Name on this Disc (empty: the device\u2019s own name)',d.alias||d.name);if(n===null)return;
+cmd('bt_device',enc({action:'rename',mac:d.mac,name:n.trim()})).then(function(ok){if(ok){say('Renamed',1);bt()}})}],['Forget device',function(){if(!confirm('Forget “'+d.name+'”? You will need to pair it again.'))return;
+cmd('bt_device',enc({action:'forget',mac:d.mac})).then(function(ok){if(ok){say('Device forgotten',1);setTimeout(bt,1800)}})}]])};w.appendChild(b);w.appendChild(x);l.appendChild(w)})}).catch(function(){say('Player not reachable')})}
+setInterval(bt,2000);$('bto').onclick=function(){cmd('bluetooth','action='+(bton?'off':'on')).then(function(ok){if(ok){say(bton?'Turning Bluetooth off':'Turning Bluetooth on - this takes up to half a minute',1);setTimeout(bt,500)}})};
+$('btk').onchange=function(){cmd('bluetooth',enc({action:'codec',codec:$('btk').value})).then(function(ok){if(ok){say('Saved - applies from the next connection',1);bt()}})};
+$('btf').onclick=function(){cmd('bluetooth','action=search').then(function(ok){if(ok){$('btf').disabled=true;say('Searching for about 15 seconds',1);setTimeout(bt,500)}})};
+/* Screen: a picture of the Disc's screen on request (Live: again a moment after each one arrives); touches on it are sent */
+var sbusy=0,sdn=null;function shot(){if(V!=='scr'||document.hidden||sbusy)return;sbusy=1;$('si').src='api/screen?t='+Date.now()}
+$('si').onload=function(){sbusy=0;if($('sau').checked)setTimeout(shot,700)};$('si').onerror=function(){sbusy=0;say('The screen could not be read');if($('sau').checked)setTimeout(shot,3000)};
+$('srf').onclick=shot;$('sau').onchange=shot;
+function spt(e){var r=$('si').getBoundingClientRect(),f=function(v){return Math.max(0,Math.min(359,Math.round(v*360)))};return{x:f((e.clientX-r.left)/r.width),y:f((e.clientY-r.top)/r.height)}}
+$('si').onpointerdown=function(e){e.preventDefault();sdn=spt(e);sdn.t=Date.now();try{$('si').setPointerCapture(e.pointerId)}catch(x){}};
+$('si').onpointercancel=function(){sdn=null};$('si').ondragstart=function(){return false};
+$('si').onpointerup=function(e){if(!sdn)return;var a=sdn,b=spt(e),ms=Math.min(3000,Date.now()-a.t);sdn=null;
+if(Math.abs(b.x-a.x)<5&&Math.abs(b.y-a.y)<5){b=a;if(ms<350)ms=100}
+cmd('touch',enc({x:a.x,y:a.y,x2:b.x,y2:b.y,ms:ms})).then(function(ok){setTimeout(shot,(ok?ms:0)+450);if(ok&&!$('sau').checked)setTimeout(shot,ms+1500)})};
+function refresh(){status();bt()}
+function tab(v){if(!$(v+'t'))v='status';V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});try{history.replaceState(null,'','#'+v)}catch(e){}
+$('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');
+if(v==='scr'){shot();return}if(v==='status'){$('stv').textContent='Loading…';status();return}$('btl').textContent='Loading…';bt()}
+[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
+$('lka').value=LK.acc;$('lkf').value=LK.fav;$('lka').onchange=function(){LK.acc=$('lka').value;look()};$('lkf').onchange=function(){LK.fav=$('lkf').value;look()};
+document.addEventListener('visibilitychange',function(){refresh();shot()});tab(location.hash.slice(1));
+</script></html>
