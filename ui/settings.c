@@ -195,6 +195,21 @@ static const opl_outputs_t *outputs_now(void){
     } else g_outp_aux = g_outp_bt = g_outp_va = g_outp_vb = -1;
     return &v;
 }
+/* main.c, every second: with Auto Outputs off the player leaves the outputs alone when a plug goes in or headphones
+ * connect, and notes it in its file (notice=); say so once per notice. The first read only takes the count. */
+void settings_outputs_notice_tick(void){
+    static unsigned seen; static int known;
+    opl_outputs_t f, *o = &f;                           /* only the own player writes the file (tmpfs): no file, no notices */
+    if(opl_outputs_read(o) != 0){ known = 0; return; }
+    if(!known || o->notice_seq < seen){ seen = o->notice_seq; known = 1; return; }   /* first look, or a new player */
+    if(o->notice_seq == seen) return;
+    seen = o->notice_seq;
+    if(o->notice == 1) ui_toast(tr("AUX connected, but not enabled. See Audio > Outputs"));
+    else if(o->notice == 2) ui_toast(tr("Bluetooth connected, but not enabled. See Audio > Outputs"));
+}
+/* main.c: the player's volume report (a714) follows a change made here (an output switched, an output's volume): no
+ * volume overlay for it, the page shows the value itself */
+int settings_outputs_recent(void){ return g_outp_t && lv_tick_get() - g_outp_t < 1500; }
 static int out_send(const char *tag, int v){ char f[16]; snprintf(f, sizeof f, "%s000C%04X", tag, (unsigned)v); return ipc_send_cmd(f); }
 static void out_set(int aux, int bt){
     if(!aux && !bt){ ui_toast(tr("One output stays on")); return; }
@@ -225,6 +240,9 @@ static void out_volume(int which, int v){
     if(lv_tick_get() - g_outv_t >= 80){ outv_flush(); return; }
     if(!g_outv_tm){ g_outv_tm = lv_timer_create(outv_tm_cb, 100, NULL); lv_timer_set_repeat_count(g_outv_tm, 1); }
 }
+/* Auto Outputs (cfg out_auto, 0d05): what connecting and disconnecting a plug or headphones does (player/core.h
+ * PL_AUTO_*). Saved here and sent again whenever the player (re)starts (main.c reapply_sends). */
+static void apply_out_auto(int v){ if(own_player_cached()) out_send("0d05", v); }
 static void apply_out_vol_aux(int v){ out_volume(0, v); }
 static void apply_out_vol_bt(int v){ out_volume(1, v); }
 static const char *const OUT_CODEC_OPTS[] = { "SBC", "AAC", "LDAC", "aptX", "aptX HD" };
@@ -236,18 +254,35 @@ static int out_has_word(const char *list, const char *w){
         if((p == list || p[-1] == ' ') && (p[n] == 0 || p[n] == ' ')) return 1;
     return 0;
 }
+/* The codec list shows only what the headphones offer (all five while that is not known) and always the codec of the
+ * link now. g_codec_opts / g_codec_map: the shown names and their OUT_CODEC_ index, rebuilt from the player's file. */
+static const char *g_codec_opts[5] = { "SBC", "AAC", "LDAC", "aptX", "aptX HD" };
+static int g_codec_map[5] = { 0, 1, 2, 3, 4 }, g_codec_n = 5;
+static void codec_list_refresh(void){
+    const opl_outputs_t *o = outputs_now();
+    int n = 0;
+    for(int i = 0; i < 5; i++)
+        if(!o->codecs[0] || out_has_word(o->codecs, OUT_CODEC_WORD[i]) || !strcmp(o->codec, OUT_CODEC_WORD[i])){
+            g_codec_opts[n] = OUT_CODEC_OPTS[i]; g_codec_map[n++] = i;
+        }
+    if(!n) for(int i = 0; i < 5; i++){ g_codec_opts[i] = OUT_CODEC_OPTS[i]; g_codec_map[i] = i; n = 5; }
+    g_codec_n = n;
+}
 static int out_codec_index(void){
     const opl_outputs_t *o = outputs_now();
-    for(int i = 0; i < 5; i++) if(!strcmp(o->codec, OUT_CODEC_WORD[i])) return i;
+    codec_list_refresh();
+    for(int i = 0; i < g_codec_n; i++) if(!strcmp(o->codec, OUT_CODEC_WORD[g_codec_map[i]])) return i;
     return 0;
 }
 static void apply_out_codec(int i){
     const opl_outputs_t *o = outputs_now();
-    if(i < 0 || i >= 5) return;
+    if(i < 0 || i >= g_codec_n) return;
+    int c = g_codec_map[i];
     if(!o->bt){ ui_toast(tr("Bluetooth is off")); return; }
     if(o->switching){ ui_toast(tr("Still switching - try again in a moment")); return; }
-    if(o->codecs[0] && !out_has_word(o->codecs, OUT_CODEC_WORD[i])){ ui_toast(tr("These headphones don't offer it")); return; }
-    if(out_send("0d04", OUT_CODEC_VAL[i]) == 0) ui_toast(tr("Switching codec..."));
+    if(!strcmp(o->codec, OUT_CODEC_WORD[c])) return;                       /* already */
+    if(o->codecs[0] && !out_has_word(o->codecs, OUT_CODEC_WORD[c])){ ui_toast(tr("These headphones don't offer it")); return; }
+    if(out_send("0d04", OUT_CODEC_VAL[c]) == 0) ui_toast(tr("Switching codec..."));
 }
 static void apply_grp_outputs(int v);
 static int outputs_row(const setting_t *s){
@@ -887,6 +922,10 @@ static const char *const OPT_DFILTER[]= { "Fast LL","Slow LL","Slow PC","Fast PC
 static const char *const OPT_MEMORY[] = { "Off", "Position", "Song" };
 static const char *const OPT_ARTISTCLASS[] = { "By Artist", "By Album Artist" };
 static const char *const OPT_RADIOFAV[] = { "On Player", "On SD Card" };
+static const char *const OPT_OUTAUTO[] = { "Off", "Newest", "All connected" };
+static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",          /* short: Zune's dial */
+                                             "The newest device plays alone.",
+                                             "Every connected device plays." };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
 static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 static const char *const D_ARTCACHE[] = {
@@ -966,14 +1005,16 @@ static const setting_t TABLE[] = {
     { "Audio",    "Outputs",     ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_grp_outputs, 0,
       "AUX and Bluetooth, each on or off, with its own volume.", NULL },
     { "Outputs",  "AUX",         ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_aux, 1,
-      "The headphone jacks (3.5 mm and 4.4 mm balanced). Plugging in turns AUX on and Bluetooth off.", NULL },
+      "The headphone jacks (3.5 mm and 4.4 mm balanced). Auto Outputs says what plugging in does.", NULL },
     { "Outputs",  "Bluetooth",   ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_bt, 0,
-      "The connected Bluetooth headphones. Connecting them turns Bluetooth on and AUX off; turn the other one on here to play on both. Bluetooth is a little behind AUX.", NULL },
+      "The connected Bluetooth headphones; turn both on to play on both. Bluetooth is a little behind AUX.", NULL },
+    { "Outputs",  "Auto Outputs", ST_CYCLER, "out_auto", 0,0,0, OPT_OUTAUTO, 3, NULL, apply_out_auto, 1,
+      "What plugging in or connecting headphones does to the outputs; unplugging or disconnecting turns that one off.", OPT_OUTAUTO_D },
     { "Outputs",  "AUX Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
       "The volume keys move every output that is on by the same step.", NULL },
     { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,
       "The volume keys move every output that is on by the same step.", NULL },
-    { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, OUT_CODEC_OPTS, 5, NULL, apply_out_codec, 0,
+    { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
 #ifdef DISKOS_TEST_OUTPUTS   /* device-unverified: test builds only */
     { "Audio",    "SPDIF Output", ST_TOGGLE, "spdif",   0,1,1, NULL,0, NULL, apply_spdif, 0,
@@ -1257,6 +1298,7 @@ static const setting_t TABLE[] = {
  * Value labels still use the full table (a saved aptX choice keeps its name; it falls back as described). */
 static int shown_opts(const setting_t *s){
     if(s->cfg_key && !strcmp(s->cfg_key, "bt_codec")) return bt_codec_choices();
+    if(s->apply == apply_out_codec){ codec_list_refresh(); return g_codec_n; }
     return s->nopts;
 }
 static int nav_setting(const setting_t *s){return s->cfg_key && (!strcmp(s->cfg_key,"disco_nav_double") || !strcmp(s->cfg_key,"disco_nav_hold"));}
@@ -1801,9 +1843,24 @@ static void zslider_show(const setting_t *s, int v){
     char u[48]; if(n && strlen(num) != strlen(b)) zlower(u, sizeof u, b); else u[0] = 0;
     lv_label_set_text(g_zsl_unit, u);
 }
+/* A press that starts in the back-swipe strip at the screen edge never turns the wheel: the rim passes through that
+ * strip, so swiping back used to change the value on the way out (Jo, 2026-11-16). */
+static int g_zarc_edge, g_zarc_v0;
 static void zarc_cb(lv_event_t *e){
     const setting_t *s = g_active; if(!s || display_blocked(s)) return;
     lv_obj_t *a = lv_event_get_target(e);
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_PRESSED){
+        lv_point_t p = { 0, 0 }; lv_indev_t *in = lv_indev_active(); if(in) lv_indev_get_point(in, &p);
+        int ui_back_edge(int x);
+        g_zarc_edge = ui_back_edge(p.x); g_zarc_v0 = lv_arc_get_value(a);
+        return;
+    }
+    if(g_zarc_edge && (code == LV_EVENT_VALUE_CHANGED || code == LV_EVENT_RELEASED || code == LV_EVENT_SHORT_CLICKED)){
+        if(lv_arc_get_value(a) != g_zarc_v0) lv_arc_set_value(a, g_zarc_v0);
+        if(code == LV_EVENT_RELEASED) g_zarc_edge = 0;
+        return;
+    }
     int v = lv_arc_get_value(a);
     if(s->step > 1) v = s->min + (v - s->min + s->step / 2) / s->step * s->step;
     if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED){
@@ -1834,6 +1891,8 @@ static int zdetail(lv_obj_t *root){
         lv_obj_set_style_pad_all(a, 6, LV_PART_KNOB);
         lv_obj_set_ext_click_area(a, 16);
         if(outdoor_holds(s)) lv_obj_add_state(a, LV_STATE_DISABLED);
+        g_zarc_edge = 0;
+        lv_obj_add_event_cb(a, zarc_cb, LV_EVENT_PRESSED, NULL);
         lv_obj_add_event_cb(a, zarc_cb, LV_EVENT_VALUE_CHANGED, NULL);
         lv_obj_add_event_cb(a, zarc_cb, LV_EVENT_RELEASED, NULL);
         lv_obj_add_event_cb(a, zarc_cb, LV_EVENT_SHORT_CLICKED, NULL);
@@ -1849,7 +1908,12 @@ static int zdetail(lv_obj_t *root){
         lv_obj_set_style_text_font(g_zsl_unit, zune_font(&font_zune_regular_16), 0); lv_obj_set_style_text_color(g_zsl_unit, TC(TEXT_MUTED), 0);
         lv_obj_align(g_zsl_unit, LV_ALIGN_TOP_MID, 0, 250);
         zslider_show(s, v);
-        lv_obj_t *h = lv_label_create(root); kit_keep(h); lv_label_set_text(h, "drag around the rim");
+        /* the middle (caption, number, unit) is Back: the page has no back arrow, and a swipe is easy to start on the rim */
+        lv_obj_t *mid = lv_obj_create(root); kit_keep(mid);
+        lv_obj_remove_style_all(mid); lv_obj_set_size(mid, 200, 180); lv_obj_align(mid, LV_ALIGN_TOP_MID, 0, 96);
+        lv_obj_add_flag(mid, LV_OBJ_FLAG_CLICKABLE); lv_obj_remove_flag(mid, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(mid, detail_back_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *h = lv_label_create(root); kit_keep(h); lv_label_set_text(h, "drag the rim, tap to go back");
         lv_obj_set_style_text_font(h, zune_font(&font_zune_regular_16), 0); lv_obj_set_style_text_color(h, TC(TEXT_MUTED), 0);
         lv_obj_align(h, LV_ALIGN_TOP_MID, 0, 272);
         return 1;

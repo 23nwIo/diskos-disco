@@ -43,6 +43,7 @@
 /* Outputs (Settings > Audio > Outputs): the own player writes their state here whenever it changes, one "key=value"
  * per line (aux, bt, vol_aux, vol_bt, bt_ready, jack, bal, codec, codecs, switching); the UI reads it. tmpfs. */
 #define OPL_OUTPUTS "/tmp/diskos-player-outputs"
+#define OPL_VOLUME_LOG "/tmp/diskos-volume.log"   /* one line per volume change (player/main.c volume_log) */
 #define OPL_VOLUMES OPL_DIR "/volumes"          /* the two output volumes, kept by the player: "vol_aux=N\nvol_bt=N" */
 
 enum { OPL_OFF = 0, OPL_ON, OPL_NO_BINARY, OPL_GAVE_UP };
@@ -134,6 +135,9 @@ typedef struct {
     int switching;                 /* a codec switch is running */
     char codec[16];                /* the link's codec, upper case ("LDAC"), "" when not on Bluetooth */
     char codecs[64];               /* the codecs the headphones offer ("SBC AAC LDAC") */
+    int auto_out;                  /* 0d05 as the player has it: 0 off, 1 newest, 2 all (player/core.h PL_AUTO_*) */
+    unsigned notice_seq;           /* bumps when a device connected that is not on (auto off) */
+    int notice;                    /* what: 1 AUX, 2 Bluetooth */
 } opl_outputs_t;
 static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
     memset(o, 0, sizeof *o);
@@ -158,6 +162,8 @@ static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
             else if(!strcmp(line, "switching")) o->switching = atoi(v);
             else if(!strcmp(line, "codec")) snprintf(o->codec, sizeof o->codec, "%s", v);
             else if(!strcmp(line, "codecs")) snprintf(o->codecs, sizeof o->codecs, "%s", v);
+            else if(!strcmp(line, "auto")) o->auto_out = atoi(v);
+            else if(!strcmp(line, "notice")){ char *e; o->notice_seq = (unsigned)strtoul(v, &e, 10); o->notice = atoi(e); }
         }
         l = e ? e + 1 : NULL;
     }

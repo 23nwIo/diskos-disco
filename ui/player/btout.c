@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -60,10 +61,12 @@ static int run(const char *cmd, char *out, size_t cap){
 }
 static void first_line(char *s){ s[strcspn(s, "\n")] = 0; }
 
+/* the first word at p, upper case, up to a blank or a ':' (newer BlueALSA writes the codec with its configuration,
+ * "SBC:ffff0235") */
 static void upper_word(const char *p, char *out, size_t cap){
     size_t n = 0;
     while(*p == ' ' || *p == '\t') p++;
-    while(*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && n + 1 < cap){
+    while(*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && *p != ':' && n + 1 < cap){
         char ch = *p++;
         out[n++] = (ch >= 'a' && ch <= 'z') ? (char)(ch - 32) : ch;
     }
@@ -84,7 +87,16 @@ void bto_parse_selected(const char *info, char *out, size_t cap){
     }
 }
 
+/* "Selected codec: SBC" (a key, a ':' and a blank or the line's end) and not "  SBC:ffff0235 AAC:80ff" (codecs) */
+static int key_line(const char *p, size_t len){
+    size_t i = 0;
+    while(i < len && (p[i] == ' ' || p[i] == '\t')) i++;
+    size_t k = i;
+    while(i < len && ((p[i] >= 'A' && p[i] <= 'Z') || (p[i] >= 'a' && p[i] <= 'z') || p[i] == ' ')) i++;
+    return i > k && i < len && p[i] == ':' && (i + 1 == len || p[i + 1] == ' ' || p[i + 1] == '\t' || p[i + 1] == '\r');
+}
 void bto_parse_avail(const char *info, char *out, size_t cap){
+    static const char *const known[] = { "SBC", "AAC", "LDAC", "APTX", "APTX-HD" };
     if(cap) out[0] = 0;
     const char *h = info ? strstr(info, "Available codecs:") : NULL;
     if(!h || !cap) return;
@@ -93,16 +105,19 @@ void bto_parse_avail(const char *info, char *out, size_t cap){
     for(int first = 1; *p; first = 0){
         const char *e = strchr(p, '\n');
         size_t len = e ? (size_t)(e - p) : strlen(p);
-        if(!first && memchr(p, ':', len)) break;
+        if(!first && key_line(p, len)) break;
+        /* words of letters, digits and '-'; only the codec names count (a configuration after ':' is skipped) */
         for(size_t i = 0; i < len;){
             size_t j = i;
-            while(j < len && p[j] != ' ' && p[j] != '\t' && p[j] != '\r' && p[j] != ',') j++;
-            if(j > i && n + (j - i) + 2 < cap){
-                if(n) out[n++] = ' ';
-                for(size_t k = i; k < j; k++) out[n++] = (p[k] >= 'a' && p[k] <= 'z') ? (char)(p[k] - 32) : p[k];
-                out[n] = 0;
+            while(j < len && ((p[j] >= 'A' && p[j] <= 'Z') || (p[j] >= 'a' && p[j] <= 'z') || (p[j] >= '0' && p[j] <= '9') || p[j] == '-')) j++;
+            int after_colon = i > 0 && p[i - 1] == ':';
+            for(unsigned k = 0; j > i && !after_colon && k < sizeof known / sizeof *known; k++){
+                if(strlen(known[k]) != j - i || strncasecmp(p + i, known[k], j - i)) continue;
+                size_t kl = j - i;
+                if(n + kl + 2 < cap){ if(n) out[n++] = ' '; memcpy(out + n, known[k], kl); n += kl; out[n] = 0; }
+                break;
             }
-            i = j + 1;
+            i = j > i ? j : i + 1;
         }
         if(!e) break;
         p = e + 1;

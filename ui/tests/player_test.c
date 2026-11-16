@@ -132,6 +132,13 @@ static void test_core(void){
         CHECK(!strcmp(sel, "AAC") && av[0] == 0);
         bto_parse_avail("Available codecs:\n  SBC AAC\n  aptX aptX-HD\nSelected codec: SBC\n", av, sizeof av);
         CHECK(!strcmp(av, "SBC AAC APTX APTX-HD"));
+        /* newer BlueALSA: each codec with its configuration, and the selected one too */
+        info = "Rate: 44100\nAvailable codecs: SBC:ffff0235 AAC:c0ff8c8000 aptX:4f0000000100ff LDAC:2d0100000aa00a\n"
+               "Selected codec: SBC:21150235\nDelay: 150.0 ms\n";
+        bto_parse_selected(info, sel, sizeof sel); bto_parse_avail(info, av, sizeof av);
+        CHECK(!strcmp(sel, "SBC") && !strcmp(av, "SBC AAC APTX LDAC"));
+        bto_parse_avail("Available codecs:\n  SBC:ffff0235\n  aptX-HD:d70000\nSelected codec: SBC:2115\n", av, sizeof av);
+        CHECK(!strcmp(av, "SBC APTX-HD"));
     }
     /* outputs: plugs, routes, 0d01..0d04 and the two volumes */
     c.transport = count_pause; npause = 0;
@@ -158,10 +165,62 @@ static void test_core(void){
     CHECK(send1(&c, "0711000C0005") == 0 && c.vol_aux == 5 && c.vol_bt == 5);    /* max volume: both */
     c.max_volume = 120;
     c.transport = NULL;
-    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && !c.bt_ready && c.out_aux == 1 && c.out_bt == 0);
-    CHECK(send1(&c, "0d01000C0002") == -1 && c.out_bt == 0);         /* no headphones: refused */
+    /* the headphones gone while they were the only output and no plug is in: Bluetooth waits for them, the DAC plays */
+    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && !c.bt_ready && c.out_aux == 0 && c.out_bt == 1);
+    CHECK(c.volume == c.vol_aux);                                    /* the DAC leads now */
+    CHECK(send1(&c, "0d01000C0002") == -1 && c.out_bt == 1);         /* no headphones: refused */
     CHECK(send1(&c, "0d04000C0001") == -1);
     c.jack = -1; c.bal = -1;
+
+    /* Auto Outputs (0d05): newest (the default), all connected, off */
+    {
+        pl_core_t a; pl_core_init(&a, cap_send, NULL, NULL);
+        a.transport = count_pause; npause = 0;
+        CHECK(a.auto_out == PL_AUTO_NEWEST);
+        CHECK(send1(&a, "0d05000C0003") == -1 && a.auto_out == PL_AUTO_NEWEST);
+        pl_core_jack(&a, 0); pl_core_bal(&a, 0);                      /* levels known: nothing plugged */
+        /* newest: headphones connect -> Bluetooth alone; a plug -> AUX alone; the plug out -> Bluetooth again */
+        CHECK(send1(&a, "0666000C0002") == 0 && send1(&a, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(a.out_bt == 1 && a.out_aux == 0 && a.bt_ready);
+        pl_core_jack(&a, 1); CHECK(a.out_aux == 1 && a.out_bt == 0);
+        pl_core_jack(&a, 0); CHECK(a.out_aux == 0 && a.out_bt == 1 && npause == 1);   /* paused, on Bluetooth */
+        npause = 0;
+        /* both by hand, then the headphones go: Bluetooth off, AUX plays on, no pause */
+        CHECK(send1(&a, "0d01000C0003") == 0);
+        CHECK(send1(&a, "0666000C0006") == 0 && a.out_aux == 1 && a.out_bt == 0 && npause == 0);
+        /* Bluetooth alone and a plug in when the headphones go: pause, AUX takes over */
+        CHECK(send1(&a, "0666000C0002") == 0 && send1(&a, "06b3001D0000AA:BB:CC:01:02:03") == 0 && a.out_bt == 1);
+        pl_core_bal(&a, 1); CHECK(a.out_aux == 1 && a.out_bt == 0);
+        CHECK(send1(&a, "0d01000C0002") == 0 && a.out_aux == 0 && a.out_bt == 1);
+        CHECK(send1(&a, "0666000C0006") == 0 && npause == 1 && a.out_aux == 1 && a.out_bt == 0);
+        pl_core_bal(&a, 0); CHECK(npause == 2);                       /* the last plug out, AUX only: pause */
+
+        /* all connected: switching to it turns on what is connected; a plug adds AUX, headphones add Bluetooth */
+        npause = 0;
+        CHECK(send1(&a, "0d05000C0002") == 0 && a.auto_out == PL_AUTO_ALL);
+        CHECK(a.out_aux == 1 && a.out_bt == 0);                       /* nothing connected: the choice stays */
+        CHECK(send1(&a, "0666000C0002") == 0 && send1(&a, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(a.out_bt == 1 && a.out_aux == 0);                       /* no plug: AUX off */
+        pl_core_jack(&a, 1); CHECK(a.out_aux == 1 && a.out_bt == 1);  /* both */
+        CHECK(send1(&a, "0666000C0006") == 0 && a.out_aux == 1 && a.out_bt == 0 && npause == 0);   /* AUX plays on */
+        CHECK(send1(&a, "0666000C0002") == 0 && send1(&a, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(a.out_aux == 1 && a.out_bt == 1);
+        pl_core_jack(&a, 0); CHECK(a.out_aux == 0 && a.out_bt == 1 && npause == 0);   /* Bluetooth plays on */
+
+        /* off: nothing changes; a device that is not on gets a notice */
+        CHECK(send1(&a, "0d05000C0000") == 0 && a.auto_out == PL_AUTO_OFF);
+        unsigned ns = a.notice_seq;
+        pl_core_jack(&a, 1); CHECK(a.out_aux == 0 && a.out_bt == 1 && a.notice_seq == ns + 1 && a.notice == PL_NOTICE_AUX);
+        pl_core_jack(&a, 0); CHECK(npause == 0);                      /* AUX was off: Bluetooth plays on */
+        CHECK(send1(&a, "0666000C0006") == 0 && a.out_bt == 1 && !a.bt_ready && npause == 1);   /* the only output: pause, kept */
+        CHECK(send1(&a, "0666000C0002") == 0 && send1(&a, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(a.out_bt == 1 && a.bt_ready && a.notice_seq == ns + 1);  /* back on Bluetooth, no notice */
+        pl_core_jack(&a, 1); CHECK(a.notice_seq == ns + 2);
+        CHECK(send1(&a, "0d01000C0001") == 0 && a.out_aux == 1 && a.out_bt == 0);
+        CHECK(send1(&a, "0666000C0006") == 0 && send1(&a, "0666000C0002") == 0 && send1(&a, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(a.out_aux == 1 && a.out_bt == 0 && a.notice_seq == ns + 3 && a.notice == PL_NOTICE_BT);
+        npause = 0; pl_core_jack(&a, 0); CHECK(npause == 1);          /* AUX alone: the plug out pauses */
+    }
 
     /* play list: answered with the state, name may be long */
     nsent = 0;

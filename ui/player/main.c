@@ -160,9 +160,10 @@ static void save_volumes(const pl_core_t *c){
 static void write_outputs(const pl_core_t *c, const char *path){
     static char last[512];
     char b[512];
-    snprintf(b, sizeof b, "aux=%d\nbt=%d\nvol_aux=%d\nvol_bt=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\ncodecs=%s\nswitching=%d\n",
+    snprintf(b, sizeof b, "aux=%d\nbt=%d\nvol_aux=%d\nvol_bt=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\ncodecs=%s\nswitching=%d\n"
+             "auto=%d\nnotice=%u %d\n",
              pb_aux(), pb_bluetooth(), c->vol_aux, c->vol_bt, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
-             pb_switching());
+             pb_switching(), c->auto_out, c->notice_seq, c->notice);
     if(!strcmp(b, last)) return;
     char tmp[300];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
@@ -170,6 +171,21 @@ static void write_outputs(const pl_core_t *c, const char *path){
     if(!f || fputs(b, f) < 0 || fclose(f) != 0){ logmsg("outputs: write %s: %s", tmp, strerror(errno)); return; }
     if(rename(tmp, path) != 0){ logmsg("outputs: rename %s: %s", tmp, strerror(errno)); return; }
     snprintf(last, sizeof last, "%s", b);
+}
+
+/* "Volume: Main 42, AUX 23, BT 5" on every change, for `tail -f` (Jo 2026-11-16); RAM only (tmpfs), so no flash
+ * writes. Main is the volume the UI shows (the lead output's). The UI's log upkeep keeps it small (ui/main.c). */
+static void volume_log(const pl_core_t *c){
+    static int last[3] = { -1, -1, -1 };
+    if(c->volume == last[0] && c->vol_aux == last[1] && c->vol_bt == last[2]) return;
+    last[0] = c->volume; last[1] = c->vol_aux; last[2] = c->vol_bt;
+    FILE *f = fopen(OPL_VOLUME_LOG, "ae");
+    if(!f){ logmsg("volume log: open %s: %s", OPL_VOLUME_LOG, strerror(errno)); return; }
+    time_t now = time(NULL); struct tm tm; char ts[32] = "";
+    if(localtime_r(&now, &tm)) strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S ", &tm);
+    fprintf(f, "%sVolume: Main %d, AUX %d%s, BT %d%s\n", ts, c->volume, c->vol_aux, pb_aux() ? "" : " (off)",
+            c->vol_bt, pb_bluetooth() ? "" : " (off)");
+    fclose(f);
 }
 
 int main(int argc, char **argv){
@@ -411,6 +427,7 @@ int main(int argc, char **argv){
         }
         pb_tick(t);
         write_outputs(&core, outpath);
+        if(use_wd) volume_log(&core);
         for(int i = 0; i < 3; i++) if(core.key_action[i] != key_saved[i]){   /* 0820-0822: kept like the stock player */
             key_saved[i] = core.key_action[i];
             if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, KEY_COL[i], core.key_action[i]) != 0)

@@ -112,6 +112,7 @@ static int g_swipe_thresh = SWIPE_THRESH_DEFAULT;   /* cached for the hot loop *
 #define SIDE_DX(dx)  (disco_mirror() ? -(dx) : (dx))
 
 int ui_get_swipe_thresh(void){ return g_swipe_thresh; }
+int ui_back_edge(int x){ return BACK_EDGE(x); }   /* settings.c: a press there is the start of a back swipe */
 /* How far the current / last touch travelled from where it went down (px, the larger axis). LVGL still reports a
  * CLICKED on release after a swipe that didn't scroll anything, so a tap target a swipe happens to start on (Home's
  * full-width weather line) fired alongside the swipe - Weather opened over the page swiped to. Tap handlers that sit
@@ -441,6 +442,10 @@ void ui_route_forget(const char *why){
     fprintf(stderr, "route BT %s forgotten (%s)\n", g_route_mac, why ? why : ""); fflush(stderr);
     g_route_mac[0] = 0;
     ui_bt_codec_upgrade_cancel(); ui_route_hold_cancel(); ui_resume_guard_cancel();
+    /* The own player hears nothing else when headphones go away by themselves (switched off, out of range): tell it,
+     * so their output goes off (Auto Outputs) or waits for them, and the music pauses if they were the only output.
+     * 0666 6 is what ui_route_analog sends; the stock player notices on its own and is not sent anything new. */
+    if(why && !strcmp(why, "link gone") && opl_running()) ipc_send_cmd("0666000C0006");
 }
 int ui_route_bt(const char *mac){
     if(modes_output_route()==OUT_USB)return -1; /* leave USB through the guarded headphone transition first */
@@ -983,6 +988,8 @@ static void reapply_sends(void);
 static int g_reapply_tries;
 static lv_timer_t *g_reapply_tmr;
 static void reapply_retry_cb(lv_timer_t *t);
+void settings_outputs_notice_tick(void);
+static void outputs_notice_cb(lv_timer_t *t){ (void)t; settings_outputs_notice_tick(); }
 static void reapply_later(void){ g_reapply_tmr = lv_timer_create(reapply_retry_cb, 1500, NULL); if(g_reapply_tmr) lv_timer_set_repeat_count(g_reapply_tmr, 1); }
 static void reapply_send_all(void){                      /* the sends, quietly; a failure schedules another try */
     ipc_quiet_begin();
@@ -1040,6 +1047,8 @@ static void reapply_sends(void){
         int gp = simple_cfg_get_int("gapless", -1);     if(gp >= 0)             ui_set_gapless(gp);
         int mv = simple_cfg_get_int("max_vol", -1);     if(mv >= 10)            ui_set_maxvol(mv);    /* <10 or unset = skip */
         int bl = simple_cfg_get_int("balance", -100);   if(bl >= -10 && bl<=10) ui_set_balance(bl);   /* -1 is a VALID balance */
+        int ao = simple_cfg_get_int("out_auto", 1);    if(opl_running() && ao >= 0 && ao <= 2){   /* Auto Outputs (own player only) */
+            char f[16]; snprintf(f, sizeof f, "0d05000C%04X", (unsigned)ao); ipc_send_cmd(f); }
     }
 }
 /* When a play triggers a full list rebuild (seconds), we show "Starting..." and
@@ -2559,10 +2568,21 @@ static int coldplug_mounted(void){
     fclose(m);
     return ok;
 }
+/* Logs in /tmp (RAM, so no flash writes; Jo 2026-11-16): checked every 10 minutes, and one past 2 MB keeps its last
+ * 2 MB as <log>.1 and starts empty again (the writers append, so they go on at the start). /tmp is a small tmpfs. */
+static const char *const TMP_LOGS[] = { "/tmp/diskos-player.log", OPL_VOLUME_LOG, "/tmp/diskos-mpd/log",
+                                        "/tmp/diskos-mpd/bt.log", "/tmp/bluealsa.log", "/tmp/btd.log",
+                                        "/tmp/patchram.log", "/tmp/boomshine.log" };
+#define TMP_LOG_LIMIT (2u * 1024 * 1024)
+#define TMP_LOG_EVERY 20                     /* rounds of 30 s */
 static void *log_maintenance(void *unused){
     (void)unused;
-    for(;;){
+    for(unsigned round = 0;; round++){
         sleep(30);
+        if(round % TMP_LOG_EVERY == 0)
+            for(unsigned i = 0; i < sizeof TMP_LOGS / sizeof *TMP_LOGS; i++)
+                if(diskos_log_rotate(TMP_LOGS[i], TMP_LOG_LIMIT) < 0)
+                    fprintf(stderr, "log upkeep: %s: %s\n", TMP_LOGS[i], strerror(errno));
         /* Both streams share one append descriptor. Lock in a fixed order. */
         flockfile(stdout);flockfile(stderr);
         fflush(stdout);fflush(stderr);
@@ -3522,7 +3542,7 @@ int main(int argc, char **argv){
     crashlog_install();          /* /usr/data/diskos_crash.log: a line per start, player restart and crash */
     if(argc > 1 && !strcmp(argv[1], "--boomshine")){        /* the built-in game (Disco menu > Boomshine); log as the app did */
         int boomshine_main(int, char **);
-        if(!freopen("/tmp/boomshine.log", "w", stdout)) { /* keep going without a log */ }
+        if(!freopen("/tmp/boomshine.log", "a", stdout)) { /* keep going without a log */ }
         dup2(fileno(stdout), fileno(stderr));
         return boomshine_main(argc - 1, argv + 1);
     }
@@ -3688,6 +3708,7 @@ int main(int argc, char **argv){
     g_t_lyr = lv_timer_create(lyrics_poll, 500, NULL);    /* apply finished lyrics fetch */
     lastfm_init();                                        /* load Last.fm config + offline queue */
     lv_timer_create(lastfm_tick, 1000, NULL);            /* watch play-state + drive scrobbles */
+    lv_timer_create(outputs_notice_cb, 1000, NULL);       /* own player, Auto Outputs off: "AUX connected, but not enabled" */
     lv_timer_create(scanner_poll, 500, NULL);            /* apply a finished library rescan */
     if(!books_ensure_migrated())                         /* move any .m4b left in SONG out to BOOKS (upgrade / no-rescan devices) so books never sit in the music queue */
         lv_timer_create(migrate_books_retry_cb, 3000, NULL);   /* failed (transient reader lock) -> retry off the main loop until it succeeds */
@@ -3880,7 +3901,8 @@ int main(int argc, char **argv){
             last_vol_seq = st.volume_seq;
             int changed = last_volume >= 0 && st.volume != last_volume;
             last_volume = st.volume;
-            if(changed){
+            int settings_outputs_recent(void);
+            if(changed && !settings_outputs_recent()){         /* not the echo of Settings > Audio > Outputs */
                 power_note_input();
                 if(bl_state == 0){
                     last_activity = lv_tick_get();

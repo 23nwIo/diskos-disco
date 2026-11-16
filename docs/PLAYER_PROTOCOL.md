@@ -53,6 +53,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d02 | `0d02000C<vol 4h>` | diskOS, own player only: AUX volume 0..120 | settings.c (Outputs) | do |
 | 0d03 | `0d03000C<vol 4h>` | diskOS, own player only: Bluetooth volume 0..120 | settings.c (Outputs) | do |
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
+| 0d05 | `0d05000C000v` | diskOS, own player only: Auto Outputs, what connecting does: 0 off (nothing, a notice), 1 newest (the new device alone), 2 all connected | main.c (re-sent on start), settings.c (Outputs) | do |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
 | 0713 | `0713000C<v 4h>` | Balance: 0 centre, `00NN` one side, `01NN` the other, N 1..10 | main.c `ui_set_balance` | do |

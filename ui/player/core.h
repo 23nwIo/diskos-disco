@@ -12,6 +12,12 @@
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
 #define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
 #define PL_VOL_MAX    120
+/* 0d05: what connecting and disconnecting does to the outputs (Settings > Audio > Outputs > Auto Outputs) */
+#define PL_AUTO_OFF    0           /* nothing: the choice stays as it is; a device that is not on gets a notice */
+#define PL_AUTO_NEWEST 1           /* the device just connected becomes the only output (as before 0d05) */
+#define PL_AUTO_ALL    2           /* every connected device plays: a plug in AUX, connected headphones Bluetooth */
+#define PL_NOTICE_AUX  1           /* notice: a plug went in, AUX is off (auto off) */
+#define PL_NOTICE_BT   2           /* notice: headphones connected, Bluetooth is off (auto off) */
 
 typedef void (*pl_send_fn)(void *ctx, const char *frame, int len);
 typedef void (*pl_log_fn)(void *ctx, const char *msg);
@@ -53,9 +59,14 @@ typedef struct {
      * Bluetooth when it is on, else AUX. The volume keys and 0715 move every output that is on by the same step. */
     int out_aux, out_bt;
     int vol_aux, vol_bt;           /* 0..max_volume */
-    int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3) */
+    int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3); 0666 6 (the UI routed
+                                    * away, or the headphones' link is gone) clears it. out_bt may stay 1 without it: the
+                                    * choice waits for the headphones and the DAC plays meanwhile (playback.c pb_route) */
     int bt_auto;                   /* 0666 2 seen: the next 06b3 turns Bluetooth on and AUX off */
     int codec_want;                /* 0d04: the codec asked for this connection (ui/bt.c numbering), -1 none */
+    int auto_out;                  /* 0d05: PL_AUTO_*; PL_AUTO_NEWEST until the UI says */
+    int notice;                    /* PL_NOTICE_* of the last notice, for the UI (OPL_OUTPUTS "notice=") */
+    unsigned notice_seq;           /* bumps on every notice */
     unsigned codec_seq;            /* bumps on every accepted 0d04 */
     int usb_gadget;                /* 0642: 0 none, 1 USB storage (2 and 5, the USB audio gadgets, not yet) */
     unsigned usb_seq;              /* bumps on every accepted 0642, so the main loop starts or stops the gadget */
@@ -79,9 +90,10 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n);
 void pl_core_volume_step(pl_core_t *c, int dir);
 
 /* Headphone jack level changed (1 in, 0 out): pl_core_jack for the 3.5 mm jack, pl_core_bal for the 4.4 mm one. The
- * first call of each only records the level. A plug going in (none was in) turns AUX on and Bluetooth off; playback
- * stays as it is (paused stays paused, as the stock player; Jo 2026-11-15). The last plug coming out pauses playback,
- * unless Bluetooth is on: then AUX goes off and the music goes on. */
+ * first call of each only records the level. A plug going in (none was in) turns AUX on (auto newest: and Bluetooth
+ * off; auto off: nothing, a notice if AUX is off); playback stays as it is (paused stays paused, as the stock player;
+ * Jo 2026-11-15). The last plug coming out pauses playback unless connected headphones play: then, unless auto is
+ * off, AUX goes off and the music goes on. */
 void pl_core_jack(pl_core_t *c, int plugged);
 void pl_core_bal(pl_core_t *c, int plugged);
 /* 1 when a plug is in either jack (the stock player uses the high gain curve only then) */

@@ -49,9 +49,10 @@ int main(void){
     EXPECT(opl_prepare(&p, &no) == OPL_ON && no == 1);
     opl_outputs_t o;                                                     /* the outputs state (player/main.c) */
     EXPECT(opl_outputs_parse("aux=1\nbt=1\nvol_aux=30\nvol_bt=52\nbt_ready=1\njack=1\nbal=0\ncodec=LDAC\n"
-                             "codecs=SBC AAC LDAC\nswitching=0\n", &o) == 0);
+                             "codecs=SBC AAC LDAC\nswitching=0\nauto=2\nnotice=7 1\n", &o) == 0);
     EXPECT(o.aux == 1 && o.bt == 1 && o.vol_aux == 30 && o.vol_bt == 52 && o.bt_ready == 1 && o.jack == 1 && o.bal == 0);
     EXPECT(!strcmp(o.codec, "LDAC") && !strcmp(o.codecs, "SBC AAC LDAC") && o.switching == 0);
+    EXPECT(o.auto_out == 2 && o.notice_seq == 7 && o.notice == 1);
     EXPECT(opl_outputs_parse("vol_aux=3\n", &o) == -1 && o.jack == -1);
     char cmd[100]; snprintf(cmd, sizeof cmd, "rm -rf %s", dir); if(system(cmd)){ /* cleanup only */ }
     if(fails){ fprintf(stderr, "own_player_test: %d failure(s)\n", fails); return 1; }

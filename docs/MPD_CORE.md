@@ -83,10 +83,22 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   plugin prints `D:` debug lines on stderr), so the link's format and rate are converted either way.
 - **Outputs** (2026-11-15, host-tested, not yet on a Disc; Settings > Audio > Outputs, own player only). MPD plays
   to every output that is on: AUX (the DAC, i.e. both jacks), Bluetooth, or both at once (Bluetooth is a few hundred
-  ms behind; MPD can't delay one output). Automatic: a plug going in (3.5 mm or 4.4 mm) turns AUX on and Bluetooth
-  off; the UI's Bluetooth route (`0666 2` + `06b3` for new headphones) turns Bluetooth on and AUX off; `0666 6` (the
-  headphones gone) goes back to AUX. The last plug coming out pauses, unless Bluetooth is on (then AUX goes off and
-  the music plays on). By hand: `0d01` (docs/PLAYER_PROTOCOL.md). Each output has its own volume (`0d02`, `0d03`),
+  ms behind; MPD can't delay one output). What connecting does is the **Auto Outputs** setting (`0d05`, cfg
+  `out_auto`, sent again on every player start; 2026-11-16):
+  - *Newest* (default, the behaviour before 0d05): a plug going in (3.5 mm or 4.4 mm, none was in) turns AUX on and
+    Bluetooth off; the UI's Bluetooth route (`0666 2` + `06b3` for new headphones) turns Bluetooth on and AUX off.
+  - *All connected*: a plug adds AUX, headphones add Bluetooth (and AUX goes off if no plug is in); choosing it turns
+    on what is connected right away.
+  - *Off*: connecting changes nothing; the player bumps `notice=` in its state file and the UI says "AUX connected,
+    but not enabled. See Audio > Outputs" (or Bluetooth).
+  Disconnecting, *Newest* and *All*: the last plug out turns AUX off when headphones are connected (they play on;
+  if they were off, Bluetooth takes over paused), else it pauses. Headphones gone (`0666 6`: the UI routed away, or
+  their link went, which the UI now tells the own player after three empty probes, ui/main.c `ui_route_forget`) turn
+  Bluetooth off when AUX is on (AUX plays on); when Bluetooth was the only output the music pauses and AUX takes
+  over if a plug is in, else Bluetooth stays chosen and waits for the headphones while the DAC stands in. *Off*:
+  the choice stays; the music pauses when nothing that is on is left (the plug out with AUX playing, the only
+  headphones gone).
+  By hand: `0d01` (docs/PLAYER_PROTOCOL.md). Each output has its own volume (`0d02`, `0d03`),
   kept in `/usr/data/diskos-own/volumes`; the volume the UI shows (`a714`) is the lead output's (Bluetooth when on,
   else AUX), and the volume keys and `0715` move every output that is on by the same step. When the DAC joins a
   running stream, its start sequence and mixer route go first. The player writes the state for the UI to
@@ -94,7 +106,14 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
 - **Codec switch by hand** (`0d04`, Outputs > Bluetooth Codec): pause, close the Bluetooth output (aplay lets go of
   the PCM), `bluealsa-cli codec <pcm> <codec>` as a child (at most 10 s), then read the link again (`bluealsa-cli
   info`: rate, `Selected codec`, `Available codecs`), open the output at the new rate and play on. Only for this
-  connection; new connections use Connectivity > Bluetooth Codec as before.
+  connection; new connections use Connectivity > Bluetooth Codec as before. The list shows only the codecs the
+  headphones offer (`codecs=` in the state file) and the one in use. Newer BlueALSA writes each codec with its
+  configuration (`SBC:ffff0235`, `Selected codec: SBC:21150235`): only the name counts (fixed 2026-11-16; before,
+  every choice said "These headphones don't offer it").
+- **Volume log** (2026-11-16): every change of a volume adds `2026-11-16 01:30:12 Volume: Main 42, AUX 23, BT 5` to
+  `/tmp/diskos-volume.log` (`tail -f`); Main is what the UI shows, `(off)` marks an output that does not play. The
+  UI's log upkeep (ui/main.c `log_maintenance`) checks the logs in /tmp every 10 minutes: one past 2 MB keeps its
+  last 2 MB as `<log>.1` and starts empty (player, volume, MPD, bt.log, bluealsa, bluetoothd, patchram, Boomshine).
 - **Volume curve** (2026-11-15): the stock player's own curves, read from mq_player (0x4e7800, 0x4e78c0, 0x4e7980,
   0x4e7a40; ui/player/dac.c `dac_curve`, every value checked in ui/tests/player_test.c). 3.5 mm, high gain: 218 at
   volume 1, then steps of 8 (from 2), 6 (4), 4 (11), 2 (23) and 1 (37) down to 0 (0 dB) at 120. Low gain is 12 more

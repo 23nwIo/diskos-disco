@@ -597,7 +597,7 @@ static int bt_acl_links(void){
  * script: the UI never waits for it (review finding 3). */
 static void bt_alsa_restart_steps(char *out, int cap, int born, int kind){
     char a[768]; bt_alsa_cmd(a, sizeof a, born, kind);
-    snprintf(out, cap, "killall bluealsa 2>/dev/null; sleep 0.3; (%s >/tmp/bluealsa.log 2>&1 &); "
+    snprintf(out, cap, "killall bluealsa 2>/dev/null; sleep 0.3; (%s >>/tmp/bluealsa.log 2>&1 &); "
              "i=0; while [ $i -lt 15 ] && ! bluealsa-cli list-pcms >/dev/null 2>&1; do sleep 0.2; i=$((i+1)); done; ", a);
 }
 static void bt_alsa_restart_async(int born, int kind, const char *why){
@@ -619,7 +619,7 @@ static void bt_ensure_services(void){
     }
     char a[768], cmd[900];
     bt_alsa_cmd(a, sizeof a, bt_born_for(last), kind);
-    snprintf(cmd, sizeof cmd, "pidof bluealsa >/dev/null 2>&1 || %s >/tmp/bluealsa.log 2>&1 &", a);
+    snprintf(cmd, sizeof cmd, "pidof bluealsa >/dev/null 2>&1 || %s >>/tmp/bluealsa.log 2>&1 &", a);
     system(cmd);
 }
 /* The headphones have really gone: only when the kernel shows NO Bluetooth connection, and the running BlueALSA isn't
@@ -1150,7 +1150,7 @@ static void bt_enable(void){
         "  rfkill unblock bluetooth; sleep 1; "
         "  A || exit; "
         "  brcm_patchram_plus --enable_lpm --enable_hci --no2bytes --tosleep 200000 --baudrate 3000000 "
-        "    --patchram /lib/firmware/bt_bcm/BCM4343A1_001.002.009.1026.1055.hcd /dev/ttyS0 >/tmp/patchram.log 2>&1 & "
+        "    --patchram /lib/firmware/bt_bcm/BCM4343A1_001.002.009.1026.1055.hcd /dev/ttyS0 >>/tmp/patchram.log 2>&1 & "
         /* patchram can take well over 5s to attach hci0; keep retrying `up` until it's
          * RUNNING (up to ~20s) so we never give up before the chip is ready and leave hci0
          * DOWN (which made bt_on() report "off" and the toggle time out). Each pass re-checks
@@ -1159,8 +1159,8 @@ static void bt_enable(void){
         "    hciconfig hci0 2>/dev/null | grep -q RUNNING && break; sleep 0.5; i=$((i+1)); done; "
         "  A || exit; "     /* disabled during bring-up -> don't start the daemons */
         "  %s"
-        "  pidof bluetoothd >/dev/null || /usr/project/bluetoothd --noplugin=sap --plugin=a2dp,avrcp --mode=source >/tmp/btd.log 2>&1 & "
-        "  pidof bluealsa >/dev/null || %s >/tmp/bluealsa.log 2>&1 & "
+        "  pidof bluetoothd >/dev/null || /usr/project/bluetoothd --noplugin=sap --plugin=a2dp,avrcp --mode=source >>/tmp/btd.log 2>&1 & "
+        "  pidof bluealsa >/dev/null || %s >>/tmp/bluealsa.log 2>&1 & "
         /* hci0 UP alone leaves bluez Powered:no - power the controller on explicitly (needs
          * bluetoothd, hence after its start) so bt_on()'s "Powered: yes" check passes. */
         "  sleep 1; A || exit; "
