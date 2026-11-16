@@ -557,7 +557,44 @@ const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N] = {
     [RMT_P_NP] = { "np", 0, 1, 1 },          [RMT_P_QUEUE] = { "queue", 0, 1, 1 },    [RMT_P_SKIP] = { "skip", 0, 1, 0 },
     [RMT_P_TOTAL] = { "total", 1, 50, 3 },   [RMT_P_CONSEC] = { "consec", 1, 10, 1 }, [RMT_P_REPEAT] = { "repeat", 0, 1, 0 },
     [RMT_P_RADIO] = { "radio", 0, 1, 0 },    [RMT_P_NAMES] = { "names", 0, 1, 1 },
+    [RMT_P_UPLOAD] = { "upload", 0, 1, 0 },  [RMT_P_UPMAX] = { "upmax", 1, 2000, 100 },   /* MB */
 };
+static void name_part(char *out, size_t cap, size_t *o, const char *s, size_t n){
+    for(size_t i = 0; i < n && *o + 1 < cap; i++){
+        unsigned char c = (unsigned char)s[i];
+        int ok = isalnum(c) || c >= 0x80 || strchr("-_.()+,'&", c);
+        char w = ok ? (char)c : '_';
+        if(w == '_' && *o && out[*o - 1] == '_') continue;         /* one '_' for a run of them */
+        out[(*o)++] = w;
+    }
+    out[*o] = 0;
+}
+int rmt_upload_name(const char *guest, const char *file, char *out, size_t cap){
+    if(!out || cap < 16) return -1;
+    out[0] = 0;
+    if(!file) return -1;
+    const char *b = file;                                          /* a browser may send a whole path */
+    for(const char *p = file; *p; p++) if(*p == '/' || *p == '\\') b = p + 1;
+    const char *dot = strrchr(b, '.');
+    if(!dot || dot == b || !dot[1] || strlen(dot + 1) > 4) return -1;
+    char ext[8]; size_t el = strlen(dot + 1);
+    for(size_t i = 0; i <= el; i++) ext[i] = (char)tolower((unsigned char)dot[1 + i]);
+    const char *hit = strstr(" " RMT_UPLOAD_EXTS " ", ext);
+    if(!hit || hit[-1] != ' ' || hit[el] != ' ') return -1;
+    char g[RMT_GNAME_MAX + 1]; size_t go = 0;
+    name_part(g, sizeof g, &go, guest && guest[0] ? guest : "guest", strlen(guest && guest[0] ? guest : "guest"));
+    while(go && (g[go - 1] == '_' || g[go - 1] == '.')) g[--go] = 0;
+    size_t o = 0, room = cap < 128 ? cap : 128;
+    name_part(out, room - el - 1, &o, go ? g : "guest", go ? go : 5);
+    if(o + 1 < room - el - 1) out[o++] = '_';
+    size_t start = o;
+    name_part(out, room - el - 1, &o, b, (size_t)(dot - b));
+    while(o > start && (out[o - 1] == '_' || out[o - 1] == '.')) o--;
+    if(o == start) return -1;                                      /* nothing left of the name */
+    out[o++] = '.'; memcpy(out + o, ext, el + 1);
+    if(out[0] == '.') out[0] = '_';
+    return 0;
+}
 int rmt_party_name_ok(const char *s){
     size_t n = s ? strlen(s) : 0;
     if(n < 2 || n > RMT_PARTY_NAME_MAX || !strcasecmp(s, "api") || !strcasecmp(s, "system")) return 0;
@@ -585,6 +622,44 @@ static int guest_id_ok(const char *g){
     for(size_t i = 0; i < n; i++) if(!isalnum((unsigned char)g[i])) return 0;
     return 1;
 }
+int rmt_upload_head(const char *buf, size_t n, const char *party, rmt_cmd_t *cmd, long long *len, size_t *hlen){
+    const char *he = buf ? strstr(buf, "\r\n\r\n") : NULL;
+    if(!he || !rmt_party_name_ok(party)) return 0;
+    char want[RMT_PARTY_NAME_MAX + 32];
+    int wl = snprintf(want, sizeof want, "POST /%s/api/upload?", party);
+    if(strncmp(buf, want, (size_t)wl)) return 0;
+    memset(cmd, 0, sizeof *cmd);
+    char head[REMOTE_REQ_MAX];
+    size_t hl = (size_t)(he - buf) + 4;
+    if(hl >= sizeof head || hl > n) return -1;
+    memcpy(head, buf, hl); head[hl] = 0;
+    char *eol = strstr(head, "\r\n"); *eol = 0;                   /* the request line */
+    char *q = head + wl, *sp = strchr(q, ' ');
+    if(!sp || strncmp(sp + 1, "HTTP/1.", 7)) return -1;
+    *sp = 0;
+    long long cl = -1;                                             /* Content-Length, case-insensitive; no chunks */
+    for(char *l = eol + 2; *l; ){
+        char *e = strstr(l, "\r\n"); if(e) *e = 0;
+        if(!strncasecmp(l, "content-length:", 15)){
+            char *v = l + 15, *end; while(*v == ' ' || *v == '\t') v++;
+            errno = 0; cl = strtoll(v, &end, 10);
+            if(errno || end == v || cl < 0) return -1;
+        }
+        if(!strncasecmp(l, "transfer-encoding:", 18)) return -1;
+        if(!e) break;
+        l = e + 2;
+    }
+    if(cl <= 0) return -1;
+    rmt_req_t r; memset(&r, 0, sizeof r); r.method = "POST"; r.path = ""; r.query = q; r.body = "";
+    if(param_str(&r, "g", cmd->gid, sizeof cmd->gid) || !guest_id_ok(cmd->gid)
+       || param_str(&r, "f", cmd->name, sizeof cmd->name) || !cmd->name[0]){ memset(cmd, 0, sizeof *cmd); return -1; }
+    int pn = param_str(&r, "n", cmd->gname, sizeof cmd->gname);
+    if(pn == -2){ memset(cmd, 0, sizeof *cmd); return -1; }
+    if(pn == -1) cmd->gname[0] = 0;
+    cmd->kind = RMT_CMD_PARTY_UPLOAD; cmd->guest = 1;
+    *len = cl; *hlen = hl;
+    return 1;
+}
 rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     rmt_route_t rt; memset(&rt, 0, sizeof rt); rt.kind = RMT_R_NOT_FOUND;
     if(!r || !r->path || r->path[0] != '/' || !rmt_party_name_ok(party)) return rt;
@@ -592,7 +667,23 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     size_t sl = slash ? (size_t)(slash - seg) : strlen(seg);
     if(sl != strlen(party) || strncmp(seg, party, sl)) return rt;
     rmt_route_t a;
-    if(slash && !strcmp(slash, "/api/radio")){                     /* the guests' own: a station by name and URL */
+    if(slash && !strcmp(slash, "/api/stations")){                  /* the guest's own stations, for the host to see */
+        memset(&a, 0, sizeof a);
+        if(strcmp(r->method, "POST")) a.kind = RMT_R_BAD_METHOD;
+        else {
+            a.kind = RMT_R_CMD; a.cmd.kind = RMT_CMD_PARTY_STATIONS;
+            size_t o = 0;
+            for(const char *p = r->body; p && *p; p = strchr(p, '&') ? strchr(p, '&') + 1 : NULL){
+                char v[700], *sp;                                  /* s=<url> <name> */
+                if(strncmp(p, "s=", 2) || param_str_list(p, "s", v, sizeof v) || !(sp = strchr(v, ' ')) || !sp[1]) continue;
+                *sp = 0;
+                if(strncmp(v, "http://", 7) && strncmp(v, "https://", 8)) continue;
+                int w = snprintf(a.cmd.text + o, sizeof a.cmd.text - o, "%s\t%s\n", sp + 1, v);
+                if(w < 0 || (size_t)w >= sizeof a.cmd.text - o){ a.cmd.text[o] = 0; break; }   /* the rest doesn't fit */
+                o += (size_t)w;
+            }
+        }
+    } else if(slash && !strcmp(slash, "/api/radio")){                     /* the guests' own: a station by name and URL */
         memset(&a, 0, sizeof a);
         long now = 0; int pn = param_str(r, "name", a.cmd.q, sizeof a.cmd.q), pu = param_str(r, "url", a.cmd.name, sizeof a.cmd.name);
         int pw = param(r, "now", &now);
@@ -609,7 +700,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     case RMT_R_STATE: a.kind = RMT_R_CMD; memset(&a.cmd, 0, sizeof a.cmd); a.cmd.kind = RMT_CMD_PARTY_STATE; ok = 1; break;
     case RMT_R_CMD:
         switch(a.cmd.kind){
-        case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: case RMT_CMD_PARTY_RADIO: ok = 1; break;
+        case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: case RMT_CMD_PARTY_RADIO: case RMT_CMD_PARTY_STATIONS: ok = 1; break;
         case RMT_CMD_VOLUME:                                       /* the guests' scale: 100 = the host's maximum */
             ok = 1; if(a.cmd.arg > 100){ memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; }
             break;
@@ -628,7 +719,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
         int pg = param_str(r, "g", a.cmd.gid, sizeof a.cmd.gid), pn = param_str(r, "n", a.cmd.gname, sizeof a.cmd.gname);
         if(pg == -1) a.cmd.gid[0] = 0;
         if(pn == -1) a.cmd.gname[0] = 0;
-        int need = a.cmd.kind == RMT_CMD_QUEUE && a.cmd.sub == RMT_Q_ADD;   /* adding counts against the guest's songs */
+        int need = (a.cmd.kind == RMT_CMD_QUEUE && a.cmd.sub == RMT_Q_ADD) || a.cmd.kind == RMT_CMD_PARTY_STATIONS;   /* adding counts against the guest's songs */
         if(pg == -2 || pn == -2 || (pg == 0 && !guest_id_ok(a.cmd.gid)) || (need && pg != 0)){
             memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; a.cmd.guest = 1; }
     }

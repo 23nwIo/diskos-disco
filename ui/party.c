@@ -20,6 +20,9 @@
 #include "musicdb.h"
 #include "sdstate.h"
 #include "radio.h"
+#include "scanner.h"
+#include "folderbrowser.h"
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +31,7 @@
 #include "own_player.h"
 int settings_outputs_state(opl_outputs_t *o, int *auto_out);   /* settings.c */
 #define GUESTS 128
-static struct { char gid[RMT_GID_MAX + 1], name[RMT_GNAME_MAX + 1]; uint32_t seen; } g_guest[GUESTS];
+static struct { char gid[RMT_GID_MAX + 1], name[RMT_GNAME_MAX + 1]; uint32_t seen; char *stations; } g_guest[GUESTS];
 
 #define PARTY_FILE "party.conf"
 /* the settings as read from the card: read again every few seconds (another card, a copy edited on a computer) */
@@ -69,6 +72,29 @@ static int save(const int *val, const char *name){
     return r;
 }
 const char *party_link_name(void){ return cfg_val(RMT_P_ON) ? cfg_name() : ""; }
+const char *party_upload_dir(long long *max_bytes){
+    static char dir[PATH_MAX];
+    *max_bytes = (long long)cfg_val(RMT_P_UPMAX) * 1024 * 1024;
+    if(!party_link_name()[0] || !cfg_val(RMT_P_UPLOAD)) return "";
+    snprintf(dir, sizeof dir, "%s/%s/%s", FOLDERBROWSER_ROOT, RMT_UPLOAD_DIR, cfg_name());
+    return dir;
+}
+/* Guests' own stations, for the host (Jo, 2026-11-16): in RAM, and as /tmp/party-stations.txt (guest, station, URL). */
+#define STATIONS_FILE "/tmp/party-stations.txt"
+static void stations_write(void){
+    FILE *f = fopen(STATIONS_FILE ".new", "w");
+    if(!f){ perror("party: " STATIONS_FILE); return; }
+    fprintf(f, "# guest\tstation\tURL (diskOS party mode: the stations each guest saved in their browser)\n");
+    for(int i = 0; i < GUESTS; i++){
+        if(!g_guest[i].gid[0] || !g_guest[i].stations) continue;
+        for(const char *l = g_guest[i].stations; *l; ){
+            const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l);
+            fprintf(f, "%s\t%.*s\n", g_guest[i].name[0] ? g_guest[i].name : g_guest[i].gid, (int)n, l);
+            l += n + (e ? 1 : 0);
+        }
+    }
+    if(fclose(f) || rename(STATIONS_FILE ".new", STATIONS_FILE)) perror("party: " STATIONS_FILE);
+}
 
 /* ---------------------------------------------------------------- guests */
 static int guest_slot(const char *gid){                  /* 1-based "who", 0 none / no room */
@@ -84,6 +110,7 @@ static int guest_slot(const char *gid){                  /* 1-based "who", 0 non
         if(free_at < 0 || age > oldest){ free_at = i; oldest = age; }
     }
     if(free_at < 0) return 0;
+    free(g_guest[free_at].stations);
     memset(&g_guest[free_at], 0, sizeof g_guest[free_at]);
     snprintf(g_guest[free_at].gid, sizeof g_guest[free_at].gid, "%s", gid);
     g_guest[free_at].seen = lv_tick_get() | 1;
@@ -121,7 +148,15 @@ static int admin(const rmt_cmd_t *c, const char **why, char **body){
     for(int i = 0, first = 1; i < GUESTS; i++){
         if(!g_guest[i].gid[0]) continue;
         rmt_buf_printf(&b, "%s{\"name\":", first ? "" : ","); rmt_buf_str(&b, g_guest[i].name);
-        rmt_buf_printf(&b, ",\"queued\":%d,\"seen_s\":%u}", queued_by(i + 1), (unsigned)(lv_tick_elaps(g_guest[i].seen) / 1000));
+        rmt_buf_printf(&b, ",\"queued\":%d,\"seen_s\":%u,\"stations\":[", queued_by(i + 1), (unsigned)(lv_tick_elaps(g_guest[i].seen) / 1000));
+        for(const char *l = g_guest[i].stations, *sep = ""; l && *l; sep = ","){
+            const char *t = strchr(l, '\t'), *e = strchr(l, '\n'); if(!t || !e || t > e) break;
+            char nm[160], url[600];
+            snprintf(nm, sizeof nm, "%.*s", (int)(t - l), l); snprintf(url, sizeof url, "%.*s", (int)(e - t - 1), t + 1);
+            rmt_buf_printf(&b, "%s{\"name\":", sep); rmt_buf_str(&b, nm); rmt_buf_put(&b, ",\"url\":"); rmt_buf_str(&b, url); rmt_buf_put(&b, "}");
+            l = e + 1;
+        }
+        rmt_buf_put(&b, "]}");
         first = 0;
     }
     rmt_buf_put(&b, "]}");
@@ -146,10 +181,10 @@ static char *state_json(int who){
     int np = cfg_val(RMT_P_NP), names = cfg_val(RMT_P_NAMES), total = cfg_val(RMT_P_TOTAL), mine = who ? queued_by(who) : 0;
     rmt_buf_t b; memset(&b, 0, sizeof b);
     rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,"
-                   "\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"you\":",
+                   "\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"upload\":%d,\"upmax\":%d,\"you\":",
                    np, cfg_val(RMT_P_QUEUE), cfg_val(RMT_P_VOL), cfg_val(RMT_P_SKIP), radio_ok(), names,
                    total, cfg_val(RMT_P_CONSEC), cfg_val(RMT_P_REPEAT), mine, total > mine ? total - mine : 0,
-                   radio_ok() && own_player(), radio_ok() && cfg_val(RMT_P_SKIP));
+                   radio_ok() && own_player(), radio_ok() && cfg_val(RMT_P_SKIP), cfg_val(RMT_P_UPLOAD), cfg_val(RMT_P_UPMAX));
     rmt_buf_str(&b, who && names ? g_guest[who - 1].name : "");
     rmt_buf_printf(&b, "},\"playing\":%s,\"has_track\":%s,\"controllable\":%s,\"source\":",
                    s.playing ? "true" : "false", np && s.has_track ? "true" : "false", s.controllable ? "true" : "false");
@@ -268,6 +303,25 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
         return 0;
     case RMT_CMD_RADIO_SEARCH:
         return remote_exec(&x, why, body);
+    case RMT_CMD_PARTY_STATIONS:
+        if(!who){ *why = "Too many guests - try again later"; return -1; }
+        free(g_guest[who - 1].stations);
+        g_guest[who - 1].stations = c->text[0] ? strdup(c->text) : NULL;
+        stations_write();
+        return 0;
+    case RMT_CMD_PARTY_UPLOAD: {                           /* the server thread saved it: into the library, not the queue (Jo) */
+        char full[PATH_MAX]; int id;
+        if(snprintf(full, sizeof full, "%s/%s", FOLDERBROWSER_ROOT, c->name) >= (int)sizeof full){ *why = "No such file"; return -1; }
+        id = scanner_add_file(full);
+        if(id < 0){ *why = scanner_active() ? "Saved - it shows up once the library scan is done" : "Saved, but the library couldn't take it now"; return -1; }
+        if(id == 0){ *why = "Saved, but the Disc can't read that file"; return -1; }
+        mdb_song_t s; char p[512];
+        rmt_buf_t b; memset(&b, 0, sizeof b);
+        rmt_buf_printf(&b, "{\"ok\":true,\"song_id\":%d,\"file\":", id); rmt_buf_str(&b, c->name);
+        rmt_buf_put(&b, ",\"title\":"); rmt_buf_str(&b, mdb_queue_song(id, p, sizeof p, &s) ? s.title : "");
+        rmt_buf_put(&b, "}");
+        *body = rmt_buf_take(&b); if(!*body){ *why = "Out of memory"; return -1; }
+        return 0; }
     case RMT_CMD_PARTY_RADIO: {
         if(!radio_ok()){ *why = "The host doesn't let guests choose the radio"; return -1; }
         if(c->arg){                                        /* at once: cuts the song short, so only with skipping allowed */

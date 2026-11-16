@@ -24,6 +24,10 @@ void rsrv_set_notify(void (*cb)(void));  /* called on the server thread when a c
 int  rsrv_queue_watched(void);
 /* Party mode (main thread): the guests' link name, "" = off (their link answers 404). Cheap when unchanged. */
 void rsrv_set_party(const char *name);
+/* Guests' uploads (party mode): the folder they go to (absolute, "" = uploads off) and the largest file in bytes. An
+ * upload runs on its own thread (one at a time) so the page keeps answering; once the file is on the card it asks the
+ * main thread to queue it (RMT_CMD_PARTY_UPLOAD) and answers the browser with that result. */
+void rsrv_set_upload(const char *dir, long long max_bytes);
 int  rsrv_take(rmt_cmd_t *out);            /* main thread: 1 = a command is waiting (now taken), 0 = none */
 void rsrv_done(int ok, const char *message);   /* main thread: result of the taken command (message: why not, or NULL) */
 void rsrv_done_body(int ok, const char *message, char *body);   /* same, with a JSON answer (malloc'd; ownership passes) */

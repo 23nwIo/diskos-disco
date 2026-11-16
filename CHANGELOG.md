@@ -11,6 +11,11 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   After the list ends (own player) can now also play a playlist, once, again and again or shuffled. Not yet tested on
   a Disc. [Guide](docs/REMOTE_CONTROL.md#party-mode)
 
+- Remote Control party mode: guests can upload songs (System › Party › Upload songs to the SD card, off by default,
+  with a size limit); they go to `PartyUploads/<party name>/` on the card and into the library at once, not into the
+  queue. The host sees each guest's saved radio stations in the guests list and in `/tmp/party-stations.txt`. Not yet
+  tested on a Disc. [Guide](docs/REMOTE_CONTROL.md#party-mode)
+
 - Remote Control radio: **⋯ › Add a stream URL…** saves a stream address that the station directory does not have
   (http:// or https://) to the radio favourites; party guests can add one to their own stations in their browser. Not
   yet tested on a Disc.

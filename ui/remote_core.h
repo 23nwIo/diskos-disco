@@ -49,6 +49,8 @@ typedef enum {
     RMT_CMD_QUEUE,           /* what plays next (queueview.h): sub = rmt_queue_t; see api/queue below */
     RMT_CMD_PARTY_STATE,     /* a guest's view of the state (party page; JSON answer) */
     RMT_CMD_PARTY_RADIO,     /* a guest picks a station (their own list or a search hit): q = name, name = url, arg 1 now / 0 when the queue is empty */
+    RMT_CMD_PARTY_UPLOAD,    /* a guest's upload is on the card: name = its path relative to the card (the server thread wrote it) */
+    RMT_CMD_PARTY_STATIONS,  /* a guest's own radio stations (kept in their browser), for the host to see: text */
     RMT_CMD_PARTY,           /* the party settings: arg 0 read (JSON answer), 1 change (party[] / name; -1 = leave) */
     RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
                               * (1-based, 0 = keep the station), name = its url (checked) */
@@ -87,7 +89,7 @@ typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_A
 #define RMT_PL_NAME_MAX 64
 /* Party mode: guests use their own link /<party name>/ with a reduced page (rmt_route_party). The settings, as numbers: */
 enum { RMT_P_ON, RMT_P_VOL, RMT_P_MAXVOL, RMT_P_NP, RMT_P_QUEUE, RMT_P_SKIP, RMT_P_TOTAL, RMT_P_CONSEC, RMT_P_REPEAT,
-       RMT_P_RADIO, RMT_P_NAMES, RMT_P_N };
+       RMT_P_RADIO, RMT_P_NAMES, RMT_P_UPLOAD, RMT_P_UPMAX, RMT_P_N };
 typedef struct { const char *key; int min, max, def; } rmt_party_key_t;
 extern const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N];   /* key = the API parameter and (with "party_") the cfg key */
 #define RMT_PARTY_NAME_MAX 32
@@ -101,6 +103,12 @@ int  rmt_party_name_ok(const char *s);
  * when it would make more than consec of g's songs play in a row (someone else has to add one first) - unless every
  * queued song is g's (nobody else waits: Jo, 2026-11-16). */
 int  rmt_party_place(const int *who, int n, int g, int consec, int now_who);
+/* Guests' uploads go to <card>/RMT_UPLOAD_DIR/<party name>/ (Jo, 2026-11-16: no spaces in the path). */
+#define RMT_UPLOAD_DIR "PartyUploads"
+#define RMT_UPLOAD_EXTS "mp3 flac m4a ogg opus oga wav aif aiff ape wma aac dsf dff dts"   /* the scanner's (scanner.c is_audio) */
+/* The file name an upload is saved under: "<guest>_<name>.<ext>", spaces and characters a card can't take turned into
+ * '_', at most ~120 bytes. guest "" = "guest". 0 ok, -1 not a music file (RMT_UPLOAD_EXTS) or no usable name. */
+int  rmt_upload_name(const char *guest, const char *file, char *out, size_t cap);
 #define RMT_LIMIT_DEF 200
 #define RMT_LIMIT_MAX 500
 typedef struct {
@@ -115,7 +123,13 @@ typedef struct {
     int  guest;              /* 1: came in through the party link (rmt_route_party); gid/gname from g= / n= */
     char gid[RMT_GID_MAX + 1], gname[RMT_GNAME_MAX + 1];
     int  party[RMT_P_N];     /* RMT_CMD_PARTY: new values, -1 = unchanged; name = the new party name ("" = unchanged) */
+    char text[3072];         /* RMT_CMD_PARTY_STATIONS: the guest's stations, "name\turl\n" each */
 } rmt_cmd_t;
+/* An upload is POST /<party>/api/upload?g=<guest id>&n=<name>&f=<file name> with the file as the whole body
+ * (Content-Length, no chunking): too big for the normal request buffer, so the server checks the head first.
+ * buf: what has arrived (NUL-terminated, n bytes). 1 = an upload (cmd: guest, gid, gname, name = f; *len = body bytes,
+ * *hlen = head bytes incl. the blank line), 0 = another request or the head isn't complete yet, -1 = a malformed upload. */
+int  rmt_upload_head(const char *buf, size_t n, const char *party, rmt_cmd_t *cmd, long long *len, size_t *hlen);
 
 typedef enum {
     RMT_R_NOT_FOUND = 0,   /* 404: wrong/missing token or unknown path */

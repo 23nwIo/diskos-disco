@@ -15,7 +15,7 @@
 <div id=me class='card hide blk'><div id=nmw><label for=nm>Your name (shown with your songs)</label><input id=nm maxlength=24 autocomplete=nickname></div>
 <label for=lka>Page colour</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
 <label for=lkf>Your songs and favourites are marked with</label><select id=lkf><option value=heart>Hearts (red)<option value=star>Stars (yellow)</select>
-<div id=rules class=hint></div></div>
+<div id=rules class=hint></div><div id=upw class=hide><button id=upb>Upload a song…</button></div></div><input id=uf type=file class=hide>
 <div id=shb class=hide></div><div id=sh class=hide></div>
 <div id=msg></div></main>
 <script>
@@ -33,7 +33,7 @@ if(p.consec>=1)t.push(p.consec>1?'At most '+p.consec+' of your songs play in a r
 if(p.radio)t.push(p.radio_now?'You may pick a radio station that plays now or when the queue is empty.':'A station you pick in Radio plays when the queue is empty.');if(!p.repeat)t.push('A song that is already queued can’t be added again.');return t.join(' ')}
 function poll(){if(document.hidden||busy)return;busy=1;get('api/state').then(function(s){busy=0;if(!s.ok){say(s.message||'Not possible right now');return}
 var p=P=s.party;$('left').textContent=p.left?p.left+(p.left>1?' songs':' song')+' left to add':'Your songs are queued';$('rules').textContent=rules(p);
-$('npt').classList.toggle('hide',!p.np&&!p.vol&&!p.skip);$('qt').classList.toggle('hide',!p.queue);$('nmw').classList.toggle('hide',!p.names);
+$('npt').classList.toggle('hide',!p.np&&!p.vol&&!p.skip);$('qt').classList.toggle('hide',!p.queue);$('nmw').classList.toggle('hide',!p.names);$('upw').classList.toggle('hide',!p.upload);if(!sts&&FR.length)sendst();
 if(V==='q'&&p.queue&&s.queue_ver!==qver)qload();
 if(p.np){var ra=s.source==='radio';$('t').textContent=s.has_track?(ra&&s.stream_title?s.stream_title:s.title||s.station||'-'):'Nothing playing';$('a').textContent=ra?s.station:s.artist;$('al').textContent=ra?'':s.album;
 $('by').innerHTML='';if(s.by_you)$('by').innerHTML=mark(1)+'Your song';else if(s.by)$('by').textContent='Queued by '+s.by;
@@ -59,22 +59,36 @@ function frow(path){return function(x){var p=path?path+'/'+x.name:x.name;return[
 /* radio: the Remote page's station browser; your stations are kept in this browser, playing one needs the host's OK */
 var FR=[];try{FR=JSON.parse(localStorage.getItem('pr')||'[]')}catch(e){}if(!Array.isArray(FR))FR=[];
 function isr(x){return FR.some(function(f){return f.url===x.url})}
+/* the host sees each guest's saved stations (Jo, 2026-11-16): sent along whenever they change, quietly */
+var sts=0;function sendst(){var b=who(),n=0;FR.forEach(function(f){var s='&s='+encodeURIComponent(f.url+' '+f.name);if(b.length+s.length<3000){b+=s;n++}});
+fetch('api/stations',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b}).then(function(r){if(r.ok)sts=1}).catch(function(){})}
+/* a song of your own onto the card: into the library, not the queue (Jo) - you add it like any other */
+var UPX='mp3 flac m4a ogg opus oga wav aif aiff ape wma aac dsf dff dts'.split(' ');   /* RMT_UPLOAD_EXTS (remote_core.h) */function upick(){shut();$('uf').accept=UPX.map(function(e){return'.'+e}).join(',');$('uf').value='';$('uf').click()}
+$('uf').onchange=function(){var f=$('uf').files[0];if(!f)return;var e=(f.name.split('.').pop()||'').toLowerCase();
+if(f.name.indexOf('.')<0||UPX.indexOf(e)<0){say('Only music files: '+UPX.join(', '));return}
+if(P&&f.size>P.upmax*1048576){say('That file is larger than '+P.upmax+' MB, the most the host allows');return}
+var x=new XMLHttpRequest();x.open('POST','api/upload?'+who()+'&f='+encodeURIComponent(f.name));
+x.upload.onprogress=function(v){if(v.lengthComputable)say('Uploading… '+Math.floor(v.loaded*100/v.total)+' %')};
+x.onload=function(){var j={};try{j=JSON.parse(x.responseText)}catch(e){}if(!j.ok){say(j.message||'The upload didn\u2019t work');return}
+say('');sheet('Uploaded: '+(j.title||f.name),[['Add to the queue',function(){qadd({id:j.song_id})}]])};
+x.onerror=function(){say('The upload broke off - try again')};say('Uploading… 0 %');x.send(f)};
+$('upb').onclick=upick;
 function rfav(x,b){var on=!isr(x);if(on)FR.unshift({name:x.name,url:x.url,codec:x.codec||'',bitrate:x.bitrate||0,country:x.country||''});else FR=FR.filter(function(f){return f.url!==x.url});
-try{localStorage.setItem('pr',JSON.stringify(FR))}catch(e){say('This browser can\u2019t keep favourites');return}if(b)star(b,on);say(on?'Saved to your stations':'Removed from your stations',1);if(cur().l==='radio')load(0)}
+try{localStorage.setItem('pr',JSON.stringify(FR))}catch(e){say('This browser can\u2019t keep favourites');return}sendst();if(b)star(b,on);say(on?'Saved to your stations':'Removed from your stations',1);if(cur().l==='radio')load(0)}
 function rplay(x,now){pc('radio',enc({name:x.name,url:x.url,now:now?1:0})).then(function(j){if(j.ok)say(now?'Playing '+x.name:x.name+' plays when the queue is empty',1)})}
 function station(x){return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){var a=[];
 if(P&&P.radio_now)a.push(['Play now',function(){rplay(x,1)}]);if(P&&P.radio_end)a.push(['Play when the queue is empty',function(){rplay(x,0)}]);
 a.push([isr(x)?'Remove from your stations':'Save to your stations',function(){rfav(x)}]);sheet(x.name+(P&&P.radio?'':' (the host picks what plays)'),a)},
 {f:isr(x),fn:function(b){rfav(x,b)}},x.url]}
 var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,song)}]}],
-artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,song)}]}],songs:['Songs',song],
+artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,song)}]}],songs:['Songs',song,{},null,function(){return P&&P.upload?[['Upload a song…',upick]]:[]}],
 playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,song)}]}],favorites:['Favourites',song],folder:['Folders',frow(''),{path:''}],radio:['Your stations',station,{},['Find stations',function(){open('radio_search',{},'Find stations',station)}],
 function(){return[['Add a stream URL…',function(){askurl(function(n,u){if(isr({url:u})){say('Already in your stations');return}rfav({name:n,url:u})})}]]}]};
 function open(l,p,t,row,act,menu){st.push({l:l,p:p,t:t,row:row,act:act,menu:menu});$('q').value='';load(0)}
 function cur(){return st[st.length-1]}
 function load(off){var v=cur(),p={};for(var k in v.p)p[k]=v.p[k];if($('q').value)p.q=$('q').value;p.offset=off;p.limit=100;
 $('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';if(!off){items=[];$('list').textContent='Loading…'}
-$('pa').classList.toggle('hide',!v.act);$('hm').classList.toggle('hide',!v.menu);if(v.act)$('pa').textContent=v.act[0];
+$('pa').classList.toggle('hide',!v.act);$('hm').classList.toggle('hide',!(v.menu&&v.menu().length));if(v.act)$('pa').textContent=v.act[0];
 $('q').placeholder=v.l==='radio_search'?'Search all stations':'Search';if(v.l==='radio_search'){rsearch(v);return}
 var L=v.l==='favorites'?FV:v.l==='radio'?FR:null;
 (L?Promise.resolve({ok:true,items:L.filter(function(f){return rmt([f.title,f.artist,f.album,f.name,f.country].join(' '),$('q').value)})}):get('api/library/'+v.l+'?'+enc(p))).then(function(j){if(L)j.total=j.items.length;if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}

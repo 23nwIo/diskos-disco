@@ -1156,6 +1156,12 @@ int remote_test_request(const char *method, const char *path_query, const char *
     static const char tok[] = "testtesttesttesttest";
     char raw[REMOTE_REQ_MAX];
     *out = NULL; *why = NULL;
+    if(!strcmp(method, "UPLOADED")){                    /* what the server's upload thread sends once the file is saved */
+        rmt_cmd_t c; memset(&c, 0, sizeof c);
+        c.kind = RMT_CMD_PARTY_UPLOAD; c.guest = 1; snprintf(c.gid, sizeof c.gid, "%s", body ? body : "");
+        snprintf(c.name, sizeof c.name, "%s", path_query);
+        return dispatch(&c, why, out);
+    }
     int guest = path_query[0] == '~';                  /* "~/api/..." : through the guests' link /Party_1/ */
     snprintf(raw, sizeof raw, "%s /%s%s HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s", method, guest ? "Party_1" : tok, path_query + guest,
              strlen(body ? body : ""), body ? body : "");
@@ -1168,6 +1174,7 @@ void remote_pump(void){
     static uint32_t last;
     if(!rsrv_running()) return;
     rsrv_set_party(party_link_name());
+    { long long mx = 0; const char *ud = party_upload_dir(&mx); rsrv_set_upload(ud, mx); }
     rmt_state_t s;
     if(!last || lv_tick_elaps(last) >= 250){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }   /* a page polls 1/s */
     rmt_cmd_t c;

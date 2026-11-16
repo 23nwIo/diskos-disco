@@ -19,6 +19,8 @@
 <label><input type=checkbox data-k=skip> Skip songs</label><label><input type=checkbox data-k=repeat> Add a song that is already queued</label>
 <label><input type=checkbox data-k=names> Give their name (shown with their songs)</label>
 <label><input type=checkbox data-k=radio> Choose a radio station: it plays when the queue is empty, or at once if they may skip songs</label>
+<label><input type=checkbox data-k=upload> Upload songs to the SD card</label><label for=pup>Largest file (MB)</label><input id=pup data-k=upmax type=number min=1 max=2000 inputmode=numeric>
+<div class=hint>Uploads go to PartyUploads/&lt;party name&gt;/ on the card and into the library, not the queue: guests add them like any other song. They stay after the party.</div>
 <label for=ptot>Songs each guest may have in the queue</label><input id=ptot data-k=total type=number min=1 max=50 inputmode=numeric>
 <label for=pcon>Songs of one guest in a row (at most)</label><input id=pcon data-k=consec type=number min=1 max=10 inputmode=numeric>
 <div class=hint>Guests take turns: a new song joins the guest's next round instead of the end of the queue. While only one guest's songs are queued, that guest may add more in a row (up to their number of songs).</div></div>
@@ -72,7 +74,8 @@ function party(){if(V!=='party'||document.hidden)return;fetch('api/party',{cache
 [].forEach.call(document.querySelectorAll('#ptv [data-k]'),function(e){if(document.activeElement===e)return;if(e.type==='checkbox')e.checked=!!c[e.dataset.k];else e.value=c[e.dataset.k]});$('pmvv').textContent=$('pmv').value;
 if(document.activeElement!==$('pnm')&&!$('pnm').dataset.e)$('pnm').value=c.name;var u=c.name?location.origin+'/'+c.name+'/':'';$('plw').classList.toggle('hide',!u);$('pl').textContent=u+(c.on?'':' (off)');
 var g=$('pg');g.textContent='';if(!j.guests.length)g.textContent='None yet';g.style.padding=j.guests.length?'0':'';j.guests.forEach(function(x){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');
-a.textContent=x.name||'(no name)';b.textContent=x.queued+' queued · seen '+(x.seen_s<60?'just now':Math.round(x.seen_s/60)+' min ago');k.appendChild(a);k.appendChild(b);g.appendChild(k)})}).catch(function(){say('Player not reachable')});
+a.textContent=x.name||'(no name)';b.textContent=x.queued+' queued · seen '+(x.seen_s<60?'just now':Math.round(x.seen_s/60)+' min ago');k.appendChild(a);k.appendChild(b);g.appendChild(k);
+(x.stations||[]).forEach(function(t){var d=document.createElement('div');d.className='hint';d.style.padding='0 1em .3em';d.textContent='\u2665 '+t.name+' \u2014 '+t.url;g.appendChild(d)})})}).catch(function(){say('Player not reachable')});
 fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){var le=s.list_end;$('pe').disabled=!le;$('pen').textContent=le?'The same setting as After the list ends on the Disc and on the Remote page.':'Only with the own player (Settings > Playback).';
 if(le){if(document.activeElement!==$('pe'))$('pe').value=le.mode;$('psw').classList.toggle('hide',le.mode<2);$('pes').textContent=lesay(le)}else $('psw').classList.add('hide')}).catch(function(){})}
 setInterval(party,3000);

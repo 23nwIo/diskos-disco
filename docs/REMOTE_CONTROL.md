@@ -95,10 +95,21 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 | Add a song that is already queued | off | Off: a song already in the queue is refused. |
 | Give their name | on | Guests can enter a name (on their **You** tab), shown with their songs on both pages. |
 | Choose a radio station | off | Guests pick a station from their Radio tab: **Play when the queue is empty** makes it the station **When the queue is empty** (own player only), **Play now** switches to it at once, also from a station already playing (only when they may skip songs too). |
+| Upload songs to the SD card | off | Guests get **Upload a song…** (Songs tab menu ⋯, and their **You** tab). **Largest file** (MB, default 100) limits each file. See below. |
 | When the queue is empty | — | The same setting as **After the list ends**: stop, random songs from the library, a radio station or a playlist. |
 
 **Guests** lists the guests the Disc has seen, with their names, how many songs each has queued and when they were last
-seen.
+seen, and below each guest the radio stations they saved in their browser (name and stream URL). The Disc also writes
+those stations to `/tmp/party-stations.txt` (guest, station and URL, tab-separated; in RAM, gone after a restart).
+
+**Uploads.** A guest picks a music file on their phone (mp3, flac, m4a, ogg, opus, oga, wav, aif, aiff, ape, wma, aac,
+dsf, dff or dts) and the Disc saves it to `PartyUploads/<party name>/` on the SD card as `<guest name>_<file name>`
+(spaces and characters a card can't take become `_`; `guest_…` without a name). An existing file is never overwritten
+(`-2`, `-3`, … are added). The file then goes into the library at once (one row in song.db, no rescan), but not into
+the queue: the page offers **Add to the queue**, which counts like any other song. The upload is refused when it is
+larger than the host allows, when less than 64 MB would stay free on the card, or while another guest is uploading.
+Uploads stay on the card after the party; delete them in Files when you like. While a library scan runs, the file is
+saved but joins the library only with that scan.
 
 Guests always have a Radio tab, the Remote page's station browser: **Find stations** searches the station directory,
 the heart saves a station to their own list (kept in their browser, like their favourite songs), and **⋯ › Add a stream
@@ -201,7 +212,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/queue` with `action=add` and `kind=song&song_id=N`, `kind=album&name=…` or `kind=artist&name=…` or `kind=next&b=ID` (an Up next row) | Adds to the end of the queue (`{"ok":true,"added":N}`). |
 | `POST api/queue` with `ver` and `action=jump&kind=queue&i=N` \| `action=jump&kind=next&b=ID` \| `action=remove&i=N` \| `action=move&i=N&to=M` \| `action=clear` | Refused with "The queue changed" when `ver` is not the list's version any more. |
 | `POST api/list_end` with `mode=0..3` (stop, shuffle all, station, playlist) and optionally `pos=N&url=U` (radio favourite N as the station) or, with mode 3, `pl=ID&flags=0..3` (the playlist; Repeat 1, Shuffle 2) | After the List Ends (own player only). `api/state` reports `"list_end":{"mode":N,"station":"name","playlist":"name","pl_id":ID,"pl_flags":F}`, or `null` with the stock player. |
-| `GET api/party`, `POST api/party` with any of `on`, `name`, `vol`, `maxvol=1..100`, `np`, `queue`, `skip`, `total=1..50`, `consec=1..10`, `repeat`, `radio`, `names` (0/1 unless stated) | Party mode settings (saved on the SD card): `{"ok":true,"settings":{…,"name":"…","own_player":…},"guests":[{"name":"…","queued":N,"seen_s":N}]}`. |
+| `GET api/party`, `POST api/party` with any of `on`, `name`, `vol`, `maxvol=1..100`, `np`, `queue`, `skip`, `total=1..50`, `consec=1..10`, `repeat`, `radio`, `names`, `upload`, `upmax=1..2000` (MB) (0/1 unless stated) | Party mode settings (saved on the SD card): `{"ok":true,"settings":{…,"name":"…","own_player":…},"guests":[{"name":"…","queued":N,"seen_s":N,"stations":[{"name":"…","url":"…"}]}]}`. |
 | `POST api/queue` with `action=add&kind=file&path=…` | Adds a card file (all its tracks). |
 | `POST api/outputs` with one of `aux=0/1`, `bt=0/1`, `vol_aux=0..120`, `vol_bt=0..120`, `auto=0..2`, `codec=0..4` (0 SBC, 1 AAC, 2 LDAC, 3 aptX, 4 aptX HD) | Settings > Audio > Outputs (own player only; refused with the reason otherwise). `api/state` reports `"outputs":{"aux","bt","vol_aux","vol_bt","bt_ready","auto","jack","bal","codec" (-1 none),"codecs":[ids offered],"switching"}`, or `null` with the stock player. |
 | `POST api/seek` with `position_ms=N` | Seek. |
@@ -212,7 +223,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing); or `kind=stream` with `name` and an http/https `url` (a stream address of your own; add only). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
-The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio` or `favorites`), `POST api/radio_search` and their own `POST api/radio` with `name`, `url` (http or https) and `now=0|1` (0: the station when the queue is empty; 1: play it now, needs skipping too). The state's `party` also has `radio_end` and `radio_now` (what picking a station may do). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
+The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio` or `favorites`), `POST api/radio_search` and their own `POST api/radio` with `name`, `url` (http or https) and `now=0|1` (0: the station when the queue is empty; 1: play it now, needs skipping too). The state's `party` also has `radio_end` and `radio_now` (what picking a station may do) and `upload`, `upmax` (MB). `POST api/stations` with `s=<url> <name>` for each saved station (repeated; http/https only, about 3 KB in all) tells the host the guest's stations. `POST api/upload?g=…&n=…&f=<file name>` takes the file itself as the request body (any Content-Type, Content-Length required, no chunked encoding) and answers `{"ok":true,"song_id":N,"file":"PartyUploads/…","title":"…"}`; refused with 403 (uploads off), 413 (too large), 415 (not a music file), 503 (another upload runs, or no card), 507 (card full), 400 (broke off; nothing is left behind). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
 (`message` says why), 503 another command is still running, 504 the UI did not answer in time.

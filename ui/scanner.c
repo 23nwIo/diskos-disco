@@ -1923,3 +1923,39 @@ int scan_read_narrator(const char *path, char *out, int cap){
     sd_io_end();
     return result;
 }
+
+/* One new file into SONG at once, without a scan (Remote Control party uploads). The same tags and row as a scan
+ * writes; a path already in the library keeps its row. Returns its SONG.ID, 0 if the library doesn't take the file
+ * (not music, an audiobook, unreadable), -1 while a scan runs or when song.db can't be written. Main thread. */
+int scanner_add_file(const char *path){
+    if(!path || !path[0]) return 0;
+    const char *fname = strrchr(path, '/'); fname = fname ? fname + 1 : path;
+    if(!is_audio(fname) || has_ext(fname, ".m4b")) return 0;
+    if(scanner_active()) return -1;
+    char title[TAGLEN], artist[TAGLEN], album[TAGLEN], genre[TAGLEN], album_artist[TAGLEN];
+    int track = 0, disc = 0; long long dur_ms = 0;
+    if(!sd_io_begin()) return -1;
+    int tst = tags_from_file(path, fname, title, artist, album, genre, album_artist, &track, &disc, &dur_ms);
+    sd_io_end();
+    if(tst == 0) return 0;
+    sqlite3 *db = NULL; sqlite3_stmt *st = NULL; int id = -1;
+    if(sqlite3_open_v2(DB_PATH, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK) goto out;
+    sqlite3_busy_timeout(db, 3000);
+    if(sqlite3_prepare_v2(db, "SELECT ID FROM SONG WHERE PATH=?1 ORDER BY ID LIMIT 1;", -1, &st, NULL) != SQLITE_OK) goto out;
+    sqlite3_bind_text(st, 1, path, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(st);
+    if(rc == SQLITE_ROW){ id = sqlite3_column_int(st, 0); goto out; }
+    if(rc != SQLITE_DONE) goto out;
+    sqlite3_finalize(st); st = NULL;
+    if(sqlite3_prepare_v2(db, INS_SONG, -1, &st, NULL) != SQLITE_OK) goto out;
+    sqlite3_bind_text(st, 1, path, -1, SQLITE_TRANSIENT);
+    bind_tags(st, 2, fname, title, album, artist, genre);
+    sqlite3_bind_int64(st, 12, (sqlite3_int64)time(NULL));
+    bind_meta(st, 13, disc, track, album_artist);
+    sqlite3_bind_int64(st, 17, (sqlite3_int64)(dur_ms > 0 ? dur_ms : 0));
+    if(sqlite3_step(st) == SQLITE_DONE) id = (int)sqlite3_last_insert_rowid(db);
+out:
+    if(st) sqlite3_finalize(st);
+    if(db) sqlite3_close(db);
+    return id;
+}

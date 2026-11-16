@@ -33,6 +33,8 @@ con.execute("INSERT INTO CUSTOM_PLAYLIST_INDEX VALUES(1,'Road trip','')")
 con.execute('INSERT INTO CUSTOM_PLAYLIST SELECT *,1 FROM SONG WHERE ID IN (6,1)')
 con.commit(); con.close()
 (sd/'Music/notes.txt').write_text('x'); (sd/'Music/unindexed.mp3').write_bytes(b'x')
+up = sd/'PartyUploads/Party_1'; up.mkdir(parents=True); (up/'Anna_Mine.mp3').write_bytes(b'x' * 1000); (up/'Anna_x.txt').write_text('x')   # saved by the server's upload thread
+Path('/tmp/party-stations.txt').unlink(missing_ok=True)
 favs = (sd/'radio_favorites.txt'); favs.write_text('Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n'
                                                             'Talk\thttps://s.example/talk\tAAC\t64\tFrance\n')
 
@@ -78,6 +80,10 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         # 108.. a stream address of the host's own, saved straight into the radio favourites
         'POST /api/radio_fav_add kind=stream&name=My+%3CStream%3E&url=https%3A%2F%2Fmine.example%2Flive', 'POST /api/radio_fav_add kind=stream&name=X&url=ftp%3A%2F%2Fx',
         'POST ~/api/radio_fav_add kind=stream&name=X&url=http%3A%2F%2Fx&g=BenBenBenBen1234', 'GET /api/library/radio',
+        # 112.. a guest's upload is on the card: into the library (not the queue); a guest's own stations for the host
+        'UPLOADED PartyUploads/Party_1/Anna_Mine.mp3 AnnaAnnaAnna1234', 'UPLOADED PartyUploads/Party_1/Anna_Mine.mp3 AnnaAnnaAnna1234',
+        'UPLOADED PartyUploads/Party_1/Anna_x.txt AnnaAnnaAnna1234', 'GET /api/queue',
+        'POST ~/api/stations g=AnnaAnnaAnna1234&s=http%3A%2F%2Fa.example%2Fs+Anna+%3CFM%3E&s=https%3A%2F%2Fb.example+B', 'GET /api/party',
         'POST /api/play_item kind=folder&path=Music%2FOther']   # last: the folder play's slot is checked after the run
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -104,7 +110,7 @@ assert [(s['title'], s['pos']) for s in items(6)] == [('Uno', 1), ('Solo', 2)]
 assert [(s['title'], s['pos']) for s in items(7)] == [('Dos', 1), ('Jour', 2)]
 assert [s['title'] for s in items(8)] == ['Dos']
 assert res[9]['body']['total'] == 6 and len(items(9)) == 2 and res[9]['body']['offset'] == 1
-assert items(10) == [{'name': 'Music', 'dir': True}]
+assert items(10) == [{'name': 'Music', 'dir': True}, {'name': 'PartyUploads', 'dir': True}]
 assert items(11) == [{'name': 'Blue Album', 'dir': True}, {'name': 'escape', 'dir': True}, {'name': 'Other', 'dir': True},
                      {'name': 'unindexed.mp3', 'dir': False}] or items(11) == [{'name': 'Blue Album', 'dir': True}, {'name': 'Other', 'dir': True},
                      {'name': 'unindexed.mp3', 'dir': False}], items(11)
@@ -180,7 +186,7 @@ assert res[74]['rc'] == -1 and res[74]['why'] == 'The queue changed - here it is
 assert res[75]['rc'] == -1 and res[75]['why'].startswith('Only with the own player'), res[75]
 print('PASS Remote Control queue: add (song, album), list, move, remove, clear, stale version refused')
 # party mode
-p = res[76]['body']; assert p['settings'] == {'on': 0, 'vol': 1, 'maxvol': 100, 'np': 1, 'queue': 1, 'skip': 0, 'total': 3, 'consec': 1, 'repeat': 0, 'radio': 0, 'names': 1, 'name': '', 'own_player': False} and p['guests'] == [], p
+p = res[76]['body']; assert p['settings'] == {'on': 0, 'vol': 1, 'maxvol': 100, 'np': 1, 'queue': 1, 'skip': 0, 'total': 3, 'consec': 1, 'repeat': 0, 'radio': 0, 'names': 1, 'upload': 0, 'upmax': 100, 'name': '', 'own_player': False} and p['guests'] == [], p
 assert res[77]['rc'] == -1 and res[77]['why'] == 'Choose a party name first', res[77]
 assert res[78]['rc'] == 0 and res[78]['body']['settings']['name'] == 'Party_1' and res[78]['body']['settings']['total'] == 2, res[78]
 assert 'name=Party_1\n' in party_conf and 'on=1\n' in party_conf and 'total=2\n' in party_conf, party_conf   # on the SD card
@@ -215,3 +221,13 @@ print('PASS Remote Control party mode: guests choose a station (now with skippin
 assert res[108]['rc'] == 0 and res[109]['rc'] == -100 - 8 and res[110]['rc'] == -100, res[108:111]   # ftp is no stream; guests keep theirs in the browser
 assert [(x['name'], x['url']) for x in items(111)] == [('Jazz <FM>', 'http://s.example/jazz'), ('My <Stream>', 'https://mine.example/live')], items(111)
 print('PASS Remote Control radio: a stream address of your own saved to the favourites')
+u = res[112]['body']; assert res[112]['rc'] == 0 and u['file'] == 'PartyUploads/Party_1/Anna_Mine.mp3' and u['title'] == 'Anna_Mine' and u['song_id'] > 6, res[112]
+assert res[113]['body']['song_id'] == u['song_id'], res[113]                     # once in the library
+assert res[114]['rc'] == -1 and res[114]['why'] == "Saved, but the Disc can't read that file", res[114]
+assert all(x.get('t') != 'Anna_Mine' for x in res[115]['body']['items']), res[115]   # not queued (Jo)
+con = sqlite3.connect(db); row = con.execute('SELECT PATH,TITLE,ARTIST FROM SONG WHERE ID=?', (u['song_id'],)).fetchone(); con.close()
+assert row == (str(sd/'PartyUploads/Party_1/Anna_Mine.mp3'), 'Anna_Mine', 'Unknown artist'), row
+assert res[116]['rc'] == 0, res[116]
+st = [g['stations'] for g in res[117]['body']['guests'] if g['name'] == 'Anna']; assert st == [[{'name': 'Anna <FM>', 'url': 'http://a.example/s'}, {'name': 'B', 'url': 'https://b.example'}]], res[117]
+assert Path('/tmp/party-stations.txt').read_text().splitlines()[1:] == ['Anna\tAnna <FM>\thttp://a.example/s', 'Anna\tB\thttps://b.example'], Path('/tmp/party-stations.txt').read_text()
+print('PASS Remote Control party mode: uploads into the library, guests\' stations for the host')

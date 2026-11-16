@@ -4,6 +4,9 @@
  * stand-in for the main thread. Run: make -C ui/tests remote_test && ./ui/tests/remote_test */
 #include "remote_core.h"
 #include "remote_srv.h"
+/* the upload thread's SD lease (sdio.c): the test's card is a temp folder */
+int sd_io_begin(void){ return 1; }
+void sd_io_end(void){}
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -91,6 +94,33 @@ static void test_party(void){
     CHECK(preq("POST", "/Fest_1/api/radio", "name=X&url=file%3A%2F%2F%2Fetc%2Fpasswd").kind == RMT_R_BAD_PARAM && preq("POST", "/Fest_1/api/radio", "url=http%3A%2F%2Fx").kind == RMT_R_BAD_PARAM);
     CHECK(preq("GET", "/Fest_1/api/radio", NULL).kind == RMT_R_BAD_METHOD && req("POST", p("/api/radio"), "name=X&url=http%3A%2F%2Fx").kind == RMT_R_NOT_FOUND);
     CHECK(preq("POST", "/Fest_1/api/radio_search", "q=jazz").kind == RMT_R_CMD && preq("GET", "/Fest_1/api/library/radio_search", NULL).kind == RMT_R_CMD);
+    /* the guests' own stations, for the host to see: s=<url> <name>, bad ones left out */
+    r = preq("POST", "/Fest_1/api/stations", "g=abcdefgh12&n=Anna&s=https%3A%2F%2Fa.example%2Fs+Jazz+%3CFM%3E&s=ftp%3A%2F%2Fx+Bad&s=nospace&s=http%3A%2F%2Fb.example+B");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY_STATIONS && r.cmd.guest && !strcmp(r.cmd.text, "Jazz <FM>\thttps://a.example/s\nB\thttp://b.example\n"));
+    CHECK(preq("POST", "/Fest_1/api/stations", "s=http%3A%2F%2Fb.example+B").kind == RMT_R_BAD_PARAM && preq("GET", "/Fest_1/api/stations", NULL).kind == RMT_R_BAD_METHOD);
+    CHECK(preq("POST", "/Fest_1/api/stations", "g=abcdefgh12").kind == RMT_R_CMD && !preq("POST", "/Fest_1/api/stations", "g=abcdefgh12").cmd.text[0]);   /* all removed */
+    CHECK(strstr(RMT_PARTY_HTML, "'" RMT_UPLOAD_EXTS "'") != NULL);   /* the page offers what the Disc takes */
+    /* uploads: the saved name, and the request's head (the body goes straight to the card) */
+    char nm[160];
+    CHECK(rmt_upload_name("Anna B", "C:\\Music\\My Song (live).MP3", nm, sizeof nm) == 0 && !strcmp(nm, "Anna_B_My_Song_(live).mp3"));
+    CHECK(rmt_upload_name("", "../../etc/x.flac", nm, sizeof nm) == 0 && !strcmp(nm, "guest_x.flac"));
+    CHECK(rmt_upload_name("Zoë", "Für Elise.opus", nm, sizeof nm) == 0 && !strcmp(nm, "Zoë_Für_Elise.opus"));
+    CHECK(rmt_upload_name("A/B", "a?b*c.ogg", nm, sizeof nm) == 0 && !strcmp(nm, "A_B_a_b_c.ogg"));
+    CHECK(rmt_upload_name("A", "song.exe", nm, sizeof nm) == -1 && rmt_upload_name("A", "noext", nm, sizeof nm) == -1 && rmt_upload_name("A", ".flac", nm, sizeof nm) == -1
+          && rmt_upload_name("A", "x.mp", nm, sizeof nm) == -1 && rmt_upload_name("A", "x.m4b", nm, sizeof nm) == -1 && rmt_upload_name("A", "???.mp3", nm, sizeof nm) == -1);
+    char longn[400]; memset(longn, 'x', 300); strcpy(longn + 300, ".flac");
+    CHECK(rmt_upload_name("A", longn, nm, sizeof nm) == 0 && strlen(nm) < 128 && strstr(nm, ".flac") == nm + strlen(nm) - 5);
+    rmt_cmd_t uc; long long ul = 0; size_t uh = 0;
+    const char *head = "POST /Fest_1/api/upload?g=abcdefgh12&n=Anna&f=My+Song.mp3 HTTP/1.1\r\nHost: x\r\ncontent-length: 123456789\r\n\r\nID3";
+    CHECK(rmt_upload_head(head, strlen(head), "Fest_1", &uc, &ul, &uh) == 1 && ul == 123456789 && uh == strlen(head) - 3
+          && uc.kind == RMT_CMD_PARTY_UPLOAD && uc.guest && !strcmp(uc.gid, "abcdefgh12") && !strcmp(uc.gname, "Anna") && !strcmp(uc.name, "My Song.mp3"));
+    CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12&f=a.mp3 HTTP/1.1\r\nHost: x", 40, "Fest_1", &uc, &ul, &uh) == 0);   /* not all there yet */
+    CHECK(rmt_upload_head("POST /Fest_2/api/upload?g=abcdefgh12&f=a.mp3 HTTP/1.1\r\nContent-Length: 5\r\n\r\n", 70, "Fest_1", &uc, &ul, &uh) == 0);
+    CHECK(rmt_upload_head("POST /Fest_1/api/queue?g=abcdefgh12 HTTP/1.1\r\nContent-Length: 5\r\n\r\n", 60, "Fest_1", &uc, &ul, &uh) == 0);
+    CHECK(rmt_upload_head("POST /Fest_1/api/upload?f=a.mp3 HTTP/1.1\r\nContent-Length: 5\r\n\r\n", 60, "Fest_1", &uc, &ul, &uh) == -1);   /* who? */
+    CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12&f=a.mp3 HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", 80, "Fest_1", &uc, &ul, &uh) == -1);
+    CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12&f=a.mp3 HTTP/1.1\r\nContent-Length: -5\r\n\r\n", 70, "Fest_1", &uc, &ul, &uh) == -1);
+    CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12 HTTP/1.1\r\nContent-Length: 5\r\n\r\n", 60, "Fest_1", &uc, &ul, &uh) == -1);   /* no file name */
     /* the host's settings */
     r = req("POST", p("/api/party"), "on=1&name=Fest_1&maxvol=80&total=5");
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY && r.cmd.arg == 1 && r.cmd.party[RMT_P_ON] == 1 && r.cmd.party[RMT_P_MAXVOL] == 80
@@ -473,14 +503,16 @@ static void fake_party(const rmt_cmd_t *c, rmt_state_t *s){
     if(c->kind == RMT_CMD_PARTY){
         for(int k = 0; c->arg && k < RMT_P_N; k++) if(c->party[k] >= 0) g_pv[k] = c->party[k];
         if(c->arg && c->name[0]){ snprintf(g_pname, sizeof g_pname, "%.32s", c->name); rsrv_set_party(g_pname); }
+        if(c->arg){ char d[256]; snprintf(d, sizeof d, "/tmp/remote_test_card/" RMT_UPLOAD_DIR "/%s", g_pname);
+                    rsrv_set_upload(g_pv[RMT_P_UPLOAD] ? d : "", (long long)g_pv[RMT_P_UPMAX] * 1024 * 1024); }
         rmt_buf_put(&b, "{\"ok\":true,\"settings\":{");
         for(int k = 0; k < RMT_P_N; k++) rmt_buf_printf(&b, "\"%s\":%d,", RMT_PARTY_KEYS[k].key, g_pv[k]);
         rmt_buf_put(&b, "\"own_player\":true,\"name\":"); rmt_buf_str(&b, g_pname);
         rmt_buf_put(&b, "},\"guests\":[{\"name\":\"Anna <A>\",\"queued\":2,\"seen_s\":4},{\"name\":\"\",\"queued\":0,\"seen_s\":300}]}");
     } else if(c->kind == RMT_CMD_PARTY_STATE){
-        rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"you\":",
+        rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"upload\":%d,\"upmax\":%d,\"you\":",
                        g_pv[RMT_P_NP], g_pv[RMT_P_QUEUE], g_pv[RMT_P_VOL], g_pv[RMT_P_SKIP], g_pv[RMT_P_RADIO], g_pv[RMT_P_NAMES], g_pv[RMT_P_TOTAL], g_pv[RMT_P_CONSEC],
-                       g_pv[RMT_P_REPEAT], g_pq, g_pv[RMT_P_TOTAL] > g_pq ? g_pv[RMT_P_TOTAL] - g_pq : 0, g_pv[RMT_P_RADIO], g_pv[RMT_P_RADIO] && g_pv[RMT_P_SKIP]);
+                       g_pv[RMT_P_REPEAT], g_pq, g_pv[RMT_P_TOTAL] > g_pq ? g_pv[RMT_P_TOTAL] - g_pq : 0, g_pv[RMT_P_RADIO], g_pv[RMT_P_RADIO] && g_pv[RMT_P_SKIP], g_pv[RMT_P_UPLOAD], g_pv[RMT_P_UPMAX]);
         rmt_buf_str(&b, c->gname);
         rmt_buf_printf(&b, "},\"playing\":true,\"has_track\":true,\"controllable\":true,\"source\":\"local\",\"volume\":%d,\"title\":", s->volume * 100 / 120);
         rmt_buf_str(&b, s->title); rmt_buf_put(&b, ",\"artist\":\"Artist\",\"album\":\"Album\",\"station\":\"\",\"stream_title\":\"\",\"art\":\"a1\",\"position_ms\":61000,\"duration_ms\":200000,\"by\":\"Anna <A>\",\"by_you\":false");
@@ -493,6 +525,8 @@ static void fake_party(const rmt_cmd_t *c, rmt_state_t *s){
         for(int i = 0; i < 4 + g_pq; i++) rmt_buf_printf(&b, ",{\"k\":\"queue\",\"d\":180000,\"mine\":%s,\"t\":\"Song %d\",\"a\":\"Band\",\"by\":\"%s\"}",
                                                          i >= 4 ? "true" : "false", i + 1, i >= 4 ? c->gname : i % 2 ? "" : "Ben");
         rmt_buf_put(&b, "]}");
+    } else if(c->kind == RMT_CMD_PARTY_UPLOAD){
+        rmt_buf_put(&b, "{\"ok\":true,\"song_id\":77,\"file\":"); rmt_buf_str(&b, c->name); rmt_buf_put(&b, ",\"title\":\"Uploaded song\"}");
     } else if(c->kind == RMT_CMD_NEXT && !g_pv[RMT_P_SKIP]){ rsrv_done(0, "Skipping is off at this party"); return; }
     else if(c->kind == RMT_CMD_BROWSE){ rsrv_done_body(1, NULL, fake_browse(c)); return; }
     else if(c->kind == RMT_CMD_VOLUME){ s->volume = (int)(c->arg * 120 / 100); rsrv_done(1, NULL); return; }
@@ -670,6 +704,41 @@ static void test_server(void){
     CHECK(call("POST", p("/api/play_item"), "kind=album&name=Album%201&song_id=1003", out, sizeof out) == 200);
     CHECK(g_last.kind == RMT_CMD_PLAY_ITEM && g_last.sub == RMT_I_ALBUM && g_last.song_id == 1003 && !strcmp(g_last.name, "Album 1"));
     CHECK(call("GET", p("/api/library/albums"), NULL, out, sizeof out) == 200 && strstr(out, "\"total\":250"));
+    /* a guest's upload: the body goes to the card on its own thread, then the main thread hears of it */
+    {
+        CHECK(system("rm -rf /tmp/remote_test_card && mkdir /tmp/remote_test_card") == 0);   /* the card's root (a mount: never made here) */
+        rsrv_set_party("Fest_1");
+        size_t bl = 200000; char *raw = malloc(bl + 512); int hl;
+        hl = snprintf(raw, 512, "POST /Fest_1/api/upload?g=abcdefgh12&n=Anna&f=My+Song.mp3 HTTP/1.1\r\nHost: x\r\nContent-Length: %zu\r\n\r\n", bl);
+        for(size_t i = 0; i < bl; i++) raw[hl + (int)i] = (char)('a' + i % 26);
+        raw[hl + (int)bl] = 0;
+        CHECK(http(raw, out, sizeof out) == 403 && strstr(out, "doesn't take uploads"));   /* uploads off */
+        rsrv_set_upload("/tmp/remote_test_card/" RMT_UPLOAD_DIR "/Fest_1", 100000);
+        CHECK(http(raw, out, sizeof out) == 413);                                          /* larger than allowed */
+        rsrv_set_upload("/tmp/remote_test_card/" RMT_UPLOAD_DIR "/Fest_1", 1000000);
+        CHECK(http(raw, out, sizeof out) == 200 && strstr(out, "\"song_id\":77") && strstr(out, "\"file\":\"" RMT_UPLOAD_DIR "/Fest_1/Anna_My_Song.mp3\""));
+        CHECK(g_last.kind == RMT_CMD_PARTY_UPLOAD && g_last.guest && !strcmp(g_last.gid, "abcdefgh12"));
+        FILE *f = fopen("/tmp/remote_test_card/" RMT_UPLOAD_DIR "/Fest_1/Anna_My_Song.mp3", "rb"); long sz = -1; int same = 0;
+        if(f){ char *got = malloc(bl); fseek(f, 0, SEEK_END); sz = ftell(f); rewind(f); same = fread(got, 1, bl, f) == bl && !memcmp(got, raw + hl, bl); fclose(f); free(got); }
+        CHECK(sz == (long)bl && same);
+        CHECK(http(raw, out, sizeof out) == 200 && strstr(out, "Anna_My_Song-2.mp3"));      /* never overwritten */
+        char bad[256]; snprintf(bad, sizeof bad, "POST /Fest_1/api/upload?g=abcdefgh12&f=x.exe HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc");
+        CHECK(http(bad, out, sizeof out) == 415);
+        snprintf(bad, sizeof bad, "POST /Fest_1/api/upload?g=abcdefgh12&f=x.mp3 HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc");   /* breaks off */
+        int c = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in a = {0}; a.sin_family = AF_INET; a.sin_port = htons((unsigned short)rsrv_port());
+        inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+        if(connect(c, (void *)&a, sizeof a) == 0){
+            send(c, bad, strlen(bad), MSG_NOSIGNAL); shutdown(c, SHUT_WR);
+            size_t got = 0; ssize_t rr;
+            while(got < sizeof out - 1 && (rr = recv(c, out + got, sizeof out - 1 - got, 0)) > 0) got += (size_t)rr;
+            out[got] = 0;
+        }
+        close(c);
+        CHECK(strstr(out, "400") && strstr(out, "broke off") && access("/tmp/remote_test_card/" RMT_UPLOAD_DIR "/Fest_1/guest_x.mp3", F_OK) && access("/tmp/remote_test_card/" RMT_UPLOAD_DIR "/Fest_1/.upload.part", F_OK));
+        CHECK(call("GET", p("/api/state"), NULL, out, sizeof out) == 200);                  /* the server went on serving */
+        free(raw); rsrv_set_upload("", 0); rsrv_set_party("");
+        CHECK(system("rm -rf /tmp/remote_test_card") == 0);
+    }
     rsrv_stop();
     CHECK(!rsrv_running());
     CHECK(rsrv_start("127.0.0.1", 0, TOK) == 0);         /* restartable (a new Wi-Fi address) */

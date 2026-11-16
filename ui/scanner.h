@@ -15,6 +15,7 @@ int  scanner_take_finished(void);             /* returns 1 exactly once after a 
 int  scanner_no_sd(void);                     /* 1 if the last scan aborted: no SD mounted (library kept) */
 int  scanner_skipped(void);                   /* unreadable/overlong files from the completed scan */
 int  scanner_unsupported(void);               /* count of audio files present but not indexable (AAC/M4A/OGG/...) */
+int  scanner_add_file(const char *path);      /* one file into the library now (party uploads): SONG.ID, 0 not taken, -1 busy/failed */
 
 /* Audiobook chapters (Nero 'chpl' in an M4B/M4A). */
 #define CHAP_TITLE 128
