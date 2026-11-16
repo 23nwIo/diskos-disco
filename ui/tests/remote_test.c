@@ -313,6 +313,11 @@ static void test_core(void){
     r = req("POST", p("/api/radio_fav_remove"), "kind=radio&pos=2&url=http%3A%2F%2Fx"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_FAV && r.cmd.arg == 0);
     CHECK(req("POST", p("/api/radio_fav_remove"), "kind=radio&pos=2").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/radio_fav_add"), "kind=song&song_id=2&url=x").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/radio_fav_add"), "kind=stream&name=Mine&url=https%3A%2F%2Fm.example%2Fa");   /* a stream address of your own */
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_STREAM && r.cmd.arg == 1 && !strcmp(r.cmd.q, "Mine") && !strcmp(r.cmd.name, "https://m.example/a"));
+    CHECK(req("POST", p("/api/radio_fav_add"), "kind=stream&name=Mine&url=ftp%3A%2F%2Fm").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/radio_fav_add"), "kind=stream&url=http%3A%2F%2Fm").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/radio_fav_remove"), "kind=stream&name=Mine&url=http%3A%2F%2Fm").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/play_item"), "kind=song").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/play_item"), "kind=album").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/play_item"), "kind=playlist&id=-1").kind == RMT_R_BAD_PARAM);

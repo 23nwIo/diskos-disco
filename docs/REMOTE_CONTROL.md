@@ -101,7 +101,8 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 seen.
 
 Guests always have a Radio tab, the Remote page's station browser: **Find stations** searches the station directory,
-the heart saves a station to their own list (kept in their browser, like their favourite songs). Playing one needs the
+the heart saves a station to their own list (kept in their browser, like their favourite songs), and **⋯ › Add a stream
+URL…** adds a stream address that is not in the directory (http:// or https://, with a name). Playing one needs the
 setting above.
 
 Guests can browse the whole library (songs, albums, artists, playlists, folders) and add single songs,
@@ -144,6 +145,8 @@ open; the Disc shows its usual messages ("Connected: …") on its own screen.
 ### Radio
 
 The **Radio** tab lists the favourites of the Disc's [Radio app](RADIO.md). Tap one to play it; the heart removes it.
+**⋯ › Add a stream URL…** saves a stream address of your own that the directory does not have (http:// or https://, then
+a name) straight into the favourites, so the Radio app on the Disc has it too.
 **Find stations** searches the same station directory as the Radio app (radio-browser.info, through the Disc's own
 search): an empty field shows the popular stations, typing searches by name. The Disc downloads the answer, which takes
 a few seconds. Tap a hit to play it, or its star to save it as a favourite. The Disc and the page share one search, so
@@ -206,7 +209,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`, `fav`), `radio_search` (the last station search: also `"search":"idle"|"busy"|"done"|"failed"`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
 | `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=folder` + `path` (empty: the whole card; subfolders included, path order); `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed); `kind=radio_hit` + `pos` + `url` (a search hit). `pos` counts from 1. |
 | `POST api/radio_search` with `q` | Start a station search (`q` empty: popular stations); then poll `GET api/library/radio_search` until `search` is not `busy`. |
-| `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing). |
+| `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing); or `kind=stream` with `name` and an http/https `url` (a stream address of your own; add only). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
 The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio` or `favorites`), `POST api/radio_search` and their own `POST api/radio` with `name`, `url` (http or https) and `now=0|1` (0: the station when the queue is empty; 1: play it now, needs skipping too). The state's `party` also has `radio_end` and `radio_now` (what picking a station may do). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.

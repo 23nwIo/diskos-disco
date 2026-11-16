@@ -79,7 +79,8 @@ playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{
 favorites:['Favourites',function(s){return song(s,{kind:'favorites',pos:s.pos})},{kind:'favorites'}],
 songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all'}],
 folder:['Folders',null,{kind:'folder',path:''}],
-radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}]]};
+radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}],
+function(){return[['Add a stream URL…',function(){askurl(function(n,u){cmd('radio_fav_add',enc({kind:'stream',name:n,url:u})).then(function(ok){if(ok){load(0);setTimeout(function(){say('Saved to favourites',1)},600)}})})}]]}]};
 function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},
 {f:!!x.fav,fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}},x.url]}
 function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},[{f:!!s.fav,fn:function(b){var on=!s.fav;cmd('favorite',enc({on:on?1:0,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=on;star(b,on);say(on?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]]}
@@ -135,7 +136,7 @@ if(!j.items.length)l.textContent='Nothing is playing or queued.'}
 $('qc').onclick=function(){if(confirm('Remove all '+qn+' queued songs? Up Next stays.'))qdo({action:'clear'},'Queue cleared')};
 function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});
 $('np').classList.toggle('hide',v!=='np');$('qv').classList.toggle('hide',v!=='q');$('lib').classList.toggle('hide',v==='np'||v==='q');say('');
-if(v==='np'){poll();return}if(v==='q'){qver=-1;$('ql').textContent='Loading…';poll();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3])}
+if(v==='np'){poll();return}if(v==='q'){qver=-1;$('ql').textContent='Loading…';poll();return}var R=ROOT[v];st=[];open(v,v==='folder'?{path:''}:{},R[0],R[2]||null,v==='folder'?frow(''):R[1],R[3],R[4])}
 [].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
 $('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};
 $('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('shb').onclick=shut;

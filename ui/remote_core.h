@@ -65,7 +65,7 @@ typedef enum { RMT_L_ALBUMS = 1, RMT_L_ALBUM, RMT_L_ARTISTS, RMT_L_ARTIST, RMT_L
  * | song (song_id) | file (path) | all | radio (pos, optional url: refused if that favourite is no longer there)
  * | radio_hit (pos, url: a station from the last search).
  * song_id / pos are optional: the list starts at its first song. */
-typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL, RMT_I_RADIO, RMT_I_RADIO_HIT, RMT_I_FOLDER, RMT_I_RADIO_NOW } rmt_item_t;   /* radio_now: the station playing */
+typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, RMT_I_SONG, RMT_I_FILE, RMT_I_ALL, RMT_I_RADIO, RMT_I_RADIO_HIT, RMT_I_FOLDER, RMT_I_RADIO_NOW, RMT_I_STREAM } rmt_item_t;   /* radio_now: the station playing; stream: a URL typed in (q = name, name = url) */
 
 /* POST api/playlist_create (name) | playlist_rename (id, name) | playlist_delete (id) | playlist_add (id + kind=song
  * song_id | kind=album name | kind=artist name) | playlist_remove (id, pos, song_id: refused unless that row still holds

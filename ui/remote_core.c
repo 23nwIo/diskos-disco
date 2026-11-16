@@ -468,6 +468,14 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
     if(!strcmp(ep, "radio_fav_add") || !strcmp(ep, "radio_fav_remove")){
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         int add = ep[10] == 'a';
+        char k[8];
+        if(add && !param_str(r, "kind", k, sizeof k) && !strcmp(k, "stream")){   /* a stream URL of your own (radio.c checks it) */
+            int ok = !param_str(r, "name", rt.cmd.q, sizeof rt.cmd.q) && rt.cmd.q[0] && !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name)
+                     && (!strncmp(rt.cmd.name, "http://", 7) || !strncmp(rt.cmd.name, "https://", 8));
+            if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+            rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_RADIO_FAV; rt.cmd.sub = RMT_I_STREAM; rt.cmd.arg = 1;
+            return rt;
+        }
         rt.kind = route_item(r, &rt.cmd) < 0 || (rt.cmd.sub == RMT_I_RADIO_NOW ? 0 : (rt.cmd.sub != RMT_I_RADIO && rt.cmd.sub != RMT_I_RADIO_HIT) || !rt.cmd.name[0]) ? RMT_R_BAD_PARAM : RMT_R_CMD;
         rt.cmd.kind = RMT_CMD_RADIO_FAV; rt.cmd.arg = add;
         if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);

@@ -75,6 +75,9 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&g=BenBenBenBen1234', 'POST /api/party radio=1',
         'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&now=1&g=BenBenBenBen1234', 'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&g=BenBenBenBen1234',
         'POST /api/party skip=1', 'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&now=1&g=BenBenBenBen1234', 'GET ~/api/state?g=BenBenBenBen1234',
+        # 108.. a stream address of the host's own, saved straight into the radio favourites
+        'POST /api/radio_fav_add kind=stream&name=My+%3CStream%3E&url=https%3A%2F%2Fmine.example%2Flive', 'POST /api/radio_fav_add kind=stream&name=X&url=ftp%3A%2F%2Fx',
+        'POST ~/api/radio_fav_add kind=stream&name=X&url=http%3A%2F%2Fx&g=BenBenBenBen1234', 'GET /api/library/radio',
         'POST /api/play_item kind=folder&path=Music%2FOther']   # last: the folder play's slot is checked after the run
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -131,7 +134,8 @@ assert res[32]['rc'] == 0 and res[32]['body']['search'] == 'idle' and res[32]['b
 assert res[33]['why'] == 'The search results changed - search again'
 assert res[34]['rc'] == 0                                                   # already a favourite: no duplicate
 assert res[35]['rc'] == 0 and [x['name'] for x in items(36)] == ['Jazz <FM>']
-assert favs.read_text() == 'Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n', favs.read_text()   # radio.c's own file format
+assert favs.read_text().startswith('Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n'), favs.read_text()   # radio.c's own file format
+assert 'My <Stream>\thttps://mine.example/live\t' in favs.read_text(), favs.read_text()   # a stream of your own (requests 108..)
 favs.unlink()
 assert res[37]['rc'] == 0 and res[37]['body']['id'] == 2, res[37]
 assert res[38]['rc'] == 0 and res[38]['body']['added'] == 1
@@ -208,3 +212,6 @@ assert res[103]['why'].startswith('Skipping is off') and res[104]['why'].startsw
 assert res[105]['rc'] == 0 and res[106]['rc'] == -1 and res[106]['why'] == 'Connect to Wi-Fi to play radio', res[105:107]   # the radio's own refusal
 p = res[107]['body']['party']; assert p['radio'] == 1 and p['radio_now'] == 1 and p['radio_end'] == 0, p
 print('PASS Remote Control party mode: guests choose a station (now with skipping, or after the queue)')
+assert res[108]['rc'] == 0 and res[109]['rc'] == -100 - 8 and res[110]['rc'] == -100, res[108:111]   # ftp is no stream; guests keep theirs in the browser
+assert [(x['name'], x['url']) for x in items(111)] == [('Jazz <FM>', 'http://s.example/jazz'), ('My <Stream>', 'https://mine.example/live')], items(111)
+print('PASS Remote Control radio: a stream address of your own saved to the favourites')

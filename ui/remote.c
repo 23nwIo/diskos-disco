@@ -554,6 +554,14 @@ static const rc_station_t *radio_pick(const rmt_cmd_t *c, const char **why){
     return &one;
 }
 static int radio_fav_cmd(const rmt_cmd_t *c, const char **why){
+    if(c->sub == RMT_I_STREAM){                            /* a stream URL typed in: saved as it is */
+        rc_station_t st; memset(&st, 0, sizeof st);
+        snprintf(st.name, sizeof st.name, "%s", c->q); snprintf(st.url, sizeof st.url, "%s", c->name);
+        if(!rc_url_ok(st.url)){ *why = "That is not a stream address the Disc can play (http:// or https://)"; return -1; }
+        if(radio_fav_add(&st) == 0) return 0;
+        const char *e = radio_last_error(); *why = e && e[0] ? e : "Couldn't save favourites";
+        return -1;
+    }
     const rc_station_t *s = radio_pick(c, why);
     if(!s) return -1;
     rc_station_t copy = *s;

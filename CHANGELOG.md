@@ -11,6 +11,10 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   After the list ends (own player) can now also play a playlist, once, again and again or shuffled. Not yet tested on
   a Disc. [Guide](docs/REMOTE_CONTROL.md#party-mode)
 
+- Remote Control radio: **⋯ › Add a stream URL…** saves a stream address that the station directory does not have
+  (http:// or https://) to the radio favourites; party guests can add one to their own stations in their browser. Not
+  yet tested on a Disc.
+
 - Bluetooth headphones: their battery level shows in the device list ("Connected - SBC - 70%"), on their details
   screen and in Remote Control, with a note at 20 %
   and 10 % (Settings > Connectivity > Headphone Battery, on by default; over the hands-free profile). With the own

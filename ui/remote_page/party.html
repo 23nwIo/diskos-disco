@@ -10,7 +10,7 @@
 <div class='card hide' id=vw><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=100 value=0></div></div>
 <div id=qv class=hide><div id=ql>Loading…</div></div>
 <div id=lib class=hide><input id=q type=search placeholder=Search aria-label=Search>
-<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=pa class='pa hide'></button></div>
+<div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label=More class=hide>&#8943;</button><button id=pa class='pa hide'></button></div>
 <div id=list></div><button id=mo class='more hide'>Load more</button></div>
 <div id=me class='card hide blk'><div id=nmw><label for=nm>Your name (shown with your songs)</label><input id=nm maxlength=24 autocomplete=nickname></div>
 <label for=lka>Page colour</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
@@ -68,12 +68,13 @@ a.push([isr(x)?'Remove from your stations':'Save to your stations',function(){rf
 {f:isr(x),fn:function(b){rfav(x,b)}},x.url]}
 var ROOT={albums:['Albums',function(x){return[x.name,x.artist+' · '+x.count,function(){open('album',{name:x.name},x.name,song)}]}],
 artists:['Artists',function(x){return[x.name,'',function(){open('artist',{name:x.name},x.name,song)}]}],songs:['Songs',song],
-playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,song)}]}],favorites:['Favourites',song],folder:['Folders',frow(''),{path:''}],radio:['Your stations',station,{},['Find stations',function(){open('radio_search',{},'Find stations',station)}]]};
-function open(l,p,t,row,act){st.push({l:l,p:p,t:t,row:row,act:act});$('q').value='';load(0)}
+playlists:['Playlists',function(x){return[x.name,'',function(){open('playlist',{id:x.id},x.name,song)}]}],favorites:['Favourites',song],folder:['Folders',frow(''),{path:''}],radio:['Your stations',station,{},['Find stations',function(){open('radio_search',{},'Find stations',station)}],
+function(){return[['Add a stream URL…',function(){askurl(function(n,u){if(isr({url:u})){say('Already in your stations');return}rfav({name:n,url:u})})}]]}]};
+function open(l,p,t,row,act,menu){st.push({l:l,p:p,t:t,row:row,act:act,menu:menu});$('q').value='';load(0)}
 function cur(){return st[st.length-1]}
 function load(off){var v=cur(),p={};for(var k in v.p)p[k]=v.p[k];if($('q').value)p.q=$('q').value;p.offset=off;p.limit=100;
 $('ti').textContent=v.t;$('bk').style.visibility=st.length>1?'visible':'hidden';if(!off){items=[];$('list').textContent='Loading…'}
-$('pa').classList.toggle('hide',!v.act);if(v.act)$('pa').textContent=v.act[0];
+$('pa').classList.toggle('hide',!v.act);$('hm').classList.toggle('hide',!v.menu);if(v.act)$('pa').textContent=v.act[0];
 $('q').placeholder=v.l==='radio_search'?'Search all stations':'Search';if(v.l==='radio_search'){rsearch(v);return}
 var L=v.l==='favorites'?FV:v.l==='radio'?FR:null;
 (L?Promise.resolve({ok:true,items:L.filter(function(f){return rmt([f.title,f.artist,f.album,f.name,f.country].join(' '),$('q').value)})}):get('api/library/'+v.l+'?'+enc(p))).then(function(j){if(L)j.total=j.items.length;if(v!==cur())return;if(!j.ok){$('list').textContent='';say(j.message||'Not possible right now');return}
@@ -97,9 +98,9 @@ m.textContent=[x.a,x.d?fm(x.d):'',x.mine?'yours':x.by?'by '+x.by:''].filter(Bool
 if(!j.items.length)l.textContent='Nothing queued yet - add a song!'}).catch(function(){say('Player not reachable')})}
 function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});
 ['np','qv','lib','me'].forEach(function(i){$(i).classList.add('hide')});$(v==='q'?'qv':ROOT[v]?'lib':v).classList.remove('hide');say('');
-if(v==='q'){qver=-1;$('ql').textContent='Loading…';poll();return}if(v==='np'){poll();return}if(ROOT[v]){st=[];open(v,ROOT[v][2]||{},ROOT[v][0],ROOT[v][1],ROOT[v][3])}}
+if(v==='q'){qver=-1;$('ql').textContent='Loading…';poll();return}if(v==='np'){poll();return}if(ROOT[v]){st=[];open(v,ROOT[v][2]||{},ROOT[v][0],ROOT[v][1],ROOT[v][3],ROOT[v][4])}}
 [].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
-$('pa').onclick=function(){var a=cur().act;if(a)a[1]()};$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};$('shb').onclick=shut;$('mo').onclick=function(){load(items.length)};
+$('pa').onclick=function(){var a=cur().act;if(a)a[1]()};$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};$('shb').onclick=shut;$('mo').onclick=function(){load(items.length)};
 var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},cur().l==='radio_search'?600:300)};
 $('nm').value=NM;$('nm').onchange=function(){NM=$('nm').value.trim();while(new TextEncoder().encode(NM).length>24)NM=NM.slice(0,-1);$('nm').value=NM;try{localStorage.setItem('pn',NM)}catch(e){}poll();if(NM)say('Hi '+NM+'!',1)};
 $('lka').value=LK.acc;$('lkf').value=LK.fav;$('lka').onchange=function(){LK.acc=$('lka').value;look()};$('lkf').onchange=function(){LK.fav=$('lkf').value;look();qver=-1};

@@ -23,5 +23,8 @@ function lpick(m,then){fetch('api/library/'+(m==3?'playlists':'radio')+'?limit=5
 if(m==3)sheet(x.name,[['In order, once',0],['In order, again and again',1],['Shuffled',2]].map(function(f){return[f[0],function(){cmd('list_end',enc({mode:3,pl:x.id,flags:f[1]})).then(function(ok){if(ok)say('Plays '+x.name+' after the list',1);if(then)then()})}]}));
 else cmd('list_end',enc({mode:2,pos:x.pos,url:x.url})).then(function(ok){if(ok)say('Plays '+x.name+' after the list',1);if(then)then()})}]});
 if(!a.length){say(m==3?'No playlists yet':'No radio favourites yet - save stations in the Radio tab');return}sheet(m==3?'Playlist after the list':'Station after the list',a)}).catch(function(){say('Player not reachable')})}
+/* a stream address of your own (not in the station directory): its name and URL */
+function askurl(then){var u=prompt('Stream address (http:// or https://)','https://');if(!u||!/^https?:\/\/./i.test(u.trim())){if(u)say('That is not a stream address (http:// or https://)');return}
+var n=prompt('Name of the station',u.trim().replace(/^https?:\/\//i,'').split(/[/?]/)[0]);if(!n||!n.trim())return;then(n.trim(),u.trim())}
 function shut(){$('sh').classList.add('hide');$('shb').classList.add('hide')}
 look();try{matchMedia('(prefers-color-scheme: light)').addEventListener('change',look)}catch(e){}
