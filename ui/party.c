@@ -2,7 +2,8 @@
 /* Copyright (C) 2026 diskOS contributors */
 /* Party mode: guests use a link of their own, http://<Disc>:8088/<party name>/, with a reduced page (party.html):
  * what plays now, the queue, the library to add songs from, and the volume - each only as far as the host allows on
- * the admin page (System > Party, GET/POST api/party). Nothing changes on the Disc's own screens.
+ * the admin page (System > Party, GET/POST api/party). Nothing changes on the Disc's own screens. With "See what plays
+ * now" off, the queue shows other guests' songs without title, artist or length (only the guest's own in full).
  *
  * Guests are told apart by a random id their browser makes and keeps (g=); a private window is a new guest. The ids,
  * names and the songs each queued are kept in memory only: they start afresh after a restart. The settings are kept on
@@ -177,9 +178,10 @@ static char *queue_json(int who){
         const qv_entry_t *e = &v->e[i];
         if(e->kind == QV_NEXT || ((e->kind == QV_CUR || e->kind == QV_OTHER) && !np)) continue;   /* the host's own list stays theirs */
         int w = e->kind == QV_QUEUE ? queue_item_who(e->idx) : e->kind == QV_CUR ? queue_now_who() : 0;
-        rmt_buf_printf(&b, "%s{\"k\":\"%s\",\"d\":%d,\"mine\":%s,\"t\":", first ? "" : ",", e->kind == QV_QUEUE ? "queue" : "cur",
-                       e->dur_ms, who && w == who ? "true" : "false");
-        rmt_buf_str(&b, e->title); rmt_buf_put(&b, ",\"a\":"); rmt_buf_str(&b, e->artist);
+        int mine = who && w == who, hide = !np && !mine;   /* a music quiz: others' queued songs without title (Jo, 2026-11-16) */
+        rmt_buf_printf(&b, "%s{\"k\":\"%s\",\"d\":%d,\"mine\":%s,\"hidden\":%s,\"t\":", first ? "" : ",", e->kind == QV_QUEUE ? "queue" : "cur",
+                       hide ? 0 : e->dur_ms, mine ? "true" : "false", hide ? "true" : "false");
+        rmt_buf_str(&b, hide ? "" : e->title); rmt_buf_put(&b, ",\"a\":"); rmt_buf_str(&b, hide ? "" : e->artist);
         rmt_buf_put(&b, ",\"by\":"); rmt_buf_str(&b, names ? party_guest_name(w) : "");
         rmt_buf_put(&b, "}");
         first = 0;

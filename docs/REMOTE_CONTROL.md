@@ -87,7 +87,7 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 | Party mode | off | Off: the guests' link answers 404. |
 | Party name | — | The guests' link: at least 2 letters, digits, `-` or `_` (upper and lower case differ). A new name locks out the old link. **Copy** copies the link. |
 | Change the volume | on | Guests get a volume slider. **Up to N %**: their 100 % is N % of the Disc's volume (scaled, so their slider still goes from 0 to 100). |
-| See what plays now | on | Off: title, artist, cover and position are hidden (for a music quiz). |
+| See what plays now | on | Off: title, artist, cover and position are hidden (for a music quiz), and the queue shows other guests' and the host's songs as "A secret song" (with who queued it); each guest still sees their own songs in full. |
 | See the queue | on | Guests see the song playing now and the queued songs, with who queued them; their own are marked with a heart or a star. The host's own list after the queue (Up next) stays hidden. |
 | Skip songs | off | Guests get a Next button. |
 | Songs each guest may have in the queue | 3 | A place frees up once one of their songs starts playing. |

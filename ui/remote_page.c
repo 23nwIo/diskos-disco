@@ -514,7 +514,7 @@ const char RMT_PARTY_HTML[] =
 "/* the queue: what plays now and what guests (and the host) queued, in play order */\n"
 "function qload(){get('api/queue').then(function(j){if(V!=='q')return;if(!j.ok){$('ql').textContent=j.message||'';return}qver=j.ver;var l=$('ql'),h=null;l.textContent='';\n"
 "var H={cur:'Playing now',queue:'Queued'};j.items.forEach(function(x){if(H[x.k]!==h){h=H[x.k];var e=document.createElement('h3');e.className='qh';e.textContent=h;l.appendChild(e)}\n"
-"var b=document.createElement('div');b.className='r';var t=document.createElement('b'),m=document.createElement('small');t.innerHTML=mark(x.mine);t.appendChild(document.createTextNode(x.t||'-'));\n"
+"var b=document.createElement('div');b.className='r';var t=document.createElement('b'),m=document.createElement('small');t.innerHTML=mark(x.mine);t.appendChild(document.createTextNode(x.hidden?'A secret song':x.t||'-'));\n"
 "m.textContent=[x.a,x.d?fm(x.d):'',x.mine?'yours':x.by?'by '+x.by:''].filter(Boolean).join(' · ');b.appendChild(t);b.appendChild(m);l.appendChild(b)});\n"
 "if(!j.items.length)l.textContent='Nothing queued yet - add a song!'}).catch(function(){say('Player not reachable')})}\n"
 "function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});\n"

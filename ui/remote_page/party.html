@@ -73,7 +73,7 @@ var t=document.createElement('b');t.textContent=r[0];b.appendChild(t);var m=docu
 /* the queue: what plays now and what guests (and the host) queued, in play order */
 function qload(){get('api/queue').then(function(j){if(V!=='q')return;if(!j.ok){$('ql').textContent=j.message||'';return}qver=j.ver;var l=$('ql'),h=null;l.textContent='';
 var H={cur:'Playing now',queue:'Queued'};j.items.forEach(function(x){if(H[x.k]!==h){h=H[x.k];var e=document.createElement('h3');e.className='qh';e.textContent=h;l.appendChild(e)}
-var b=document.createElement('div');b.className='r';var t=document.createElement('b'),m=document.createElement('small');t.innerHTML=mark(x.mine);t.appendChild(document.createTextNode(x.t||'-'));
+var b=document.createElement('div');b.className='r';var t=document.createElement('b'),m=document.createElement('small');t.innerHTML=mark(x.mine);t.appendChild(document.createTextNode(x.hidden?'A secret song':x.t||'-'));
 m.textContent=[x.a,x.d?fm(x.d):'',x.mine?'yours':x.by?'by '+x.by:''].filter(Boolean).join(' · ');b.appendChild(t);b.appendChild(m);l.appendChild(b)});
 if(!j.items.length)l.textContent='Nothing queued yet - add a song!'}).catch(function(){say('Player not reachable')})}
 function tab(v){V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});

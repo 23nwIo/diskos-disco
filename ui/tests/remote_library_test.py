@@ -71,6 +71,7 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST ~/api/next g=BenBenBenBen1234', 'POST ~/api/volume value=50&g=BenBenBenBen1234', 'POST ~/api/eq preset=1', 'GET ~/system',
         'POST ~/api/queue action=add&kind=file&path=Music%2FOther%2F01+Solo.flac&g=CarlCarlCarl1234', 'POST ~/api/play_item kind=radio_hit&pos=1&url=http%3A%2F%2Fx&g=CarlCarlCarl1234',
         'GET ~/api/state?g=AnnaAnnaAnna1234', 'GET /api/party', 'POST /api/party name=x',
+        'POST /api/party np=0', 'GET ~/api/queue?g=BenBenBenBen1234',
         'POST /api/play_item kind=folder&path=Music%2FOther']   # last: the folder play's slot is checked after the run
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -194,3 +195,6 @@ assert res[94]['body']['party']['mine'] == 2 and res[94]['body']['party']['left'
 assert sorted((x['name'], x['queued']) for x in res[95]['body']['guests']) == [('', 1), ('Anna', 2), ('Ben', 1)], res[95]
 assert res[96]['rc'] == -100 - 8, res[96]                                        # a name of one letter
 print('PASS Remote Control party mode: settings on the card, guest link, total and turns, repeats, names, scaled volume, guests kept out of the rest')
+q = res[98]['body']['items']   # "See what plays now" off: no Playing now, others' songs without title (a music quiz)
+assert res[97]['rc'] == 0 and [(x['t'], x['a'], x['d'], x['hidden'], x['by']) for x in q] == [('', '', 0, True, 'Anna'), ('Nuit', 'Céline', 200004, False, 'Ben'), ('', '', 0, True, 'a guest'), ('', '', 0, True, 'Anna')], q
+print('PASS Remote Control party mode: a secret queue when guests may not see what plays')
