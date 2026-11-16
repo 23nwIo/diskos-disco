@@ -33,6 +33,7 @@
 #include "radio.h"
 #include "scanner.h"
 #include "folderbrowser.h"
+#include "queueview.h"
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -48,7 +49,6 @@
 
 void ui_loop_wake(void);          /* main.c */
 
-#define VIEW_MAX   500             /* Up Next rows shown to clients */
 #define FULL_TAGS  100             /* queue entries answered with the library's full tags (one lookup each); the rest with what the list holds */
 #define STAGE_MAX  2000            /* songs in a new list (clear + add) */
 #define ID_QUEUE   1000000         /* MPD song ids: Up Next rows use the player's LIST_SONG_0.ID, the rest these bases */
@@ -218,21 +218,19 @@ static int stage_cb(void *ud, const mdb_row_t *r){
 
 /* ---------------------------------------------------------------- the queue view */
 static ventry_t *g_view; static int g_nview;
-static mdb_qrow_t *g_rows;
 static struct { unsigned path_seq, qgen, sgen; int pos_id, mode, have, sig_src; char radio[16]; uint32_t at; int valid; } g_vkey;
 static unsigned g_plver = 1, g_vsig;
 static uint32_t g_ev_pending;                         /* events found while building (sent by the pump) */
 static void view_invalidate(void){ g_vkey.valid = 0; }
 static ventry_t *vadd(int kind){
-    if(g_nview >= VIEW_MAX + 400 + 2) return NULL;
+    if(g_nview >= QV_CAP) return NULL;
     ventry_t *v = &g_view[g_nview++]; memset(v, 0, sizeof *v); v->kind = kind; return v;
 }
 static unsigned fnv(unsigned h, const void *p, size_t n){ const unsigned char *c = p; while(n--){ h ^= *c++; h *= 16777619u; } return h; }
 static void view_build(const rmt_state_t *s){
     g_nview = 0;
-    if(!g_view) g_view = calloc(VIEW_MAX + 400 + 2, sizeof *g_view);
-    if(!g_rows) g_rows = calloc(VIEW_MAX + 1, sizeof *g_rows);
-    if(!g_view || !g_rows) return;
+    if(!g_view) g_view = calloc(QV_CAP, sizeof *g_view);
+    if(!g_view) return;
     if(g_st.on){
         for(int i = 0; i < g_st.n; i++){
             ventry_t *v = vadd(V_STAGED); if(!v) break;
@@ -242,54 +240,16 @@ static void view_build(const rmt_state_t *s){
         }
         return;
     }
-    int local = !strcmp(s->source, "local");
-    if(!local){                                          /* web radio, Music Assistant, another mode: the one thing playing */
-        if(!s->has_track && strcmp(s->source, "radio")) return;
-        ventry_t *v = vadd(V_OTHER);
-        int radio = !strcmp(s->source, "radio");
-        v->id = ID_OTHER; v->ord = radio;                /* V_OTHER: ord 1 = a station (artist holds its name) */
-        v->dur_ms = radio ? 0 : (int)s->duration_ms;     /* a stream has no length (the player reports a made-up one) */
-        snprintf(v->path, sizeof v->path, "%s", s->station_url[0] ? s->station_url : "");
-        /* a station: the song the stream names ("Artist - Title") or nothing; the player's own tags are only our
-         * station name again (radio.c sets them for the Disc's screens) */
-        snprintf(v->title, sizeof v->title, "%.*s", (int)sizeof v->title - 1, radio ? s->stream_title : s->title);
-        snprintf(v->artist, sizeof v->artist, "%s", radio ? s->station : s->artist);
-        return;
-    }
-    track_state_t st; ipc_get_state(&st);
-    int n = 0, more = 0, mode = ui_play_mode_now();
-    if(st.have_track && st.path[0] && !mdb_is_book_path(st.path) && mode >= 0)
-        n = mdb_upnext(mode == 1, st.pos_id, st.path, g_rows, VIEW_MAX + 1, &more);
-    if(n > 0){
-        ventry_t *v = vadd(V_CUR);
-        v->id = g_rows[0].base_id; v->base_id = g_rows[0].base_id; v->ord = g_rows[0].ord; v->dur_ms = g_rows[0].dur_ms;
-        snprintf(v->path, sizeof v->path, "%s", g_rows[0].path);
-        snprintf(v->title, sizeof v->title, "%s", st.title[0] ? st.title : g_rows[0].title);
-        snprintf(v->artist, sizeof v->artist, "%s", st.artist[0] ? st.artist : g_rows[0].artist);
-    } else if(st.have_track){
-        ventry_t *v = vadd(V_CUR);
-        v->id = st.pos_id > 0 ? st.pos_id : ID_OTHER + 1; v->base_id = st.pos_id; v->dur_ms = (int)st.duration_ms;
-        snprintf(v->path, sizeof v->path, "%s", st.path);
-        snprintf(v->title, sizeof v->title, "%s", st.title); snprintf(v->artist, sizeof v->artist, "%s", st.artist);
-    }
-    int qn = queue_count(), skip = 1;
-    char qpath[256];
-    int active = queue_active();
-    for(int i = 0; i < qn; i++){
-        ventry_t *v = vadd(V_QUEUE); if(!v) break;
-        long dur = 0;
-        queue_item(i, qpath, sizeof qpath, v->title, sizeof v->title, v->artist, sizeof v->artist, &dur);
-        snprintf(v->path, sizeof v->path, "%s", qpath);
-        v->id = ID_QUEUE + i; v->idx = i; v->dur_ms = (int)dur;
-        /* while the player plays the queue's copy, the queued songs are already in its list right after the current
-         * one: show them once, as queue entries */
-        if(active && skip < n && !strcmp(g_rows[skip].path, qpath)) skip++;
-    }
-    for(int i = skip; i < n; i++){
-        ventry_t *v = vadd(V_NEXT); if(!v) break;
-        v->id = g_rows[i].base_id; v->base_id = g_rows[i].base_id; v->ord = g_rows[i].ord; v->dur_ms = g_rows[i].dur_ms;
-        snprintf(v->path, sizeof v->path, "%s", g_rows[i].path);
-        snprintf(v->title, sizeof v->title, "%s", g_rows[i].title); snprintf(v->artist, sizeof v->artist, "%s", g_rows[i].artist);
+    const qv_view_t *q = qv_view(s, 1);                  /* current song, the diskOS Queue, Up Next (queueview.c) */
+    if(!q) return;
+    for(int i = 0; i < q->n; i++){
+        const qv_entry_t *e = &q->e[i];
+        ventry_t *v = vadd(e->kind == QV_CUR ? V_CUR : e->kind == QV_QUEUE ? V_QUEUE : e->kind == QV_NEXT ? V_NEXT : V_OTHER);
+        if(!v) break;
+        v->base_id = e->base_id; v->ord = e->ord; v->idx = e->idx; v->dur_ms = e->dur_ms;
+        v->id = v->kind == V_OTHER ? ID_OTHER : v->kind == V_QUEUE ? ID_QUEUE + e->idx : e->base_id > 0 ? e->base_id : ID_OTHER + 1;
+        snprintf(v->path, sizeof v->path, "%s", e->path);
+        snprintf(v->title, sizeof v->title, "%s", e->title); snprintf(v->artist, sizeof v->artist, "%s", e->artist);
     }
 }
 /* The view, rebuilt when what it depends on changed (or after 3 s: Up Next can change under us). Bumps the playlist
@@ -372,16 +332,13 @@ static int play_pos(int pos, const char **msg){
     switch(v->kind){
     case V_STAGED: return play_staged(v->idx, msg);
     case V_CUR: case V_OTHER: return play_cmd(msg);
-    case V_QUEUE:
-        if(!ui_local_playback_allowed()){ *msg = NOT_LOCAL; return MPD_ACK_SYSTEM; }
-        queue_jump(v->idx); view_invalidate(); return 0;
-    case V_NEXT: {
-        if(!ui_local_playback_allowed()){ *msg = NOT_LOCAL; return MPD_ACK_SYSTEM; }
-        int ord = mdb_queue_ord(v->base_id, v->path);
-        if(ord < 0){ *msg = "The player is busy - try again"; return MPD_ACK_SYSTEM; }
-        if(ord == 0 || (v->ord && ord != v->ord)){ view_invalidate(); *msg = "The list changed - read it again"; return MPD_ACK_NO_EXIST; }
-        if(ui_queue_jump(ord)){ *msg = "The player refused - see the Disc"; return MPD_ACK_SYSTEM; }
-        view_invalidate(); return 0; }
+    case V_QUEUE: case V_NEXT: {                         /* queueview.c: the same checks as the web page */
+        qv_entry_t e; memset(&e, 0, sizeof e);
+        e.kind = v->kind == V_QUEUE ? QV_QUEUE : QV_NEXT; e.idx = v->idx; e.base_id = v->base_id; e.ord = v->ord;
+        snprintf(e.path, sizeof e.path, "%s", v->path);
+        int rc = qv_play(&e, msg);
+        view_invalidate();
+        return rc == 0 ? 0 : rc == QV_E_CHANGED ? MPD_ACK_NO_EXIST : MPD_ACK_SYSTEM; }
     }
     *msg = "Bad song index"; return MPD_ACK_ARG;
 }
