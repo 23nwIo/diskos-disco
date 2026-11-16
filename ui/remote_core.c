@@ -305,6 +305,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_LIST_END) return "list_end";
     if(k == RMT_CMD_PARTY_STATE) return "party_state";
     if(k == RMT_CMD_PARTY) return "party";
+    if(k == RMT_CMD_PARTY_RADIO) return "party_radio";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -582,7 +583,17 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     const char *seg = r->path + 1, *slash = strchr(seg, '/');
     size_t sl = slash ? (size_t)(slash - seg) : strlen(seg);
     if(sl != strlen(party) || strncmp(seg, party, sl)) return rt;
-    rmt_route_t a = route_rest(r, slash);
+    rmt_route_t a;
+    if(slash && !strcmp(slash, "/api/radio")){                     /* the guests' own: a station by name and URL */
+        memset(&a, 0, sizeof a);
+        long now = 0; int pn = param_str(r, "name", a.cmd.q, sizeof a.cmd.q), pu = param_str(r, "url", a.cmd.name, sizeof a.cmd.name);
+        int pw = param(r, "now", &now);
+        int ok = pn == 0 && pu == 0 && a.cmd.q[0] && (!strncmp(a.cmd.name, "http://", 7) || !strncmp(a.cmd.name, "https://", 8)) && pw != -2 && now >= 0 && now <= 1;
+        if(strcmp(r->method, "POST")) a.kind = RMT_R_BAD_METHOD;
+        else if(!ok) a.kind = RMT_R_BAD_PARAM;
+        else { a.kind = RMT_R_CMD; a.cmd.kind = RMT_CMD_PARTY_RADIO; a.cmd.arg = now; }
+        if(a.kind != RMT_R_CMD) memset(&a.cmd, 0, sizeof a.cmd);
+    } else a = route_rest(r, slash);
     int ok = 0;
     switch(a.kind){
     case RMT_R_REDIRECT: case RMT_R_BAD_METHOD: case RMT_R_BAD_PARAM: ok = 1; break;
@@ -590,12 +601,11 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     case RMT_R_STATE: a.kind = RMT_R_CMD; memset(&a.cmd, 0, sizeof a.cmd); a.cmd.kind = RMT_CMD_PARTY_STATE; ok = 1; break;
     case RMT_R_CMD:
         switch(a.cmd.kind){
-        case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: ok = 1; break;
+        case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: case RMT_CMD_PARTY_RADIO: ok = 1; break;
         case RMT_CMD_VOLUME:                                       /* the guests' scale: 100 = the host's maximum */
             ok = 1; if(a.cmd.arg > 100){ memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; }
             break;
         case RMT_CMD_QUEUE: ok = a.cmd.sub == RMT_Q_LIST || (a.cmd.sub == RMT_Q_ADD && (a.cmd.item == RMT_I_SONG || a.cmd.item == RMT_I_FILE)); break;
-        case RMT_CMD_PLAY_ITEM: ok = a.cmd.sub == RMT_I_RADIO_HIT; break;
         case RMT_CMD_BROWSE:
             ok = a.cmd.sub != RMT_L_RADIO && a.cmd.sub != RMT_L_FAVORITES;   /* the whole library, not the host's favourites (guests keep their own) */
             break;

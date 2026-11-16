@@ -72,6 +72,9 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST ~/api/queue action=add&kind=file&path=Music%2FOther%2F01+Solo.flac&g=CarlCarlCarl1234', 'POST ~/api/play_item kind=radio_hit&pos=1&url=http%3A%2F%2Fx&g=CarlCarlCarl1234',
         'GET ~/api/state?g=AnnaAnnaAnna1234', 'GET /api/party', 'POST /api/party name=x',
         'POST /api/party np=0', 'GET ~/api/queue?g=BenBenBenBen1234', 'GET ~/api/library/album?name=Other&g=BenBenBenBen1234', 'GET /api/library/album?name=Other',
+        'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&g=BenBenBenBen1234', 'POST /api/party radio=1',
+        'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&now=1&g=BenBenBenBen1234', 'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&g=BenBenBenBen1234',
+        'POST /api/party skip=1', 'POST ~/api/radio name=Jazz&url=http%3A%2F%2Fs.example%2Fj&now=1&g=BenBenBenBen1234', 'GET ~/api/state?g=BenBenBenBen1234',
         'POST /api/play_item kind=folder&path=Music%2FOther']   # last: the folder play's slot is checked after the run
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -190,7 +193,7 @@ assert res[88]['rc'] == -1 and res[88]['why'] == 'Skipping is off at this party'
 assert res[89]['rc'] == 0, res[89]
 assert res[90]['rc'] == -100 and res[91]['rc'] == -100, res[90:92]               # 404: not for guests
 assert res[92]['rc'] == 0 and res[92]['body']['place'] == 3, res[92]             # a file from Folders: Carl's first song joins round 1
-assert res[93]['rc'] == -1 and res[93]['why'] == 'Radio is off at this party', res[93]
+assert res[93]['rc'] == -100, res[93]                                            # search hits are picked through api/radio now
 assert res[94]['body']['party']['mine'] == 2 and res[94]['body']['party']['left'] == 0 and res[94]['body']['party']['you'] == 'Anna', res[94]
 assert sorted((x['name'], x['queued']) for x in res[95]['body']['guests']) == [('', 1), ('Anna', 2), ('Ben', 1)], res[95]
 assert res[96]['rc'] == -100 - 8, res[96]                                        # a name of one letter
@@ -200,3 +203,8 @@ assert res[97]['rc'] == 0 and [(x['t'], x['a'], x['d'], x['hidden'], x['by']) fo
 print('PASS Remote Control party mode: a secret queue when guests may not see what plays')
 assert [x['fav'] for x in res[99]['body']['items']] == [0] and [x['fav'] for x in res[100]['body']['items']] == [True], res[99:101]   # the host's favourites stay theirs
 print('PASS Remote Control party mode: the host\'s favourites hidden from guests')
+assert res[101]['why'] == "The host doesn't let guests choose the radio" and res[102]['rc'] == 0, res[101:103]
+assert res[103]['why'].startswith('Skipping is off') and res[104]['why'].startswith('Only at once here'), res[103:105]   # no own player on a host
+assert res[105]['rc'] == 0 and res[106]['rc'] == -1 and res[106]['why'] == 'Connect to Wi-Fi to play radio', res[105:107]   # the radio's own refusal
+p = res[107]['body']['party']; assert p['radio'] == 1 and p['radio_now'] == 1 and p['radio_end'] == 0, p
+print('PASS Remote Control party mode: guests choose a station (now with skipping, or after the queue)')

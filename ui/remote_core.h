@@ -48,6 +48,7 @@ typedef enum {
     RMT_CMD_OUTPUTS,         /* Settings > Audio > Outputs: sub = rmt_out_t, arg = its value */
     RMT_CMD_QUEUE,           /* what plays next (queueview.h): sub = rmt_queue_t; see api/queue below */
     RMT_CMD_PARTY_STATE,     /* a guest's view of the state (party page; JSON answer) */
+    RMT_CMD_PARTY_RADIO,     /* a guest picks a station (their own list or a search hit): q = name, name = url, arg 1 now / 0 when the queue is empty */
     RMT_CMD_PARTY,           /* the party settings: arg 0 read (JSON answer), 1 change (party[] / name; -1 = leave) */
     RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
                               * (1-based, 0 = keep the station), name = its url (checked) */

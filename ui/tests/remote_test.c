@@ -85,7 +85,12 @@ static void test_party(void){
     CHECK(preq("GET", "/Fest_1/api/library/playlists", NULL).kind == RMT_R_CMD && preq("GET", "/Fest_1/api/library/folder?path=Music", NULL).kind == RMT_R_CMD);
     CHECK(preq("GET", "/Fest_1/api/library/radio", NULL).kind == RMT_R_NOT_FOUND && preq("GET", "/Fest_1/api/library/favorites", NULL).kind == RMT_R_NOT_FOUND);
     CHECK(preq("POST", "/Fest_1/api/play_item", "kind=song&song_id=1").kind == RMT_R_NOT_FOUND);
-    CHECK(preq("POST", "/Fest_1/api/play_item", "kind=radio_hit&pos=1&url=http%3A%2F%2Fx").kind == RMT_R_CMD);
+    CHECK(preq("POST", "/Fest_1/api/play_item", "kind=radio_hit&pos=1&url=http%3A%2F%2Fx").kind == RMT_R_NOT_FOUND);
+    r = preq("POST", "/Fest_1/api/radio", "name=Jazz+FM&url=https%3A%2F%2Fs.example%2Fj&now=1&g=abcdefgh12");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY_RADIO && r.cmd.arg == 1 && !strcmp(r.cmd.q, "Jazz FM") && !strcmp(r.cmd.name, "https://s.example/j") && r.cmd.guest);
+    CHECK(preq("POST", "/Fest_1/api/radio", "name=X&url=file%3A%2F%2F%2Fetc%2Fpasswd").kind == RMT_R_BAD_PARAM && preq("POST", "/Fest_1/api/radio", "url=http%3A%2F%2Fx").kind == RMT_R_BAD_PARAM);
+    CHECK(preq("GET", "/Fest_1/api/radio", NULL).kind == RMT_R_BAD_METHOD && req("POST", p("/api/radio"), "name=X&url=http%3A%2F%2Fx").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/radio_search", "q=jazz").kind == RMT_R_CMD && preq("GET", "/Fest_1/api/library/radio_search", NULL).kind == RMT_R_CMD);
     /* the host's settings */
     r = req("POST", p("/api/party"), "on=1&name=Fest_1&maxvol=80&total=5");
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY && r.cmd.arg == 1 && r.cmd.party[RMT_P_ON] == 1 && r.cmd.party[RMT_P_MAXVOL] == 80
@@ -468,9 +473,9 @@ static void fake_party(const rmt_cmd_t *c, rmt_state_t *s){
         rmt_buf_put(&b, "\"own_player\":true,\"name\":"); rmt_buf_str(&b, g_pname);
         rmt_buf_put(&b, "},\"guests\":[{\"name\":\"Anna <A>\",\"queued\":2,\"seen_s\":4},{\"name\":\"\",\"queued\":0,\"seen_s\":300}]}");
     } else if(c->kind == RMT_CMD_PARTY_STATE){
-        rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"you\":",
+        rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"you\":",
                        g_pv[RMT_P_NP], g_pv[RMT_P_QUEUE], g_pv[RMT_P_VOL], g_pv[RMT_P_SKIP], g_pv[RMT_P_RADIO], g_pv[RMT_P_NAMES], g_pv[RMT_P_TOTAL], g_pv[RMT_P_CONSEC],
-                       g_pv[RMT_P_REPEAT], g_pq, g_pv[RMT_P_TOTAL] > g_pq ? g_pv[RMT_P_TOTAL] - g_pq : 0);
+                       g_pv[RMT_P_REPEAT], g_pq, g_pv[RMT_P_TOTAL] > g_pq ? g_pv[RMT_P_TOTAL] - g_pq : 0, g_pv[RMT_P_RADIO], g_pv[RMT_P_RADIO] && g_pv[RMT_P_SKIP]);
         rmt_buf_str(&b, c->gname);
         rmt_buf_printf(&b, "},\"playing\":true,\"has_track\":true,\"controllable\":true,\"source\":\"local\",\"volume\":%d,\"title\":", s->volume * 100 / 120);
         rmt_buf_str(&b, s->title); rmt_buf_put(&b, ",\"artist\":\"Artist\",\"album\":\"Album\",\"station\":\"\",\"stream_title\":\"\",\"art\":\"a1\",\"position_ms\":61000,\"duration_ms\":200000,\"by\":\"Anna <A>\",\"by_you\":false");

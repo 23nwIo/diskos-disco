@@ -94,11 +94,15 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 | Songs of one guest in a row | 1 | Guests take turns: a guest's new song joins their next round instead of the end of the queue (Anna, Ben, Anna, Ben, …), never before the host's songs. When it would still play right after the same guest's song, it is refused, unless only that guest's songs are waiting. |
 | Add a song that is already queued | off | Off: a song already in the queue is refused. |
 | Give their name | on | Guests can enter a name (on their **You** tab), shown with their songs on both pages. |
-| Pick the radio station | off | Guests can search stations (the Disc's station search) and pick one; it becomes the station **When the queue is empty**. It never starts at once. Own player only. |
+| Choose a radio station | off | Guests pick a station from their Radio tab: **Play when the queue is empty** makes it the station **When the queue is empty** (own player only), **Play now** switches to it at once, also from a station already playing (only when they may skip songs too). |
 | When the queue is empty | — | The same setting as **After the list ends**: stop, random songs from the library, a radio station or a playlist. |
 
 **Guests** lists the guests the Disc has seen, with their names, how many songs each has queued and when they were last
 seen.
+
+Guests always have a Radio tab, the Remote page's station browser: **Find stations** searches the station directory,
+the heart saves a station to their own list (kept in their browser, like their favourite songs). Playing one needs the
+setting above.
 
 Guests can browse the whole library (songs, albums, artists, playlists, folders) and add single songs,
 one at a time; a file in Folders that holds several tracks (a CUE or ISO image) is added from Albums or Songs instead.
@@ -205,7 +209,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
-The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio`), `POST api/radio_search` and `POST api/play_item` (`kind=radio_hit`: the station when the queue is empty). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
+The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio` or `favorites`), `POST api/radio_search` and their own `POST api/radio` with `name`, `url` (http or https) and `now=0|1` (0: the station when the queue is empty; 1: play it now, needs skipping too). The state's `party` also has `radio_end` and `radio_now` (what picking a station may do). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
 (`message` says why), 503 another command is still running, 504 the UI did not answer in time.

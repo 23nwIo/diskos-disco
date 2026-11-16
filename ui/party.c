@@ -9,7 +9,7 @@
  * names and the songs each queued are kept in memory only: they start afresh after a restart. The settings are kept on
  * the SD card (Jo, 2026-11-16), in .diskos/state/party.conf (sdstate.h), written only when the host changes them;
  * without a card the defaults apply and party mode is off. A guest's radio station becomes the station after the queue
- * (After the List Ends, radio.c) and never starts at once: guests never cut a song short unless skipping is allowed.
+ * (After the List Ends, radio.c), or plays at once when skipping is allowed too: guests never cut a song short otherwise.
  *
  * Main thread only (remote.c's dispatch calls party_dispatch for every guest request). */
 #include "party.h"
@@ -130,8 +130,10 @@ static int admin(const rmt_cmd_t *c, const char **why, char **body){
     return 0;
 }
 
-/* Guests' radio: only with the own player, whose After the List Ends plays the station when the queue is empty */
-static int radio_ok(void){ opl_outputs_t o; int au; return cfg_val(RMT_P_RADIO) && settings_outputs_state(&o, &au) == 0; }
+/* Guests' radio: with "radio" on they pick a station - it plays when the queue is empty (own player: After the List
+ * Ends), or at once when they may also skip songs (Jo, 2026-11-16). Searching and their own station list always work. */
+static int own_player(void){ opl_outputs_t o; int au; return settings_outputs_state(&o, &au) == 0; }
+static int radio_ok(void){ return cfg_val(RMT_P_RADIO); }
 
 /* ---------------------------------------------------------------- what guests see */
 static int scale_down(int v, int vmax, int maxpct){       /* the Disc's volume -> the guests' 0..100 */
@@ -144,9 +146,10 @@ static char *state_json(int who){
     int np = cfg_val(RMT_P_NP), names = cfg_val(RMT_P_NAMES), total = cfg_val(RMT_P_TOTAL), mine = who ? queued_by(who) : 0;
     rmt_buf_t b; memset(&b, 0, sizeof b);
     rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,"
-                   "\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"you\":",
+                   "\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"you\":",
                    np, cfg_val(RMT_P_QUEUE), cfg_val(RMT_P_VOL), cfg_val(RMT_P_SKIP), radio_ok(), names,
-                   total, cfg_val(RMT_P_CONSEC), cfg_val(RMT_P_REPEAT), mine, total > mine ? total - mine : 0);
+                   total, cfg_val(RMT_P_CONSEC), cfg_val(RMT_P_REPEAT), mine, total > mine ? total - mine : 0,
+                   radio_ok() && own_player(), radio_ok() && cfg_val(RMT_P_SKIP));
     rmt_buf_str(&b, who && names ? g_guest[who - 1].name : "");
     rmt_buf_printf(&b, "},\"playing\":%s,\"has_track\":%s,\"controllable\":%s,\"source\":",
                    s.playing ? "true" : "false", np && s.has_track ? "true" : "false", s.controllable ? "true" : "false");
@@ -260,18 +263,24 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
         *body = queue_json(who); if(!*body) *why = "Out of memory";
         return *body ? 0 : -1;
     case RMT_CMD_BROWSE:
-        if(c->sub == RMT_L_RADIO_HITS && !radio_ok()){ *why = "Radio is off at this party"; return -1; }
         if(remote_exec(&x, why, body)) return -1;
         for(char *f = *body; f && (f = strstr(f, "\"fav\":true")); f += 10) memcpy(f, "\"fav\":0   ", 10);   /* the host's favourites stay theirs */
         return 0;
     case RMT_CMD_RADIO_SEARCH:
-        if(!radio_ok()){ *why = "Radio is off at this party"; return -1; }
         return remote_exec(&x, why, body);
-    case RMT_CMD_PLAY_ITEM:                                /* a search hit: the station after the queue, not now */
-        if(!radio_ok()){ *why = "Radio is off at this party"; return -1; }
-        memset(&x, 0, sizeof x); x.kind = RMT_CMD_LIST_END; x.arg = RADIO_END_STATION; x.sub = RMT_I_RADIO_HIT; x.pos = c->pos;
-        snprintf(x.name, sizeof x.name, "%s", c->name);
-        return remote_exec(&x, why, body);
+    case RMT_CMD_PARTY_RADIO: {
+        if(!radio_ok()){ *why = "The host doesn't let guests choose the radio"; return -1; }
+        if(c->arg){                                        /* at once: cuts the song short, so only with skipping allowed */
+            if(!cfg_val(RMT_P_SKIP)){ *why = "Skipping is off at this party - the station can only follow the queue"; return -1; }
+            if(radio_play_url(c->q, c->name) == 0) return 0;
+            const char *e = radio_last_error(); *why = e && e[0] ? e : "The radio couldn't start";
+            return -1;
+        }
+        if(!own_player()){ *why = "Only at once here - the Disc plays nothing after the queue with its stock player"; return -1; }
+        rc_station_t st; memset(&st, 0, sizeof st);
+        snprintf(st.name, sizeof st.name, "%s", c->q); snprintf(st.url, sizeof st.url, "%s", c->name);
+        if(radio_end_set(RADIO_END_STATION, &st)){ *why = "Couldn't save that"; return -1; }
+        return 0; }
     default:
         *why = "Not at a party"; return -1;
     }
