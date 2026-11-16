@@ -18,6 +18,7 @@ Targets below are proposals or verification work, not shipped features. Work bel
 - Battery: the Charging Limit (stop at about 80%, Settings > Battery & power) does not work on the Disc (Jo, 2026-11-16); to be looked at later.
 - Radio: copy the favourites between the SD card and the player from the UI (today the setting only chooses the file; copy it by hand, docs/RADIO.md) (Jo, 2026-11-16).
 - Radio, own player: send the song title to the UI as a frame over the player queue instead of /tmp/diskos-player-stream (Jo, 2026-11-16).
+- Playlists: optionally keep them on the SD card (like the radio favourites) instead of only in song.db on the player; check what that means for the stock and the own player (Jo, 2026-11-16, not urgent).
 - Own player: check an MPD-own library next to musicdb (only for ncmpcpp and other clients to browse natively; the UI stays on SQLite). Decide once playback runs over MPD and its RAM use on the device is known; costs a second scan, no SACD ISO in upstream MPD (Jo, 2026-11-15).
 
 ## Engineering validation
