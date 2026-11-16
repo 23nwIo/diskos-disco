@@ -8,6 +8,7 @@
 #define DISKOS_PLAYER_CORE_H
 
 #define PL_WORK_LOCAL 8            /* 0657 / a607: local playback */
+#define PL_WORK_DLNA  12           /* 0657 / a607: the DLNA renderer (0C), which the Radio app uses (upnp.h) */
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
 #define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
 #define PL_VOL_MAX    120
@@ -35,6 +36,8 @@ typedef struct {
     int play_mode;                 /* 0 in order, 1 shuffle, 2 repeat one, 3 repeat all, 4 single */
     int artist_grouping;           /* 0 artist, 1 album artist, -1 not sent yet */
     int work_mode;                 /* last mode set; -1 none yet */
+    unsigned mode_seq;             /* bumps on every accepted work mode change, so the main loop starts or ends the
+                                    * DLNA renderer (playback.c pb_stream_mode) */
     int route;                     /* 0666 output route; -1 none yet */
     char bt_mac[18];               /* 06b3: the Bluetooth headphones ("AA:BB:CC:DD:EE:FF"), "" none yet */
     int bt_codec;                  /* 06b3 VALUE1: 0 SBC, 1 AAC, 2/3/4 LDAC mobile/standard/high */

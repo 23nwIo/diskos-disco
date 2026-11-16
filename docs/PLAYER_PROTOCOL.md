@@ -42,7 +42,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0648 | `0648000C000v` | Artist grouping: 0 artist, 1 album artist (queue building for type 2) | main.c | do |
 | 064d | `064d000C000v` | Track numbers (stored only) | main.c | keep |
 | 0653 | `0653000C000v` | DAC filter 0..5 | main.c `ui_set_dac_filter` | do |
-| 0657 | `0657000C000v` | Work mode: 8 local playback; 1 USB DAC, 6 BT sink, 7 BT streaming, 10 AirPlay, 12 DLNA | main.c, modes.c | do 8, ack others |
+| 0657 | `0657000C000v` | Work mode: 8 local playback; 1 USB DAC, 6 BT sink, 7 BT streaming, 10 AirPlay, 12 DLNA | main.c, modes.c | do 8 and 12 (the own player's renderer for the Radio app, RADIO.md), ack others |
 | 0664 | `0664000C<s 4h>` | Idle power off after s seconds (0 off) | power.c | do |
 | 0666 | `0666000C000v` | Output route: 6 internal DAC, 4 S/PDIF, 3 USB audio, 2 Bluetooth | main.c, modes.c | do 6 and 2, ack others |
 | 0684 | `0684000C000v` | Resume memory mode 0..2 | main.c | keep |

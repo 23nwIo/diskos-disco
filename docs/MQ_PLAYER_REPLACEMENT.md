@@ -37,7 +37,7 @@ the job itself, so the stock part is no longer needed.
 | Bluetooth source (to headphones) | `bt_source_control.c`, BlueZ + BlueALSA, `brcm_patchram_plus` | own BlueALSA 4.0 with aptX (BLUETOOTH.md) | BlueZ + BlueALSA (+ libldac for LDAC) | no |
 | Bluetooth sink (phone to Disc) | `bt_sink_server.c`, `bt_sink_control.c` | none | BlueALSA a2dp-sink + `bluealsa-aplay` | no |
 | AirPlay receiver | `fiio_airplay.c` + embedded shairport-sync (`src/rtsp.c` …) | uses it for the radio helper (ui/ma.c) | upstream shairport-sync | no |
-| DLNA renderer | `dlna_player.c` | radio uses it (RADIO.md) | upmpdcli + MPD, or gmrender-resurrect | no |
+| DLNA renderer | `dlna_player.c` | radio uses it (RADIO.md) | own player: the AVTransport subset the radio uses, local only (`ui/player/upnp.c`, 2026-11-16); a full renderer: upmpdcli + MPD | no |
 | Roon Ready | `roon_player.c`, `libroon.so` | none | **dropped** (closed SDK; Jo does not need it) | - |
 | QPlay, FiiO Link | `mq_player_server_qplay.c`, `fiio_link.c` | none | **dropped** | - |
 | NAS | `nas_control.c` (`mount -t cifs` / NFS) | none | shell `mount`, trivial | no |

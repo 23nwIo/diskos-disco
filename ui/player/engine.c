@@ -91,11 +91,22 @@ static int xcmd(const char *c, char *out, size_t cap){
     return x;
 }
 
+/* Web radio over HTTPS: MPD's curl input checks the station's certificate against a CA bundle (our libcurl has none
+ * built in, mpd/build.sh). The first of these that exists; OPL_DIR/cacert.pem comes first, so one can be put there. */
+static const char *const CA_FILES[] = { ENG_CA_OWN, "/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
+                                        "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", NULL };
+const char *eng_ca_file(void){
+    for(int i = 0; CA_FILES[i]; i++) if(access(CA_FILES[i], R_OK) == 0) return CA_FILES[i];
+    return NULL;
+}
 static int spawn(void){
     if(mkdir(ENG_RUN_DIR, 0755) != 0 && errno != EEXIST){ g_log("engine: mkdir %s: %s", ENG_RUN_DIR, strerror(errno)); return -1; }
     FILE *f = fopen(ENG_CONF, "we");
     if(!f || fputs(CONF, f) < 0){ g_log("engine: write %s: %s", ENG_CONF, strerror(errno)); if(f) fclose(f); return -1; }
-    fclose(f);
+    const char *ca = eng_ca_file();
+    if(ca) fprintf(f, "input {\n  plugin \"curl\"\n  cacert \"%s\"\n}\n", ca);
+    else g_log("engine: no CA bundle (put one at %s) - https web radio will not play", ENG_CA_OWN);
+    if(fclose(f) != 0){ g_log("engine: write %s: %s", ENG_CONF, strerror(errno)); return -1; }
     f = fopen(ENG_BT_SCRIPT, "we");
     if(!f || fputs(BT_SCRIPT, f) < 0) g_log("engine: write %s: %s - no Bluetooth output", ENG_BT_SCRIPT, strerror(errno));
     if(f) fclose(f);
@@ -209,7 +220,8 @@ int eng_cmd(const char *c, char *out, unsigned cap){
  * part MPD counts elapsed time, duration and seeks from the part's start (checked with MPD 0.23 on a PC, 2026-11-15). */
 static int addid(const char *path, long off_ms, long len_ms){
     char uri[1060], q[1100], line[1200], r[256], v[32];
-    snprintf(uri, sizeof uri, "file://%s", path);
+    if(!strncmp(path, "http://", 7) || !strncmp(path, "https://", 8)) snprintf(uri, sizeof uri, "%s", path);   /* a stream */
+    else snprintf(uri, sizeof uri, "file://%s", path);
     if(mc_quote(q, sizeof q, uri) < 0){ g_log("engine: path too long: %s", path); return -1; }
     snprintf(line, sizeof line, "addid %s", q);
     int x = xcmd(line, r, sizeof r);

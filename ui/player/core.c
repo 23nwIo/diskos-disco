@@ -187,9 +187,10 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
 
     case 0x0657: {
         if(v < 0){ c->bad_frames++; logf_(c, "work mode: bad frame"); return -1; }
-        if(v != PL_WORK_LOCAL){ logf_(c, "work mode %d: not supported by the own player yet, ignored", v); return 0; }
+        if(v != PL_WORK_LOCAL && v != PL_WORK_DLNA){ logf_(c, "work mode %d: not supported by the own player yet, ignored", v); return 0; }
         int changed = c->work_mode != v;
         c->work_mode = v;
+        if(changed) c->mode_seq++;
         logf_(c, "work mode = %d%s", v, changed ? " (announced)" : "");
         if(changed){ char a[16]; send_(c, a, pp_fmt_a607(a, sizeof a, v)); }   /* the stock player announces a change */
         return 0;

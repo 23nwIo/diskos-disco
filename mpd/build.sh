@@ -25,12 +25,14 @@ CROSS=mipsel-linux-musl
 export CFLAGS="-Os -pipe -ffunction-sections -fdata-sections"
 mkdir -p "$SRC" "$SYS"
 
-fetch(){ [ -d "$SRC/$2" ] || git clone -q --depth 1 --branch "$3" "https://github.com/$1" "$SRC/$2"; }
+fetch(){ [ -d "$SRC/$2" ] || git clone -q --depth 1 --branch "$3" --recurse-submodules --shallow-submodules "https://github.com/$1" "$SRC/$2"; }
 fetch MusicPlayerDaemon/MPD MPD v0.23.17
 fetch alsa-project/alsa-lib alsa-lib v1.2.12
 fetch xiph/flac flac 1.4.3
 fetch FFmpeg/FFmpeg FFmpeg n6.1.2
 fetch fmtlib/fmt fmt 10.2.1
+fetch Mbed-TLS/mbedtls mbedtls v3.6.2
+fetch curl/curl curl curl-8_11_1
 
 # alsa-lib: the Disc's configuration is in /usr/share/alsa (checked 2026-11-15)
 (cd "$SRC/alsa-lib" && autoreconf -fi && ./configure --host=$CROSS --prefix=/usr --enable-static --disable-shared \
@@ -46,6 +48,18 @@ cmake_lib(){   # <dir> <cmake options...>
 cmake_lib "$SRC/flac" -DWITH_OGG=OFF -DBUILD_PROGRAMS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_DOCS=OFF \
     -DBUILD_CXXLIBS=OFF -DINSTALL_MANPAGES=OFF -DWITH_STACK_PROTECTOR=OFF -DENABLE_MULTITHREADING=OFF
 cmake_lib "$SRC/fmt" -DFMT_DOC=OFF -DFMT_TEST=OFF
+# web radio: libcurl (HTTP/HTTPS only) over mbedTLS for MPD's curl input plugin (ICY titles included). No CA bundle is
+# compiled in: the player names one in mpd.conf (engine.c, "cacert").
+cmake_lib "$SRC/mbedtls" -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF -DMBEDTLS_FATAL_WARNINGS=OFF
+cmake_lib "$SRC/curl" -DBUILD_CURL_EXE=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF \
+    -DBUILD_TESTING=OFF -DHTTP_ONLY=ON -DCURL_USE_MBEDTLS=ON -DCURL_USE_OPENSSL=OFF -DCURL_ZLIB=OFF -DCURL_BROTLI=OFF \
+    -DCURL_ZSTD=OFF -DUSE_NGHTTP2=OFF -DUSE_LIBIDN2=OFF -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_USE_GSSAPI=OFF \
+    -DCURL_DISABLE_LDAP=ON -DENABLE_THREADED_RESOLVER=ON -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DCURL_CA_FALLBACK=OFF \
+    -DMBEDTLS_INCLUDE_DIR="$SYS/usr/include" -DMBEDTLS_LIBRARY="$SYS/usr/lib/libmbedtls.a" \
+    -DMBEDX509_LIBRARY="$SYS/usr/lib/libmbedx509.a" -DMBEDCRYPTO_LIBRARY="$SYS/usr/lib/libmbedcrypto.a"
+# a static link needs curl's own dependencies after -lcurl; MPD's meson asks pkg-config without --static
+sed -i 's/^Libs: \(.*\)-lcurl$/Libs: \1-lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lpthread/' "$SYS/usr/lib/pkgconfig/libcurl.pc"
+grep -q -- '-lcurl -lmbedtls' "$SYS/usr/lib/pkgconfig/libcurl.pc" || { echo "libcurl.pc: Libs line not patched" >&2; exit 1; }
 
 # FFmpeg: only the demuxers/decoders a music player needs (FLAC goes through libFLAC, DSF/DFF through MPD itself)
 (cd "$SRC/FFmpeg" && ./configure --enable-cross-compile --cross-prefix=$CROSS- --arch=mips --cpu=mips32r2 --target-os=linux \
@@ -89,9 +103,10 @@ INI
 # no database (the library stays diskOS's own), no TCP needed by the player but kept for tests, local socket for file://
 (cd "$SRC/MPD" && rm -rf b && meson setup b --cross-file "$W/cross.ini" --buildtype=minsize -Db_ndebug=true \
    -Dauto_features=disabled -Ddatabase=false -Dneighbor=false -Dinotify=false -Ddaemon=false -Dtest=false \
-   -Ddsd=true -Dcue=true -Dalsa=enabled -Dflac=enabled -Dffmpeg=enabled -Dpipe=true -Dfifo=false -Dhttpd=false \
+   -Ddsd=true -Dcue=true -Dalsa=enabled -Dflac=enabled -Dffmpeg=enabled -Dcurl=enabled -Dpipe=true -Dfifo=false -Dhttpd=false \
    -Drecorder=false -Dtcp=true -Dlocal_socket=true -Dio_uring=disabled -Dzeroconf=disabled -Dwrap_mode=nodownload \
    && ninja -C b)
 $CROSS-strip -o "$W/mpd" "$SRC/MPD/b/mpd"
-$CROSS-readelf -A "$W/mpd" | grep -q "64-bit FPU" || { echo "wrong FP ABI" >&2; exit 1; }
+# (into a variable: grep -q ends early and readelf's SIGPIPE would fail the pipe under pipefail)
+abi=$($CROSS-readelf -A "$W/mpd"); grep -q "64-bit FPU" <<<"$abi" || { echo "wrong FP ABI" >&2; exit 1; }
 sha256sum "$W/mpd"

@@ -6,8 +6,9 @@ stays diskOS's own (musicdb); MPD runs without a database and gets songs as `fil
 
 ## Build
 
-`mpd/build.sh <toolchain-with-c++> <work-dir>`: MPD 0.23.17 static for MIPS32r2/FP64/NaN2008 (3.3 MB stripped), with
-alsa-lib 1.2.12, FLAC 1.4.3, a small FFmpeg 6.1 (AAC, ALAC, APE, WavPack, Vorbis, Opus, MP3, WMA, PCM), fmt 10.2.1.
+`mpd/build.sh <toolchain-with-c++> <work-dir>`: MPD 0.23.17 static for MIPS32r2/FP64/NaN2008 (4.3 MB stripped), with
+alsa-lib 1.2.12, FLAC 1.4.3, a small FFmpeg 6.1 (AAC, ALAC, APE, WavPack, Vorbis, Opus, MP3, WMA, PCM), fmt 10.2.1,
+and since 2026-11-16 libcurl 8.11.1 (HTTP/HTTPS only) over mbedTLS 3.6.2 for web radio (no CA bundle built in).
 The diskOS toolchain is C only; the script header says how to add g++ 11.2 with the same ABI. Our MPD patches are in
 `mpd/patches/`.
 
@@ -106,7 +107,26 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   the volume curve). Not checked on a Disc (no 4.4 mm plug at hand); the player logs the first three values it reads.
 - Not yet: Previous restarting the song after a few seconds (stock behaviour not measured).
 
+## Web radio
+
+Since 2026-11-16 (Jo asked for it): the Radio app (RADIO.md) switches the player to work mode 0C and hands it the
+station over UPnP AVTransport on `127.0.0.1:49494`, as it does with the stock player's DLNA renderer. The own player
+opens that port only in work mode 0C (`ui/player/upnp.c`, local only, no SSDP) and plays the URL in MPD
+(`playback.c` `pb_stream_*`): the local song is paused and its place kept; leaving the mode stops the station and loads
+the local song again, paused. The Play key pauses and plays on; skip and seek do nothing. The UI gets one track frame
+for the station (`song_name` = the station, `work_mode` "DLNA").
+- MPD's curl input plays `http://` and `https://` streams; HTTPS checks the certificate against `cacert` in mpd.conf,
+  the first of `/usr/data/diskos-own/cacert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`,
+  `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem` (engine.c `eng_ca_file`). Which one the Disc has is not
+  checked yet; without one, HTTPS stations fail ("not correctly signed by the trusted CA") and the player logs it.
+- Host-tested 2026-11-16: playback_test (the actions and the mode change) and the real MIPS MPD under qemu-mipsel with a
+  null output, driven by the host player over UPnP: an MP3 over HTTP and over HTTPS (own CA) played; with another CA
+  bundle the HTTPS stream was refused.
+- The stream's rate is only known once MPD has opened it: the DAC is started for 44.1 kHz and started again for the
+  stream's rate when MPD reports it (as for a song whose header has no rate). Not checked on a Disc.
+- The song titles still come from the UI's own ICY poll (RADIO.md); MPD has them too (`Title` from ICY), not used yet.
+
 ## Next
 
-Web radio via MPD streams. Bluetooth: bluealsa plugin built into MPD as the primary way (Jo 2026-11-15; needs a static
+Web radio: use MPD's ICY title instead of the UI's poll. Bluetooth: bluealsa plugin built into MPD as the primary way (Jo 2026-11-15; needs a static
 alsa-lib with the BlueALSA PCM plugin built in and libdbus for musl), the pipe output above stays as its fallback.

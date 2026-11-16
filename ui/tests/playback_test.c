@@ -11,6 +11,7 @@
 #include "../player/proto.h"
 #include "../player/queue.h"
 #include "../player/queuedb.h"
+#include "../player/upnp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +65,12 @@ static void e_song_ends(void){
     else e_state = ENG_STOP;
     e_ms = 0;
     pb_engine_event();
+}
+int eng_cmd(const char *c, char *out, unsigned cap){            /* "stop" and "clear", as the radio uses them */
+    if(cap) out[0] = 0;
+    if(!strcmp(c, "stop") || !strcmp(c, "clear")){ e_state = ENG_STOP; e_armed = 0; }
+    if(!strcmp(c, "clear")){ e_cur[0] = e_next[0] = 0; e_cur_id = e_next_id = -1; }
+    return 0;
 }
 static int e_out_bt = 0, e_out_aux = 1, e_outputs_calls; static unsigned e_out_rate;
 int eng_output(int aux, int bt, unsigned rate){ e_out_aux = aux; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
@@ -459,6 +466,79 @@ static void test_resume(void){
     unlink(flagp);
 }
 
+/* web radio: the DLNA work mode and the renderer's actions (upnp.c + playback.c pb_stream_*) */
+static int act(const char *action, const char *args, char *out){
+    char body[8192];
+    snprintf(body, sizeof body, "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body>"
+             "<u:%s xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>0</InstanceID>%s</u:%s></s:Body></s:Envelope>",
+             action, args, action);
+    out[0] = 0;
+    return pb_upnp_action(NULL, action, body, out, 4096);
+}
+static void test_radio(void){
+    char m[64], path[64], a[64], out[4096]; const char *body; size_t bl;
+    /* the request parser: incomplete, complete, the action from SOAPACTION */
+    static const char req[] = "POST /AVTransport/control HTTP/1.1\r\nHost: 127.0.0.1:49494\r\nContent-Length: 5\r\n"
+                              "SOAPACTION: \"urn:schemas-upnp-org:service:AVTransport:1#Play\"\r\n\r\nhello";
+    CHECK(up_parse(req, sizeof req - 3, m, sizeof m, path, sizeof path, a, sizeof a, &body, &bl) == 0);
+    CHECK(up_parse(req, sizeof req - 1, m, sizeof m, path, sizeof path, a, sizeof a, &body, &bl) == 1);
+    CHECK(!strcmp(m, "POST") && !strcmp(path, UP_CTL_PATH) && !strcmp(a, "Play") && bl == 5 && !strncmp(body, "hello", 5));
+    CHECK(up_parse("GARBAGE\r\n\r\n", 11, m, sizeof m, path, sizeof path, a, sizeof a, &body, &bl) == -1);
+    /* the description names the AVTransport control URL (what ui/radio_core.c rc_desc_control_url looks for) */
+    static char rep[65536];
+    CHECK(up_reply("GET", UP_DESC_PATH, "", "", NULL, NULL, rep, sizeof rep) > 0 && strstr(rep, "200 OK")
+          && strstr(rep, "urn:schemas-upnp-org:service:AVTransport:1") && strstr(rep, "<controlURL>" UP_CTL_PATH "</controlURL>"));
+    CHECK(up_reply("GET", "/nope", "", "", NULL, NULL, rep, sizeof rep) > 0 && strstr(rep, "404"));
+    CHECK(up_xml_value("<a><u:X x=\"1\">1 &amp;lt; 2</u:X></a>", "X", out, sizeof out) == 0 && !strcmp(out, "1 &lt; 2"));
+    CHECK(up_xml_value("<a/>", "X", out, sizeof out) == -1);
+
+    pl_core_t c;
+    pl_core_init(&c, cap_send, NULL, NULL);
+    pb_init(&c, dbp, sysp, quiet);
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0);           /* a local song plays */
+    pb_engine_event();
+    e_ms = 42000; pb_engine_event();
+    /* not in the DLNA mode: actions are refused (701), the description is still served */
+    CHECK(up_reply("POST", UP_CTL_PATH, "Play", "", pb_upnp_action, NULL, rep, sizeof rep) > 0 && strstr(rep, "<errorCode>701</errorCode>"));
+    /* 0657 0C: the mode is taken and announced; the local song pauses */
+    nsent = 0;
+    CHECK(pl_core_handle(&c, "0657000C000C", 12) == 0 && c.work_mode == PL_WORK_DLNA && sent_count("a607000C000C") == 1);
+    pb_stream_mode(1);
+    CHECK(e_state == ENG_PAUSE && pb_stream_active());
+    pb_engine_event();                                        /* MPD: paused */
+    /* the Radio app's sequence (ui/radio.c job_play): SetAVTransportURI with DIDL metadata, then Play */
+    CHECK(act("SetAVTransportURI", "<CurrentURI>http://radio.example/live?a=1&amp;b=2</CurrentURI><CurrentURIMetaData>"
+              "&lt;DIDL-Lite&gt;&lt;item&gt;&lt;dc:title&gt;Jazz &amp;amp; More&lt;/dc:title&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;"
+              "</CurrentURIMetaData>", out) == 0);
+    CHECK(!strcmp(pb_stream_uri(), "http://radio.example/live?a=1&b=2"));
+    CHECK(act("SetAVTransportURI", "<CurrentURI>ftp://x/y</CurrentURI>", out) == 716);
+    nsent = 0;
+    CHECK(act("Play", "<Speed>1</Speed>", out) == 0 && !strcmp(e_cur, "http://radio.example/live?a=1&b=2") && e_state == ENG_PLAY);
+    CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "<CurrentTransportState>PLAYING</CurrentTransportState>"));
+    pb_engine_event();                                        /* MPD plays the stream: its track frame and the state */
+    if(getenv("PB_DUMP")) for(int i = 0; i < nsent; i++) puts(sent[i]);
+    CHECK(sent_count("Jazz & More") == 1 && sent_count("\"work_mode\":\"DLNA\"") == 1 && sent_count("a2020013{\"state\":0}") >= 1);
+    CHECK(act("GetMediaInfo", "", out) == 0 && strstr(out, "<CurrentURI>http://radio.example/live?a=1&amp;b=2</CurrentURI>"));
+    /* the Play key pauses and plays on; skip and seek do nothing */
+    CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PAUSE);
+    pb_engine_event();
+    CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "PAUSED_PLAYBACK"));
+    CHECK(act("Play", "", out) == 0 && e_state == ENG_PLAY && !strcmp(e_cur, "http://radio.example/live?a=1&b=2"));
+    pb_engine_event();
+    CHECK(pb_transport(PL_T_NEXT, 0) == -1 && pb_transport(PL_T_SEEK, 1000) == -1);
+    CHECK(act("Stop", "", out) == 0 && e_state == ENG_STOP);
+    CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "STOPPED"));
+    CHECK(act("Seek", "", out) == 401);
+    CHECK(act("Play", "", out) == 0 && e_state == ENG_PLAY);
+    /* 0657 08: the station stops, the local song comes back paused where it was */
+    CHECK(pl_core_handle(&c, "0657000C0008", 12) == 0 && c.work_mode == PL_WORK_LOCAL);
+    pb_stream_mode(0);
+    if(getenv("PB_DUMP")) printf("back: %s armed %d ms %ld\n", e_cur, e_armed, e_ms);
+    CHECK(!pb_stream_active() && !strcmp(e_cur, "/s/a1.flac") && e_armed && e_ms >= 42000 && e_ms < 42500);
+    CHECK(act("Play", "", out) == 701);
+    pb_close();
+}
+
 int main(void){
     make_db();
     test_queue();
@@ -466,6 +546,7 @@ int main(void){
     test_orders_in_step();
     test_playback();
     test_resume();
+    test_radio();
     unlink(dbp); unlink(sysp);
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     printf("playback_test: all checks passed\n");

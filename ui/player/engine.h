@@ -13,6 +13,7 @@
 #define ENG_CONF      ENG_RUN_DIR "/mpd.conf"
 #define ENG_BT_SCRIPT ENG_RUN_DIR "/bt-out.sh"   /* MPD's Bluetooth pipe command (engine.c) */
 #define ENG_BT_DEV    ENG_RUN_DIR "/bt-dev"      /* the headphones' MAC for it, one line */
+#define ENG_CA_OWN    OPL_DIR "/cacert.pem"      /* a CA bundle for https streams, used before the system's (engine.c) */
 
 typedef void (*eng_log_fn)(const char *fmt, ...);
 
@@ -40,7 +41,7 @@ void eng_check(void);
 int eng_ready(void);
 
 /* MPD holds the current song and the next one (for gapless); the queue is the player's (queue.c).
- * eng_load: replace both slots with path and start it at start_ms; paused = load only, play starts on eng_toggle (a
+ * eng_load: replace both slots with path (a file, or an http:// / https:// stream) and start it at start_ms; paused = load only, play starts on eng_toggle (a
  *           resume). 0, or -1 (the file can't be added: missing, not readable, or no engine).
  *           off_ms / len_ms: play only that part of the file (a CUE track; len_ms 0 = to the end; both 0 = all of it);
  *           start_ms, elapsed time and seeks then count from the part's start.
@@ -63,6 +64,8 @@ int eng_toggle(void);                  /* play <-> pause; from stop or a paused 
 int eng_pause(int on);
 int eng_seek_ms(long ms);
 int eng_status(eng_status_t *st);
+/* The CA bundle MPD's curl input is given for https streams, NULL none found. */
+const char *eng_ca_file(void);
 /* Raw command for tests and diagnosis; the answer in out. */
 int eng_cmd(const char *cmd, char *out, unsigned cap);
 #endif

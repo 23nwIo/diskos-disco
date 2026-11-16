@@ -40,6 +40,7 @@
 #include "engine.h"
 #include "mpdcli.h"
 #include "playback.h"
+#include "upnp.h"
 #include "queuedb.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
@@ -273,12 +274,16 @@ int main(int argc, char **argv){
     if(use_wd && bal < 0) logmsg("jack: open %s: %s - no 4.4 mm detection", BAL_DEV, strerror(errno));
     int bal_state = -1, bal_count = 0, bal_logged = 0;
 
+    int upnp = -1;                                     /* the Radio app's renderer, only in the DLNA work mode (upnp.h) */
+    unsigned mode_seq = core.mode_seq;
     double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0, last_jack = 0;
     int stable = 0; unsigned sleep_seq = 0, usb_seq = 0;
     while(!g_stop){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
-        struct pollfd pf[4] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 } };
-        int pr = poll(pf, 4, 250);
+        struct pollfd pf[5] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 },
+                                { upnp, POLLIN, 0 } };
+        int pr = poll(pf, 5, 250);
+        if(pr > 0 && upnp >= 0 && (pf[4].revents & POLLIN)) up_serve(upnp, pb_upnp_action, NULL, logmsg);
         if(pr > 0 && pf[3].fd >= 0 && (pf[3].revents & (POLLIN | POLLHUP | POLLERR))){
             int ev = eng_idle_event();
             if(ev > 0) pb_engine_event();
@@ -375,6 +380,13 @@ int main(int argc, char **argv){
                     }
                 }
             }
+        }
+        if(core.mode_seq != mode_seq){                   /* 0657: the Radio app's DLNA mode, or back to local playback */
+            mode_seq = core.mode_seq;
+            int dlna = core.work_mode == PL_WORK_DLNA;
+            pb_stream_mode(dlna);
+            if(dlna && upnp < 0) upnp = up_listen(UP_PORT, logmsg);
+            if(!dlna && upnp >= 0){ close(upnp); upnp = -1; logmsg("upnp: renderer closed"); }
         }
         eng_check();
         if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.vol_bt; }

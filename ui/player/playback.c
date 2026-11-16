@@ -7,6 +7,7 @@
 #include "proto.h"
 #include "queue.h"
 #include "queuedb.h"
+#include "upnp.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -56,6 +57,14 @@ static double g_mem_t;
 #define PB_RESUME_OK_S     10.0
 static int g_rs;
 static double g_rs_until, g_rs_mounted, g_rs_check;
+/* Web radio (pb_stream_*): the DLNA work mode (0657 0C), the station the renderer was given, whether it is in MPD, when
+ * Play was given, whether its track frame went out, and the local song to come back to when the mode ends. */
+static int g_stream, g_st_loaded, g_st_told;
+static char g_st_uri[1024], g_st_title[256];
+static double g_st_t;
+static int g_st_local = -1;
+static long g_st_local_ms;
+static void stream_a2(int state);
 static int (*g_rs_mounted_fn)(void);
 static char g_rs_flag[256];
 static double g_rs_flag_t;          /* the resumed song started (the flag goes once it has played PB_RESUME_OK_S), 0 none */
@@ -285,6 +294,12 @@ void pb_engine_event(void){
     int was = g_es_valid ? g_es.state : ENG_STOP;
     update_status();
     if(!g_es_valid) return;
+    if(g_stream){                                     /* the radio: no queue, no bookmark */
+        if(g_st_loaded && g_es.state == ENG_PLAY && !g_st_told){ stream_a2(0); g_st_told = 1; }
+        if(g_st_loaded && was == ENG_PLAY && g_es.state == ENG_STOP) L("radio: the stream stopped (%s)", g_st_uri);
+        tell_state(g_es.state, 0);
+        return;
+    }
     if(g_es.state == ENG_STOP && was == ENG_PLAY && g_pending >= 0){   /* the song ended; the next needs the DAC restarted */
         int p = g_pending;
         sqlite3 *d = db();
@@ -311,7 +326,7 @@ void pb_tick(double t){
     resume_tick(t);
     codec_tick(t);
     if(g_announce && t - g_announce_t >= 1.0){ update_status(); if(g_es_valid) announce(&g_es); }
-    if(g_es_valid && g_es.state == ENG_PLAY && g_mem_ok && t - g_mem_t >= PB_MEM_EVERY_S) remember_position("playing");
+    if(!g_stream && g_es_valid && g_es.state == ENG_PLAY && g_mem_ok && t - g_mem_t >= PB_MEM_EVERY_S) remember_position("playing");
     if(g_rs_flag_t > 0 && g_es_valid && g_es.state == ENG_PLAY && t - g_rs_flag_t >= PB_RESUME_OK_S){
         if(unlink(g_rs_flag) != 0) L("resume: unlink %s: %s", g_rs_flag, strerror(errno));
         g_rs_flag_t = 0;
@@ -350,6 +365,7 @@ static int load_tables(sqlite3 *d, int pos, int row){
 
 int pb_play_list(int type, int pos, const char *name){
     if(!eng_ready()){ L("play list: no engine"); return -1; }
+    if(g_stream){ L("play list: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; }
     sqlite3 *d = db();
     if(!d) return -1;
     int rc = -1;
@@ -512,6 +528,13 @@ void pb_shutdown(void){
 
 int pb_transport(int op, long arg){
     if(!eng_ready() && op != PL_T_MODE){ L("transport %d: no engine", op); return -1; }
+    if(g_stream) switch(op){                         /* the radio: play/pause and the state; no skip, no seek */
+    case PL_T_TOGGLE: if(!g_st_loaded){ L("play/pause: no station"); return -1; } return eng_toggle();
+    case PL_T_PAUSE: pb_pause(); return 0;
+    case PL_T_MODE: break;
+    case PL_T_STATE: if(!g_st_loaded) return -1; update_status(); stream_a2(g_es.state == ENG_PLAY ? 0 : 1); return 0;
+    default: L("transport %d: not on the radio", op); return -1;
+    }
     switch(op){
     case PL_T_TOGGLE:
         if(Q.n <= 0){ L("play/pause: nothing loaded"); return -1; }
@@ -559,4 +582,144 @@ void pb_mode_changed(void){
     } else if(!on) qd_shuffle_drop(d);
     if(Q.n > 0 && Q.cur >= 0) queue_next(d);
     sqlite3_close(d);
+}
+
+/* ================================================================ web radio (the DLNA work mode) */
+static void stream_a2(int state){
+    char *song = malloc(PP_MAX_FRAME), *json = malloc(PP_MAX_FRAME), *frame = malloc(PP_MAX_FRAME);
+    if(!song || !json || !frame){ L("radio: out of memory for the track frame"); goto out; }
+    unsigned rate = g_es_valid ? g_es.rate : 0;
+    int bits = g_es_valid && g_es.bits ? g_es.bits : 16, ch = g_es_valid && g_es.channels ? g_es.channels : 2;
+    jbuf_t j = { song, 0, PP_MAX_FRAME, 1 };
+    song[0] = 0;
+    jraw(&j, "{\"id\":0,\"pos_id\":0,\"song_name\":\"");
+    jstr(&j, g_st_title[0] ? g_st_title : g_st_uri);
+    jraw(&j, "\",\"song_duration_time\":0,\"song_file_path\":\"");
+    jstr(&j, g_st_uri);
+    jraw(&j, "\",\"song_sample_rate\":%u,\"song_encoding_rate\":%d,\"song_bit_rate\":%d,\"song_artist_name\":\"Web radio\","
+         "\"song_album_name\":\"\",\"song_style_name\":\"(null)\",\"song_track\":0,\"song_channel\":%d,\"is_sacd\":false,"
+         "\"is_cue\":false,\"is_dsd\":false,\"is_m3u\":false,\"m3u_file_path\":\"(null)\"}", rate, bits,
+         g_es_valid ? g_es.kbps : 0, ch);
+    jbuf_t o = { json, 0, PP_MAX_FRAME, j.ok };
+    json[0] = 0;
+    jraw(&o, "{\"song\":\"");
+    jstr(&o, song);
+    jraw(&o, "\",\"love\":false,\"playerflag\":3,\"state\":%d,\"playing_num\":\"1/1\",\"work_mode\":\"DLNA\"}", state);
+    int n = o.ok ? pp_fmt_a2(frame, PP_MAX_FRAME, json) : -1;
+    if(n < 0){ L("radio: track frame too long"); goto out; }
+    send_(frame, n);
+out:
+    free(song); free(json); free(frame);
+}
+void pb_stream_mode(int on){
+    if(on && !g_stream){
+        g_stream = 1; g_st_loaded = 0; g_st_uri[0] = g_st_title[0] = 0;
+        g_st_local = -1;
+        if(Q.n > 0 && Q.cur >= 0 && g_es_valid){             /* the local song, to come back to */
+            update_status();
+            remember_position("radio");
+            g_st_local = Q.cur;
+            g_st_local_ms = g_es.elapsed_ms + (g_es.state == ENG_PLAY ? (long)((now_s() - g_es_t) * 1000.0) : 0);
+            if(g_es.state == ENG_PLAY) eng_pause(1);
+        }
+        g_mem_ok = 0; g_announce = 0; g_next = g_pending = -1;
+        L("radio: DLNA mode (local song %d at %ld ms kept)", g_st_local, g_st_local >= 0 ? g_st_local_ms : 0L);
+    } else if(!on && g_stream){
+        g_stream = 0;
+        if(g_st_loaded){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); }
+        g_st_loaded = 0;
+        L("radio: back to local playback");
+        if(g_st_local >= 0 && g_st_local < Q.n){              /* the local song again, paused where it was */
+            sqlite3 *d = db();
+            if(d){ start_at(d, g_st_local, +1, g_st_local_ms, 1); sqlite3_close(d); }
+        }
+        g_st_local = -1;
+    }
+}
+int pb_stream_active(void){ return g_stream; }
+int pb_stream_set(const char *uri, const char *title){
+    if(!g_stream) return -1;
+    if(strncmp(uri, "http://", 7) && strncmp(uri, "https://", 8)){ L("radio: not a stream URL: %.80s", uri); return -1; }
+    if(strlen(uri) >= sizeof g_st_uri){ L("radio: stream URL too long"); return -1; }
+    snprintf(g_st_uri, sizeof g_st_uri, "%s", uri);
+    snprintf(g_st_title, sizeof g_st_title, "%s", title ? title : "");
+    L("radio: station \"%s\" %s", g_st_title, g_st_uri);
+    return 0;
+}
+int pb_stream_play(void){
+    if(!g_stream || !g_st_uri[0]) return -1;
+    if(g_st_loaded && g_es_valid && g_es.state == ENG_PAUSE && !strcmp(g_es.file, g_st_uri)){   /* plays on after a pause */
+        if(eng_pause(0) != 0) return -1;
+        update_status();
+        return 0;
+    }
+    if(eng_load(g_st_uri, 0, 0, 0, 0) != 0){ L("radio: MPD can't play %s (an MPD without curl?)", g_st_uri); g_st_loaded = 0; return -1; }
+    g_st_loaded = 1; g_st_told = 0; g_st_t = now_s();
+    update_status();
+    return 0;
+}
+int pb_stream_pause(void){
+    if(!g_stream || !g_st_loaded || eng_pause(1) != 0) return -1;
+    update_status();
+    return 0;
+}
+int pb_stream_stop(void){
+    if(!g_stream) return -1;
+    if(g_st_loaded){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); g_st_loaded = 0; update_status(); tell_state(ENG_PAUSE, 0); }
+    return 0;
+}
+const char *pb_stream_state(void){
+    if(!g_stream || !g_st_loaded) return "STOPPED";
+    if(g_es_valid && g_es.state == ENG_PLAY) return "PLAYING";
+    if(g_es_valid && g_es.state == ENG_PAUSE) return "PAUSED_PLAYBACK";
+    return now_s() - g_st_t < 15.0 ? "TRANSITIONING" : "STOPPED";   /* MPD is still connecting, or it gave up */
+}
+const char *pb_stream_uri(void){ return g_stream ? g_st_uri : ""; }
+
+/* The renderer's actions (upnp.c), as ui/radio.c uses them: SetAVTransportURI, Play, Pause, Stop, GetTransportInfo,
+ * GetMediaInfo, GetPositionInfo. Other actions: 401 (invalid action). */
+int pb_upnp_action(void *ctx, const char *action, const char *body, char *out, size_t cap){
+    (void)ctx;
+    out[0] = 0;
+    if(!g_stream) return 701;                                       /* transition not available: not in the DLNA mode */
+    if(!strcmp(action, "SetAVTransportURI")){
+        char *uri = malloc(2048), *meta = malloc(16384), *title = malloc(512);
+        int r = 716;                                                /* resource not found */
+        if(uri && meta && title && up_xml_value(body, "CurrentURI", uri, 2048) == 0){
+            title[0] = 0;
+            if(up_xml_value(body, "CurrentURIMetaData", meta, 16384) == 0) up_xml_value(meta, "title", title, 512);
+            if(pb_stream_set(uri, title) == 0){
+                if(g_st_loaded){ char x[256]; eng_cmd("stop", x, sizeof x); g_st_loaded = 0; }   /* a new station waits for Play */
+                r = 0;
+            }
+        }
+        free(uri); free(meta); free(title);
+        return r;
+    }
+    if(!strcmp(action, "Play")) return pb_stream_play() == 0 ? 0 : 716;
+    if(!strcmp(action, "Pause")) return pb_stream_pause() == 0 ? 0 : 701;
+    if(!strcmp(action, "Stop")) return pb_stream_stop() == 0 ? 0 : 701;
+    if(!strcmp(action, "GetTransportInfo")){
+        snprintf(out, cap, "<CurrentTransportState>%s</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus>"
+                 "<CurrentSpeed>1</CurrentSpeed>", pb_stream_state());
+        return 0;
+    }
+    if(!strcmp(action, "GetMediaInfo")){
+        char *e = malloc(sizeof g_st_uri * 6);
+        if(!e || up_xml_escape(g_st_uri, e, sizeof g_st_uri * 6)){ free(e); return 501; }
+        snprintf(out, cap, "<NrTracks>%d</NrTracks><MediaDuration>NOT_IMPLEMENTED</MediaDuration><CurrentURI>%s</CurrentURI>"
+                 "<CurrentURIMetaData></CurrentURIMetaData><NextURI></NextURI><NextURIMetaData></NextURIMetaData>"
+                 "<PlayMedium>NETWORK</PlayMedium><RecordMedium>NOT_IMPLEMENTED</RecordMedium><WriteStatus>NOT_IMPLEMENTED</WriteStatus>",
+                 g_st_uri[0] ? 1 : 0, e);
+        free(e);
+        return 0;
+    }
+    if(!strcmp(action, "GetPositionInfo")){
+        long ms = g_es_valid && g_st_loaded ? g_es.elapsed_ms : 0;
+        snprintf(out, cap, "<Track>1</Track><TrackDuration>0:00:00</TrackDuration><TrackMetaData></TrackMetaData><TrackURI></TrackURI>"
+                 "<RelTime>%ld:%02ld:%02ld</RelTime><AbsTime>NOT_IMPLEMENTED</AbsTime><RelCount>2147483647</RelCount>"
+                 "<AbsCount>2147483647</AbsCount>", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60);
+        return 0;
+    }
+    return 401;
 }
