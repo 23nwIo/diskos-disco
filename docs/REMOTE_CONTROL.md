@@ -31,6 +31,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Position slider | Seeks the current song. |
 | Volume | 0-120, the player's own scale (the same as the hardware keys). After a start-up, until the volume first changes, the level the player restored at boot (its saved SYSCONFIG.VOLUME). |
 | Balance | -10 (left) to 10 (right), 0 centred, with a **Centre** button: the same setting as Settings > Audio > Balance, saved on the Disc. |
+| Outputs | Only while the own player runs (Settings > About > Player): AUX and Bluetooth each on or off, each with its own volume, and Auto Outputs (Off, Newest, All connected), the same as Settings > Audio > Outputs. One output always stays on; Bluetooth needs connected headphones. The Volume slider moves every output that is on. |
 | EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
 | Play mode | Sequential, Shuffle, Repeat one, Repeat all, Single. Saved like the Disc's own setting. Not available while Music Assistant plays. |
 
@@ -132,6 +133,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/next`, `POST api/previous` | Skip. |
 | `POST api/volume` with `value=0..120` or `step=-120..120` | Absolute or relative volume. |
 | `POST api/balance` with `value=-10..10` | Left/right balance (negative = left), applied and saved as Settings > Audio > Balance. |
+| `POST api/outputs` with one of `aux=0/1`, `bt=0/1`, `vol_aux=0..120`, `vol_bt=0..120`, `auto=0..2` | Settings > Audio > Outputs (own player only; refused with the reason otherwise). `api/state` reports `"outputs":{"aux","bt","vol_aux","vol_bt","bt_ready","auto","jack","bal"}`, or `null` with the stock player. |
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
 | `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`, `fav`), `radio_search` (the last station search: also `"search":"idle"|"busy"|"done"|"failed"`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
