@@ -413,7 +413,7 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
     if(!strcmp(ep, "outputs")){
         static const struct { const char *k; int sub; long max; } O[] = {
             { "aux", RMT_OUT_AUX, 1 }, { "bt", RMT_OUT_BT, 1 }, { "vol_aux", RMT_OUT_VOL_AUX, 120 },
-            { "vol_bt", RMT_OUT_VOL_BT, 120 }, { "auto", RMT_OUT_AUTO, 2 } };
+            { "vol_bt", RMT_OUT_VOL_BT, 120 }, { "auto", RMT_OUT_AUTO, 2 }, { "codec", RMT_OUT_CODEC, 4 } };
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         int found = 0; long v = 0;
         for(size_t k = 0; k < sizeof O / sizeof O[0]; k++){
@@ -491,11 +491,12 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 || rmt_json_escape(su, sizeof su, s->station_url) < 0 || rmt_json_escape(bc, sizeof bc, s->bt_codec) < 0 || rmt_json_escape(bd, sizeof bd, s->bt_device) < 0 || rmt_json_escape(sti, sizeof sti, s->stream_title) < 0 ||
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
-    char ou[200] = "null";
+    char ou[300] = "null", cl[32] = "";
+    for(int i = 0; i < 5; i++) if(s->out_codecs & (1 << i)) snprintf(cl + strlen(cl), sizeof cl - strlen(cl), "%s%d", cl[0] ? "," : "", i);
     if(s->out_own)
-        snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d}",
+        snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d,\"codec\":%d,\"codecs\":[%s],\"switching\":%s}",
                  s->out_aux ? "true" : "false", s->out_bt ? "true" : "false", s->out_vol_aux, s->out_vol_bt, s->out_bt_ready ? "true" : "false",
-                 s->out_auto, s->out_jack, s->out_bal);
+                 s->out_auto, s->out_jack, s->out_bal, s->out_codec, cl, s->out_switching ? "true" : "false");
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"play_mode\":%d,\"work_mode\":%d,"
@@ -607,6 +608,7 @@ const char RMT_PAGE_HTML[] =
 "<input id=bal type=range min=-10 max=10 step=1 value=0>\n"
 "<div id=ow class=hide><div class=hint>Outputs: the Volume above moves every output that is on.</div><div class=hd><label style=flex:1><input type=checkbox id=oa> AUX <span id=oav></span></label></div><input id=ova type=range min=0 max=120 value=0 aria-label='AUX volume'>\n"
 "<div class=hd><label style=flex:1><input type=checkbox id=ob> Bluetooth <span id=obv></span></label></div><input id=ovb type=range min=0 max=120 value=0 aria-label='Bluetooth volume'>\n"
+"<div id=ocw class=hide><label for=oc>Bluetooth codec (this connection; the music pauses briefly) <span id=ocs></span></label><select id=oc></select></div>\n"
 "<label for=oau>Auto Outputs (when something connects)</label><select id=oau><option value=0>Off<option value=1>Newest<option value=2>All connected</select></div>\n"
 "<label for=eqs>EQ</label><select id=eqs></select>\n"
 "<div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one\n"
@@ -655,7 +657,10 @@ const char RMT_PAGE_HTML[] =
 "var o=s.outputs;$('ow').classList.toggle('hide',!o);if(o){$('oa').checked=o.aux;$('ob').checked=o.bt;$('ob').disabled=!o.bt&&!o.bt_ready;\n"
 "if(!drag.ova)$('ova').value=o.vol_aux;if(!drag.ovb)$('ovb').value=o.vol_bt;$('ovb').disabled=!o.bt_ready;\n"
 "$('oav').textContent=$('ova').value+(o.bal===1?' · 4.4 mm':o.jack===1?' · 3.5 mm':'');$('obv').textContent=$('ovb').value+(o.bt_ready?'':' · not connected');\n"
-"if(document.activeElement!==$('oau'))$('oau').value=o.auto}\n"
+"if(document.activeElement!==$('oau'))$('oau').value=o.auto;\n"
+"$('ocw').classList.toggle('hide',!o.bt||!o.bt_ready);var oc=$('oc'),k=o.codecs.join();$('ocs').textContent=o.switching?'· switching…':'';\n"
+"if(oc.dataset.k!==k){oc.dataset.k=k;oc.innerHTML='';o.codecs.forEach(function(i){oc.add(new Option(CN[i],i))})}\n"
+"if(document.activeElement!==oc)oc.value=o.codec<0?'':o.codec}\n"
 "if(s.play_mode>=0&&document.activeElement!==$('pm'))$('pm').value=s.play_mode;\n"
 "if(document.activeElement!==$('eqs')){if(!$('eqs').options.length||$('eqs').dataset.n!==s.eq_name)eqload(s.eq);else $('eqs').value=s.eq}\n"
 "if(!s.controllable)say(s.source==='other'?'The player is in another mode (e.g. USB or Bluetooth)':'')\n"
@@ -667,6 +672,7 @@ const char RMT_PAGE_HTML[] =
 "e.onchange=function(){drag[i]=0;cmd(SL[i][0],SL[i][1]+e.value)}});\n"
 "$('oa').onchange=function(){cmd('outputs','aux='+(this.checked?1:0))};$('ob').onchange=function(){cmd('outputs','bt='+(this.checked?1:0))};\n"
 "$('oau').onchange=function(){cmd('outputs','auto='+this.value)};\n"
+"var CN=['SBC','AAC','LDAC','aptX','aptX HD'];$('oc').onchange=function(){var e=this;cmd('outputs','codec='+e.value).then(function(ok){if(ok)say('Switching codec…',1)});e.blur()};\n"
 "$('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};\n"
 "$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};\n"
 "$('fv').onclick=function(){(($('fv').dataset.r)?cmd(fav?'radio_fav_remove':'radio_fav_add','kind=radio_now'):cmd('favorite','on='+(fav?0:1))).then(function(ok){if(ok)say(fav?'Removed from favourites':'Added to favourites',1)})};\n"

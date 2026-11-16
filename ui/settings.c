@@ -251,7 +251,8 @@ static void apply_out_auto(int v){ if(own_player_cached()) out_send("0d05", v); 
 /* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
  * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
  * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX, 2 Bluetooth (v 0/1), 3 AUX volume, 4 Bluetooth volume
- * (0..120), 5 Auto Outputs (0..2), as rmt_out_t numbers them; 0, or -1 with *why. */
+ * (0..120), 5 Auto Outputs (0..2), 6 this connection's codec (0..4: SBC, AAC, LDAC, aptX, aptX HD), as rmt_out_t
+ * numbers them; 0, or -1 with *why. */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out){
     if(!own_player_cached()) return -1;
     *o = *outputs_now();
@@ -259,6 +260,7 @@ int settings_outputs_state(opl_outputs_t *o, int *auto_out){
     if(*auto_out < 0 || *auto_out > 2) *auto_out = 1;
     return 0;
 }
+static const char *out_codec_why(int c, int *sent);
 int settings_outputs_cmd(int what, int v, const char **why){
     const char *w = NULL;
     if(!own_player_cached()) w = "Outputs need the own player (Settings > About > Player)";
@@ -266,6 +268,7 @@ int settings_outputs_cmd(int what, int v, const char **why){
     case 1: w = out_set_why(v, outputs_now()->bt); break;
     case 2: w = out_bt_why(v); break;
     case 3: case 4: if(v < 0 || v > 120){ w = "Volume 0-120"; break; } out_volume(what == 4, v); break;
+    case 6: { int sent; w = out_codec_why(v, &sent); break; }
     case 5:
         if(v < 0 || v > 2){ w = "Unknown choice"; break; }
         if(simple_cfg_set_int("out_auto", v) < 0){ w = "Couldn't save settings"; break; }
@@ -307,15 +310,35 @@ static int out_codec_index(void){
     for(int i = 0; i < g_codec_n; i++) if(!strcmp(o->codec, OUT_CODEC_WORD[g_codec_map[i]])) return i;
     return 0;
 }
-static void apply_out_codec(int i){
+/* switch this connection to OUT_CODEC_ index c: NULL when sent (or already so; *sent tells), else why not */
+static const char *out_codec_why(int c, int *sent){
     const opl_outputs_t *o = outputs_now();
+    *sent = 0;
+    if(c < 0 || c >= 5) return "Unknown codec";
+    if(!o->bt) return "Bluetooth is off";
+    if(o->switching) return "Still switching - try again in a moment";
+    if(!strcmp(o->codec, OUT_CODEC_WORD[c])) return NULL;                 /* already */
+    if(o->codecs[0] && !out_has_word(o->codecs, OUT_CODEC_WORD[c])) return "These headphones don't offer it";
+    if(out_send("0d04", OUT_CODEC_VAL[c]) < 0) return OUT_NOT_TAKEN;
+    *sent = 1;
+    return NULL;
+}
+static void apply_out_codec(int i){
     if(i < 0 || i >= g_codec_n) return;
-    int c = g_codec_map[i];
-    if(!o->bt){ ui_toast(tr("Bluetooth is off")); return; }
-    if(o->switching){ ui_toast(tr("Still switching - try again in a moment")); return; }
-    if(!strcmp(o->codec, OUT_CODEC_WORD[c])) return;                       /* already */
-    if(o->codecs[0] && !out_has_word(o->codecs, OUT_CODEC_WORD[c])){ ui_toast(tr("These headphones don't offer it")); return; }
-    if(out_send("0d04", OUT_CODEC_VAL[c]) == 0) ui_toast(tr("Switching codec..."));
+    int sent; const char *w = out_codec_why(g_codec_map[i], &sent);
+    if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w));
+    else if(sent) ui_toast(tr("Switching codec..."));
+}
+/* Remote Control: the codecs the list offers now (bit i = OUT_CODEC_ index i: SBC, AAC, LDAC, aptX, aptX HD) and
+ * *cur, the link's codec (-1 none) */
+int settings_outputs_codecs(int *cur){
+    const opl_outputs_t *o = outputs_now();
+    int m = 0;
+    codec_list_refresh();
+    for(int i = 0; i < g_codec_n; i++) m |= 1 << g_codec_map[i];
+    *cur = -1;
+    for(int i = 0; i < 5; i++) if(o->codec[0] && !strcmp(o->codec, OUT_CODEC_WORD[i])) *cur = i;
+    return m;
 }
 static void apply_grp_outputs(int v);
 static int outputs_row(const setting_t *s){

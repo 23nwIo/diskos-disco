@@ -38,6 +38,7 @@
 /* settings.c: the Outputs page for the web page (main thread) */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out);
 int settings_outputs_cmd(int what, int v, const char **why);
+int settings_outputs_codecs(int *cur);
 /* defined elsewhere without a shared header */
 int  bt_state(void);
 int  bt_peer_name(char *out, int cap);
@@ -215,6 +216,7 @@ static void snapshot(rmt_state_t *s){
       if(settings_outputs_state(&o, &au) == 0){
           s->out_own = 1; s->out_aux = o.aux; s->out_bt = o.bt; s->out_vol_aux = o.vol_aux; s->out_vol_bt = o.vol_bt;
           s->out_bt_ready = o.bt_ready; s->out_auto = au; s->out_jack = o.jack; s->out_bal = o.bal;
+          s->out_codecs = settings_outputs_codecs(&s->out_codec); s->out_switching = o.switching;
       } }
     s->balance = simple_cfg_get_int("balance", 0); if(s->balance < -10 || s->balance > 10) s->balance = 0;   /* main.c applies the same at boot */
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
