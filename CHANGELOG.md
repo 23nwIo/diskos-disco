@@ -4,6 +4,13 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Remote Control party mode: guests get their own link (`/<party name>/`) to a small page where they see what plays,
+  see the queue and who queued what, browse the whole library and add single songs; set up on the system page's
+  Party tab: volume (scaled to a maximum), what plays now, the queue, skip, songs per guest, guests taking turns,
+  repeats, names, and a radio station guests may pick for when the queue is empty. Settings are kept on the SD card.
+  After the list ends (own player) can now also play a playlist, once, again and again or shuffled. Not yet tested on
+  a Disc. [Guide](docs/REMOTE_CONTROL.md#party-mode)
+
 - Bluetooth headphones: their battery level shows on their details screen and in Remote Control, with a note at 20 %
   and 10 % (Settings > Connectivity > Headphone Battery, on by default; over the hands-free profile). With the own
   player, their Play/Pause, Next and Previous buttons control the Disc, and headphones with absolute volume share the

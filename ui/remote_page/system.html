@@ -22,8 +22,8 @@
 <label for=ptot>Songs each guest may have in the queue</label><input id=ptot data-k=total type=number min=1 max=50 inputmode=numeric>
 <label for=pcon>Songs of one guest in a row (at most)</label><input id=pcon data-k=consec type=number min=1 max=10 inputmode=numeric>
 <div class=hint>Guests take turns: a new song joins the guest's next round instead of the end of the queue. While only one guest's songs are queued, that guest may add more in a row (up to their number of songs).</div></div>
-<div class=card id=pew><label for=pe>When the queue is empty</label><select id=pe><option value=0>Stop<option value=1>Random songs from the library<option value=2>A radio station</select>
-<div class=hd id=psw><small id=pes class=hint style=flex:1></small><button id=psc>Choose station</button></div><div id=pen class=hint></div></div>
+<div class=card id=pew><label for=pe>When the queue is empty</label><select id=pe><option value=0>Stop<option value=1>Random songs from the library<option value=2>A radio station<option value=3>A playlist</select>
+<div class=hd id=psw><small id=pes class=hint style=flex:1></small><button id=psc>Choose</button></div><div id=pen class=hint></div></div>
 <h2>Guests</h2><div id=pg class=card>None yet</div></div>
 <div id=scv class=hide><div class=card><img id=si alt='The Disc screen'><div class=hd><button id=srf class=pa>Refresh</button><b></b><label><input type=checkbox id=sau> Live</label></div>
 <div class=hint>Tap or drag on the picture to touch the Disc; hold for a long press.</div></div></div>
@@ -74,15 +74,13 @@ if(document.activeElement!==$('pnm')&&!$('pnm').dataset.e)$('pnm').value=c.name;
 var g=$('pg');g.textContent='';if(!j.guests.length)g.textContent='None yet';g.style.padding=j.guests.length?'0':'';j.guests.forEach(function(x){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');
 a.textContent=x.name||'(no name)';b.textContent=x.queued+' queued · seen '+(x.seen_s<60?'just now':Math.round(x.seen_s/60)+' min ago');k.appendChild(a);k.appendChild(b);g.appendChild(k)})}).catch(function(){say('Player not reachable')});
 fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){var le=s.list_end;$('pe').disabled=!le;$('pen').textContent=le?'The same setting as After the list ends on the Disc and on the Remote page.':'Only with the own player (Settings > Playback).';
-if(le){if(document.activeElement!==$('pe'))$('pe').value=le.mode;$('psw').classList.toggle('hide',le.mode!==2);$('pes').textContent=le.station?'Station: '+le.station:'No station chosen yet'}else $('psw').classList.add('hide')}).catch(function(){})}
+if(le){if(document.activeElement!==$('pe'))$('pe').value=le.mode;$('psw').classList.toggle('hide',le.mode<2);$('pes').textContent=lesay(le)}else $('psw').classList.add('hide')}).catch(function(){})}
 setInterval(party,3000);
 [].forEach.call(document.querySelectorAll('#ptv [data-k]'),function(e){if(e.type==='range')e.oninput=function(){$('pmvv').textContent=e.value};
 e.onchange=function(){var v=e.type==='checkbox'?(e.checked?1:0):e.value;cmd('party',e.dataset.k+'='+encodeURIComponent(v)).then(function(ok){if(ok)say('Saved',1);party()})}});
 $('pnm').oninput=function(){$('pnm').dataset.e=1};$('pns').onclick=function(){var n=$('pnm').value.trim();cmd('party',enc({name:n})).then(function(ok){if(ok){$('pnm').dataset.e='';say('Saved',1)}party()})};
 $('plc').onclick=function(){var t=$('pl').textContent.split(' ')[0];try{navigator.clipboard.writeText(t).then(function(){say('Link copied',1)},function(){prompt('The guests\u2019 link',t)})}catch(e){prompt('The guests\u2019 link',t)}};
-$('pe').onchange=function(){var m=$('pe').value;cmd('list_end','mode='+m).then(function(ok){if(!ok&&m==='2')ppick();party()});$('pe').blur()};$('psc').onclick=ppick;
-function ppick(){fetch('api/library/radio?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){var a=(j.items||[]).map(function(x){return[x.name,function(){cmd('list_end',enc({mode:2,pos:x.pos,url:x.url})).then(function(ok){if(ok)say('Plays '+x.name+' when the queue is empty',1);party()})}]});
-if(!a.length){say('No radio favourites yet - save stations in the Radio tab of the Remote page');return}sheet('Station when the queue is empty',a)}).catch(function(){say('Player not reachable')})}
+$('pe').onchange=function(){var m=$('pe').value;cmd('list_end','mode='+m).then(function(ok){if(!ok&&m>1)lpick(m,party);party()});$('pe').blur()};$('psc').onclick=function(){lpick($('pe').value,party)};
 function refresh(){status();bt();party()}
 function tab(v){if(!$(v+'t'))v='status';V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});try{history.replaceState(null,'','#'+v)}catch(e){}
 $('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');$('ptv').classList.toggle('hide',v!=='party');say('');

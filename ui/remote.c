@@ -205,6 +205,17 @@ static int vol_now(const track_state_t *st){
     if(boot == -2 || (boot < 0 && lv_tick_elaps(at) >= 10000)){ boot = mdb_sysconfig_volume(); at = lv_tick_get(); }
     return boot;
 }
+/* the end playlist's name: looked up again when the id changes, or after 10 s (renamed, deleted) */
+static const char *end_playlist_name(long pid){
+    static long id = -1; static char name[MDB_STR]; static uint32_t at;
+    if(pid == id && at && lv_tick_elaps(at) < 10000) return name;
+    id = pid; at = lv_tick_get() | 1; name[0] = 0;
+    if(pid <= 0) return name;
+    static char names[200][MDB_STR]; static long ids[200];
+    int n = mdb_playlists(names, ids, 200);
+    for(int i = 0; i < n; i++) if(ids[i] == pid){ snprintf(name, sizeof name, "%s", names[i]); break; }
+    return name;
+}
 static void snapshot(rmt_state_t *s){
     track_state_t st; ipc_get_state(&st);
     memset(s, 0, sizeof *s);
@@ -222,7 +233,11 @@ static void snapshot(rmt_state_t *s){
           s->out_codecs = settings_outputs_codecs(&s->out_codec); s->out_switching = o.switching;
       } }
     s->end_mode = -1;
-    if(s->out_own){ rc_station_t es; memset(&es, 0, sizeof es); s->end_mode = radio_end_get(&es); snprintf(s->end_station, sizeof s->end_station, "%s", es.name); }   /* own player only */
+    if(s->out_own){                                       /* own player only */
+        rc_station_t es; memset(&es, 0, sizeof es); s->end_mode = radio_end_get(&es); snprintf(s->end_station, sizeof s->end_station, "%s", es.name);
+        s->end_pl_id = radio_end_playlist(&s->end_pl_flags);
+        snprintf(s->end_playlist, sizeof s->end_playlist, "%.95s", end_playlist_name(s->end_pl_id));
+    }
     s->balance = simple_cfg_get_int("balance", 0); if(s->balance < -10 || s->balance > 10) s->balance = 0;   /* main.c applies the same at boot */
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
@@ -285,6 +300,8 @@ static int run(const rmt_cmd_t *c, const char **why){
             if(!(ps = radio_pick(&f, why))) return -1;
             st = *ps; ps = &st;
         }
+        else if(c->item && radio_end_set_playlist(c->id, (int)c->offset)){ *why = "No such playlist"; return -1; }
+        else if(c->arg == RADIO_END_PLAYLIST && !c->item && radio_end_playlist(NULL) <= 0){ *why = "Choose a playlist first"; return -1; }
         else if(c->arg == RADIO_END_STATION){ memset(&st, 0, sizeof st); radio_end_get(&st); if(!st.url[0]){ *why = "Choose a station first"; return -1; } }
         if(radio_end_set((int)c->arg, ps)){ *why = "Couldn't save that"; return -1; }
         return 0; }

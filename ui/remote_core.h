@@ -9,7 +9,8 @@
  *   POST /<token>/api/<command>    play_pause | play | pause | next | previous
  *                                  volume (value=0..120 or step=-120..120) | seek (position_ms=N) | play_mode (mode=0..4)
  *                                  balance (value=-10..10: 0 centred, negative left, positive right)
- *                                  list_end (mode=0..2 [pos=N url=U: a radio favourite as the station]; own player only)
+ *                                  list_end (mode=0..3 [pos=N url=U: a radio favourite as the station] [pl=ID flags=0..3:
+ *                                  the playlist for mode 3, Repeat 1 + Shuffle 2]; own player only)
  *                                  outputs (one of aux=0/1, bt=0/1, vol_aux=0..120, vol_bt=0..120, auto=0..2, codec=0..4;
  *                                  own player only)
  * Parameters come from the query string or an application/x-www-form-urlencoded body. Commands are POST only, so a
@@ -160,8 +161,10 @@ typedef struct {
     long position_ms, duration_ms;
     int  volume, volume_max;
     int  balance;            /* -10..10, 0 centred (the saved setting) */
-    int  end_mode;           /* After the List Ends 0..2, -1 = not offered (stock player) */
+    int  end_mode;           /* After the List Ends 0..3, -1 = not offered (stock player) */
     char end_station[96];    /* its station's name */
+    char end_playlist[96];   /* its playlist's name ("" none or gone), id and flags (Repeat 1, Shuffle 2) */
+    long end_pl_id; int end_pl_flags;
     unsigned queue_ver;      /* the queue list's version (queueview.h); 0 while no page shows the queue */
     /* Settings > Audio > Outputs, only while the own player runs (out_own 1; else "outputs":null) */
     int  out_own, out_aux, out_bt, out_vol_aux, out_vol_bt, out_bt_ready, out_auto, out_jack, out_bal;

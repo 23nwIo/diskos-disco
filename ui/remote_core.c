@@ -322,10 +322,13 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
     if(!strcmp(ep, "state")){ long q = 0; rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; rt.cmd.arg = param(r, "q", &q) == 0 && q == 1; return rt; }
     if(!strcmp(ep, "list_end")){
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
-        long m = -1, pos = 0; int pp = param(r, "pos", &pos), pu = param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name);
-        if(param(r, "mode", &m) || m < 0 || m > 2 || pp == -2 || pu == -2 || (pp == 0 && (pos < 1 || pu != 0))){
+        long m = -1, pos = 0, pl = 0, fl = 0; int pp = param(r, "pos", &pos), pu = param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name);
+        int ppl = param(r, "pl", &pl), pfl = param(r, "flags", &fl);
+        if(param(r, "mode", &m) || m < 0 || m > 3 || pp == -2 || pu == -2 || (pp == 0 && (pos < 1 || pu != 0))
+           || ppl == -2 || pfl == -2 || (ppl == 0) != (pfl == 0) || (ppl == 0 && (m != 3 || pl < 1 || fl < 0 || fl > 3))){
             memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
         rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LIST_END; rt.cmd.arg = m; rt.cmd.pos = pp == 0 ? pos : 0;
+        if(ppl == 0){ rt.cmd.id = pl; rt.cmd.offset = fl; rt.cmd.item = 1; }   /* the playlist for mode 3, with Repeat 1 / Shuffle 2 */
         if(pp != 0) rt.cmd.name[0] = 0;
         return rt;
     }
@@ -642,8 +645,9 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
     char ou[300] = "null", cl[32] = "";
-    char le[sizeof s->end_station * 6 + 48] = "null", les[sizeof s->end_station * 6];
-    if(s->end_mode >= 0 && rmt_json_escape(les, sizeof les, s->end_station) >= 0) snprintf(le, sizeof le, "{\"mode\":%d,\"station\":\"%s\"}", s->end_mode, les);
+    char le[sizeof s->end_station * 12 + 96] = "null", les[sizeof s->end_station * 6], lep[sizeof s->end_playlist * 6];
+    if(s->end_mode >= 0 && rmt_json_escape(les, sizeof les, s->end_station) >= 0 && rmt_json_escape(lep, sizeof lep, s->end_playlist) >= 0)
+        snprintf(le, sizeof le, "{\"mode\":%d,\"station\":\"%s\",\"playlist\":\"%s\",\"pl_id\":%ld,\"pl_flags\":%d}", s->end_mode, les, lep, s->end_pl_id, s->end_pl_flags);
     for(int i = 0; i < 5; i++) if(s->out_codecs & (1 << i)) snprintf(cl + strlen(cl), sizeof cl - strlen(cl), "%s%d", cl[0] ? "," : "", i);
     if(s->out_own)
         snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d,\"codec\":%d,\"codecs\":[%s],\"switching\":%s}",

@@ -197,7 +197,11 @@ static void test_core(void){
     CHECK(req("POST", p("/api/queue"), "action=add&kind=song").kind == RMT_R_BAD_PARAM && req("POST", p("/api/queue"), "action=nope&ver=1").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/list_end"), "mode=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_LIST_END && r.cmd.arg == 1 && r.cmd.pos == 0);
     r = req("POST", p("/api/list_end"), "mode=2&pos=3&url=http%3A%2F%2Fs.example%2Fa"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 2 && r.cmd.pos == 3 && !strcmp(r.cmd.name, "http://s.example/a"));
-    CHECK(req("POST", p("/api/list_end"), "mode=3").kind == RMT_R_BAD_PARAM && req("POST", p("/api/list_end"), "mode=2&pos=3").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/list_end"), "mode=4").kind == RMT_R_BAD_PARAM && req("POST", p("/api/list_end"), "mode=2&pos=3").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/list_end"), "mode=3"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 3 && !r.cmd.item);
+    r = req("POST", p("/api/list_end"), "mode=3&pl=7&flags=3"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 3 && r.cmd.item == 1 && r.cmd.id == 7 && r.cmd.offset == 3);
+    CHECK(req("POST", p("/api/list_end"), "mode=3&pl=7").kind == RMT_R_BAD_PARAM && req("POST", p("/api/list_end"), "mode=2&pl=7&flags=0").kind == RMT_R_BAD_PARAM
+          && req("POST", p("/api/list_end"), "mode=3&pl=0&flags=0").kind == RMT_R_BAD_PARAM && req("POST", p("/api/list_end"), "mode=3&pl=1&flags=4").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/list_end"), "mode=2&pos=0&url=x").kind == RMT_R_BAD_PARAM && req("GET", p("/api/list_end"), NULL).kind == RMT_R_BAD_METHOD);
     r = req("GET", p("/api/state?q=1"), NULL); CHECK(r.kind == RMT_R_STATE && r.cmd.arg == 1);
     r = req("GET", p("/api/state"), NULL); CHECK(r.kind == RMT_R_STATE && r.cmd.arg == 0);
@@ -546,7 +550,9 @@ static void *emu(void *a){
                         rsrv_done(1, NULL);
                     }
                 }
-                else if(c.kind == RMT_CMD_LIST_END){ if(c.arg == 2 && !c.pos && !s.end_station[0]) rsrv_done(0, "Choose a station first"); else { s.end_mode = (int)c.arg; if(c.pos) snprintf(s.end_station, sizeof s.end_station, "Station %ld", c.pos); rsrv_done(1, NULL); } }
+                else if(c.kind == RMT_CMD_LIST_END){ if(c.arg == 2 && !c.pos && !s.end_station[0]) rsrv_done(0, "Choose a station first"); else if(c.arg == 3 && !c.item && !s.end_pl_id) rsrv_done(0, "Choose a playlist first");
+                    else { s.end_mode = (int)c.arg; if(c.pos) snprintf(s.end_station, sizeof s.end_station, "Station %ld", c.pos);
+                           if(c.item){ s.end_pl_id = c.id; s.end_pl_flags = (int)c.offset; snprintf(s.end_playlist, sizeof s.end_playlist, "Playlist %ld", c.id - 1); } rsrv_done(1, NULL); } }
                 else if(c.kind == RMT_CMD_QUEUE){ const char *w = NULL; char *o = fake_queue(&c, &w); s.queue_ver = g_qver; rsrv_done_body(o != NULL, w, o); }
                 else if(c.kind == RMT_CMD_BALANCE){ s.balance = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_TOUCH){ g_touch_n++; g_touch_x = (int)c.offset; g_touch_y = (int)c.limit; rsrv_done(1, NULL); }

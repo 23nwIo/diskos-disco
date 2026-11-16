@@ -32,7 +32,7 @@ server follows it within a second or two; scan Show Link again for the new addre
 | Volume | 0-120, the player's own scale (the same as the hardware keys). After a start-up, until the volume first changes, the level the player restored at boot (its saved SYSCONFIG.VOLUME). |
 | Balance | -10 (left) to 10 (right), 0 centred, with a **Centre** button: the same setting as Settings > Audio > Balance, saved on the Disc. |
 | Outputs | Only while the own player runs (Settings > About > Player): AUX and Bluetooth each on or off, each with its own volume, Auto Outputs (Off, Newest, All connected) and, while Bluetooth plays, the codec of this connection (only those the headphones offer; the music pauses briefly), the same as Settings > Audio > Outputs. One output always stays on; Bluetooth needs connected headphones. The Volume slider moves every output that is on. |
-| After the list ends | Only with the own player: **Stop**, **Shuffle all songs** or **Play a radio station** when the last song of the list and of the queue has ended (Settings > Playback > After the List Ends). **Choose station** picks one of the radio favourites; by default it is the station played last. Songs added to the queue interrupt the station and it comes back when they have played. |
+| After the list ends | Only with the own player: **Stop**, **Shuffle all songs**, **Play a radio station** or **Play a playlist** when the last song of the list and of the queue has ended (Settings > Playback > After the List Ends). **Choose** picks one of the radio favourites (by default the station played last), or a playlist and how it plays: in order once, in order again and again, or shuffled (endless). Songs added to the queue interrupt the station and it comes back when they have played; during the playlist they play after the current song and the playlist goes on after them. |
 | EQ | Any built-in preset or user profile, by the names the EQ screen shows; saved like a choice on the Disc. |
 | Play mode | Sequential, Shuffle, Repeat one, Repeat all, Single. Saved like the Disc's own setting. Not available while Music Assistant plays. |
 
@@ -74,8 +74,41 @@ playlist (the Disc has no reorder function either).
 ### System page
 
 **System ›** at the top right opens a second page, `http://<address>:8088/<link code>/system`, with the **Status**,
-**Bluetooth** and **Screen** tabs; **‹ Remote** goes back. The address ends in `#status`, `#bt` or `#scr`, so a bookmark
+**Bluetooth**, **Screen** and **Party** tabs; **‹ Remote** goes back. The address ends in `#status`, `#bt`, `#scr` or `#party`, so a bookmark
 opens that tab. Keeping them apart keeps the control page small and quick to load on a phone.
+
+### Party mode
+
+For a party, guests get a page of their own: `http://<address>:8088/<party name>/`, without the link code. Nothing
+changes on the Disc's screens. The host sets it up on the system page's **Party** tab:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Party mode | off | Off: the guests' link answers 404. |
+| Party name | — | The guests' link: at least 2 letters, digits, `-` or `_` (upper and lower case differ). A new name locks out the old link. **Copy** copies the link. |
+| Change the volume | on | Guests get a volume slider. **Up to N %**: their 100 % is N % of the Disc's volume (scaled, so their slider still goes from 0 to 100). |
+| See what plays now | on | Off: title, artist, cover and position are hidden (for a music quiz). |
+| See the queue | on | Guests see the song playing now and the queued songs, with who queued them; their own are marked with a heart or a star. The host's own list after the queue (Up next) stays hidden. |
+| Skip songs | off | Guests get a Next button. |
+| Songs each guest may have in the queue | 3 | A place frees up once one of their songs starts playing. |
+| Songs of one guest in a row | 1 | Guests take turns: a guest's new song joins their next round instead of the end of the queue (Anna, Ben, Anna, Ben, …), never before the host's songs. When it would still play right after the same guest's song, it is refused, unless only that guest's songs are waiting. |
+| Add a song that is already queued | off | Off: a song already in the queue is refused. |
+| Give their name | on | Guests can enter a name (on their **You** tab), shown with their songs on both pages. |
+| Pick the radio station | off | Guests can search stations (the Disc's station search) and pick one; it becomes the station **When the queue is empty**. It never starts at once. Own player only. |
+| When the queue is empty | — | The same setting as **After the list ends**: stop, random songs from the library, a radio station or a playlist. |
+
+**Guests** lists the guests the Disc has seen, with their names, how many songs each has queued and when they were last
+seen.
+
+Guests can browse the whole library (songs, albums, artists, playlists, favourites, folders) and add single songs,
+one at a time; a file in Folders that holds several tracks (a CUE or ISO image) is added from Albums or Songs instead.
+They cannot pause, go back, seek, change the EQ, the outputs, Bluetooth, playlists or favourites, and the system page
+and every other command answer 404 on their link. Each guest's page may pick its own colour and heart or star.
+
+A guest is told apart by a random id their browser keeps; a private window or another browser counts as a new guest.
+The ids, names and who queued what are kept in RAM only and start afresh after a restart. The settings are kept on
+the SD card in `.diskos/state/party.conf` (written only when the host changes one); without a card party mode is off.
+The host's own page has no limits and shows "by <name>" on guests' songs. Not yet tested on a Disc.
 
 ### Page look
 
@@ -158,7 +191,9 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `GET api/queue` (`limit=1..500` Up next rows, default 100) | `{"ok":true,"ver":N,"shuffle":…,"items":[{"k":"cur"\|"queue"\|"next"\|"other","i":queue index,"b":Up next row id,"t":"title","a":"artist","f":"file name","d":ms,"st":true for a station}],"more":N}` |
 | `POST api/queue` with `action=add` and `kind=song&song_id=N`, `kind=album&name=…` or `kind=artist&name=…` or `kind=next&b=ID` (an Up next row) | Adds to the end of the queue (`{"ok":true,"added":N}`). |
 | `POST api/queue` with `ver` and `action=jump&kind=queue&i=N` \| `action=jump&kind=next&b=ID` \| `action=remove&i=N` \| `action=move&i=N&to=M` \| `action=clear` | Refused with "The queue changed" when `ver` is not the list's version any more. |
-| `POST api/list_end` with `mode=0..2` (stop, shuffle all, station) and optionally `pos=N&url=U` (radio favourite N as the station) | After the List Ends (own player only). `api/state` reports `"list_end":{"mode":N,"station":"name"}`, or `null` with the stock player. |
+| `POST api/list_end` with `mode=0..3` (stop, shuffle all, station, playlist) and optionally `pos=N&url=U` (radio favourite N as the station) or, with mode 3, `pl=ID&flags=0..3` (the playlist; Repeat 1, Shuffle 2) | After the List Ends (own player only). `api/state` reports `"list_end":{"mode":N,"station":"name","playlist":"name","pl_id":ID,"pl_flags":F}`, or `null` with the stock player. |
+| `GET api/party`, `POST api/party` with any of `on`, `name`, `vol`, `maxvol=1..100`, `np`, `queue`, `skip`, `total=1..50`, `consec=1..10`, `repeat`, `radio`, `names` (0/1 unless stated) | Party mode settings (saved on the SD card): `{"ok":true,"settings":{…,"name":"…","own_player":…},"guests":[{"name":"…","queued":N,"seen_s":N}]}`. |
+| `POST api/queue` with `action=add&kind=file&path=…` | Adds a card file (all its tracks). |
 | `POST api/outputs` with one of `aux=0/1`, `bt=0/1`, `vol_aux=0..120`, `vol_bt=0..120`, `auto=0..2`, `codec=0..4` (0 SBC, 1 AAC, 2 LDAC, 3 aptX, 4 aptX HD) | Settings > Audio > Outputs (own player only; refused with the reason otherwise). `api/state` reports `"outputs":{"aux","bt","vol_aux","vol_bt","bt_ready","auto","jack","bal","codec" (-1 none),"codecs":[ids offered],"switching"}`, or `null` with the stock player. |
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
@@ -167,6 +202,8 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/radio_search` with `q` | Start a station search (`q` empty: popular stations); then poll `GET api/library/radio_search` until `search` is not `busy`. |
 | `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
+
+The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio`), `POST api/radio_search` and `POST api/play_item` (`kind=radio_hit`: the station when the queue is empty). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
 (`message` says why), 503 another command is still running, 504 the UI did not answer in time.
@@ -184,7 +221,8 @@ curl "http://192.168.1.50:8088/<link code>/api/state"
 |---|---|
 | `ui/queueview.c` | The queue list and its jump checks, shared with the MPD server. |
 | `ui/remote_core.c` | Request parsing, routing, link code, JSON (pure, host-tested). |
-| `ui/remote_page/` | The two pages' source: `remote.html` (control page), `system.html` (system page), shared `style.css` and `common.js`. `python3 ui/tools/gen_remote_page.py` writes them into `ui/remote_page.c` (generated, committed; `--check` tells whether it is up to date). |
+| `ui/party.c` | Party mode: the settings on the card, the guests and their rules, what guests see. |
+| `ui/remote_page/` | The pages' source: `remote.html` (control page), `system.html` (system page), `party.html` (the guests' page), shared `style.css` and `common.js`. `python3 ui/tools/gen_remote_page.py` writes them into `ui/remote_page.c` (generated, committed; `--check` tells whether it is up to date). |
 | `ui/remote_srv.c` | The server thread and the one-slot command mailbox to the UI (no LVGL). |
 | `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to`, `ui_set_workmode`, the `mdb_*` library queries, the `ui_play_*` entry points and the Radio app's `radio.h`. |
 | `ui/tests/remote_test.c` | Unit tests and the HTTP round trip (`make -C ui/tests remote_test`); `./remote_test --serve PORT` serves the page with a stand-in player for browser checks. |

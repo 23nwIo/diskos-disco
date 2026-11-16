@@ -17,5 +17,11 @@ function star(b,on){b.classList.add('fa');b.innerHTML=LK.fav==='star'?(on?'&#973
 function sheet(t,acts){var s=$('sh');s.textContent='';var h=document.createElement('b');h.textContent=t;s.appendChild(h);
 acts.concat([['Cancel',null]]).forEach(function(a){var b=document.createElement('button');b.textContent=a[0];b.onclick=function(){shut();if(a[1])a[1]()};s.appendChild(b)});
 s.classList.remove('hide');$('shb').classList.remove('hide')}
+/* After the list ends (own player): the station (a radio favourite) or a playlist, played once, again and again, or shuffled */
+var PLF=['once','again and again','again and again','shuffled','shuffled'];function lesay(le){return le.mode===2?(le.station?'Station: '+le.station:'No station chosen yet'):le.mode===3?(le.pl_id?'Playlist: '+(le.playlist||'(deleted)')+', '+PLF[le.pl_flags&2?3:le.pl_flags]:'No playlist chosen yet'):''}
+function lpick(m,then){fetch('api/library/'+(m==3?'playlists':'radio')+'?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){var a=(j.items||[]).map(function(x){return[x.name,function(){
+if(m==3)sheet(x.name,[['In order, once',0],['In order, again and again',1],['Shuffled',2]].map(function(f){return[f[0],function(){cmd('list_end',enc({mode:3,pl:x.id,flags:f[1]})).then(function(ok){if(ok)say('Plays '+x.name+' after the list',1);if(then)then()})}]}));
+else cmd('list_end',enc({mode:2,pos:x.pos,url:x.url})).then(function(ok){if(ok)say('Plays '+x.name+' after the list',1);if(then)then()})}]});
+if(!a.length){say(m==3?'No playlists yet':'No radio favourites yet - save stations in the Radio tab');return}sheet(m==3?'Playlist after the list':'Station after the list',a)}).catch(function(){say('Player not reachable')})}
 function shut(){$('sh').classList.add('hide');$('shb').classList.add('hide')}
 look();try{matchMedia('(prefers-color-scheme: light)').addEventListener('change',look)}catch(e){}
