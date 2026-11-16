@@ -36,6 +36,12 @@ static size_t g_box_len;                     /* its length when binary (0 = a NU
 static const char *g_box_ctype;              /* its type when binary */
 static void (*g_notify)(void);
 static atomic_long g_queue_at;                 /* CLOCK_MONOTONIC s | 1 of the last api/state?q=1 (0 never) */
+static char g_party[RMT_PARTY_NAME_MAX + 1];             /* under g_mu */
+void rsrv_set_party(const char *name){
+    pthread_mutex_lock(&g_mu);
+    if(strcmp(g_party, name ? name : "")) snprintf(g_party, sizeof g_party, "%s", name ? name : "");
+    pthread_mutex_unlock(&g_mu);
+}
 int rsrv_queue_watched(void){
     long at = atomic_load(&g_queue_at); if(!at) return 0;
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -149,12 +155,17 @@ static void handle(int c){
     rmt_req_t rq;
     if(rmt_req_parse(buf, &rq)){ reply(c, "400 Bad Request", "text/plain", "bad request", NULL); return; }
     rmt_route_t rt = rmt_route(&rq, g_token);
+    char party[sizeof g_party];
+    if(rt.kind == RMT_R_NOT_FOUND){                       /* not the host's link: the guests' one, while the party is on */
+        pthread_mutex_lock(&g_mu); memcpy(party, g_party, sizeof party); pthread_mutex_unlock(&g_mu);
+        if(party[0]) rt = rmt_route_party(&rq, party);
+    }
     switch(rt.kind){
     case RMT_R_REDIRECT: {
-        char loc[64]; snprintf(loc, sizeof loc, "Location: /%s/\r\n", g_token);
+        char loc[64]; snprintf(loc, sizeof loc, "Location: /%s/\r\n", rt.cmd.guest ? party : g_token);
         reply(c, "301 Moved Permanently", "text/plain", "", loc); break; }
-    case RMT_R_PAGE: case RMT_R_SYS_PAGE:
-        reply(c, "200 OK", "text/html; charset=utf-8", rt.kind == RMT_R_PAGE ? RMT_PAGE_HTML : RMT_SYS_HTML,
+    case RMT_R_PAGE: case RMT_R_SYS_PAGE: case RMT_R_PARTY_PAGE:
+        reply(c, "200 OK", "text/html; charset=utf-8", rt.kind == RMT_R_PAGE ? RMT_PAGE_HTML : rt.kind == RMT_R_SYS_PAGE ? RMT_SYS_HTML : RMT_PARTY_HTML,
               "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'\r\n");
         break;
     case RMT_R_STATE: {

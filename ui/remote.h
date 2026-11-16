@@ -17,6 +17,9 @@ void remote_test_link(const char *url);   /* host renders only */
 #include "remote_core.h"
 int  remote_exec(const rmt_cmd_t *c, const char **why, char **body);   /* MPD server: run a command as the page would (0 ok) */
 void remote_state(rmt_state_t *s);   /* MPD server: the playback snapshot */
-const char *remote_token(void);      /* the saved token (made now if missing); NULL if none can be made */
+const char *remote_token(void);
+/* A file on the card (a path relative to it, as api/library/folder lists it): its one song in the library. 1 and *id;
+ * 0 and *why (not indexed, several tracks in it, no such file, the library busy). Main thread. */
+int  remote_card_song(const char *rel, int *id, const char **why);      /* the saved token (made now if missing); NULL if none can be made */
 int  remote_test_request(const char *method, const char *path_query, const char *body, char **out, const char **why);   /* host tests only */
 #endif

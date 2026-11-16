@@ -18,7 +18,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}input[type=checkbox]{accent
 .tr button{flex:1;border:0;border-radius:12px;padding:.8em 0;font-size:1.3em;background:var(--card);color:var(--fg)}
 .tr button:disabled,input:disabled{opacity:.35}
 .tr button.pp{background:var(--acc);color:#fff}
-select,input[type=search]{width:100%;padding:.6em;border-radius:10px;font-size:1em;background:var(--card);color:var(--fg);border:1px solid var(--line)}
+select,input[type=search],input[type=number],input:not([type]){width:100%;padding:.6em;border-radius:10px;font-size:1em;background:var(--card);color:var(--fg);border:1px solid var(--line)}
 #msg{position:fixed;left:50%;bottom:1em;transform:translateX(-50%);max-width:90%;background:var(--card);border:1px solid var(--line);padding:.5em 1em;border-radius:99px;font-size:.9em;box-shadow:0 2px 12px #0004}#msg:empty{display:none}#msg.err{color:#e66}label{font-size:.85em;color:var(--mut)}
 .hd{display:flex;align-items:center;gap:.5em;margin:.8em 0 .4em}.hd b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hd button,.more{border:0;border-radius:10px;padding:.5em .8em;background:var(--card);color:var(--fg);font-size:.95em}
@@ -37,3 +37,4 @@ select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:6
 .kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}
 .top a{color:var(--acc);text-decoration:none;font-weight:600}
 .qh{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .3em}#ql .r:disabled{opacity:1;color:var(--fg)}
+.blk label{display:block;margin:.6em 0 .2em}.blk b{display:block}

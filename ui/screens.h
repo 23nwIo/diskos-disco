@@ -35,6 +35,10 @@ int  queue_add_ids(const int *ids, int n);   /* exact songs, saved once; -1 if t
 int  queue_add_path(const char *path);   /* 1 added, 0 already there, -1 failed */
 int  queue_add_group(const char *col, const char *val);
 int  queue_add_folder(const char *dir);
+int  queue_add_ids_at(const int *ids, int n, int at, int who);   /* party mode: insert at position at, tagged with guest who */
+int  queue_item_who(int i);                  /* the guest who queued song i (0 = not a guest) */
+int  queue_item_song(int i);                 /* queued song i's SONG.ID (0 unknown) */
+int  queue_now_who(void);                    /* the guest whose queued song plays now (0 = none) */
 void queue_clear(void);
 void queue_touched(void);
 void queue_open(void);

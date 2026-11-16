@@ -31,6 +31,7 @@
 #include "system.h"
 #include "modes.h"
 #include "queueview.h"
+#include "party.h"
 #include <sys/statvfs.h>
 #include <stdarg.h>
 #include "version.h"
@@ -279,7 +280,11 @@ static int run(const rmt_cmd_t *c, const char **why){
         opl_outputs_t o; int au;
         if(settings_outputs_state(&o, &au)){ *why = "Only with the own player (Settings > About > Player)"; return -1; }
         rc_station_t st; const rc_station_t *ps = NULL;
-        if(c->pos){ rmt_cmd_t f = *c; f.sub = RMT_I_RADIO; if(!(ps = radio_pick(&f, why))) return -1; st = *ps; ps = &st; }
+        if(c->pos){
+            rmt_cmd_t f = *c; f.sub = c->sub == RMT_I_RADIO_HIT ? RMT_I_RADIO_HIT : RMT_I_RADIO;   /* party guests: a search hit */
+            if(!(ps = radio_pick(&f, why))) return -1;
+            st = *ps; ps = &st;
+        }
         else if(c->arg == RADIO_END_STATION){ memset(&st, 0, sizeof st); radio_end_get(&st); if(!st.url[0]){ *why = "Choose a station first"; return -1; } }
         if(radio_end_set((int)c->arg, ps)){ *why = "Couldn't save that"; return -1; }
         return 0; }
@@ -361,6 +366,17 @@ static int card_path(const char *rel, char *out, size_t cap){
     if(strncmp(real, FOLDERBROWSER_ROOT, rl) || (real[rl] && real[rl] != '/')) return -1;
     if(snprintf(out, cap, "%s", full) >= (int)cap) return -1;
     return 0;
+}
+int remote_card_song(const char *rel, int *id, const char **why){
+    char full[PATH_MAX]; int r = -1, ids[400];
+    if(sd_io_begin()){ r = card_path(rel, full, sizeof full); sd_io_end(); }
+    if(r){ *why = "No such file"; return 0; }
+    int n = mdb_queue_path_ids(full, ids, 400);
+    if(n < 0){ *why = "The library is busy - try again"; return 0; }
+    if(n <= 0){ *why = "Not in the library yet - the host can rescan the card"; return 0; }
+    if(n > 1){ *why = "This file holds several tracks - pick one under Albums or Songs"; return 0; }
+    *id = ids[0];
+    return 1;
 }
 typedef struct { char name[256]; int dir; } fent_t;
 static int fent_cmp(const void *a, const void *b){
@@ -850,6 +866,7 @@ static char *queue_json(const qv_view_t *v, int limit){
         rmt_buf_printf(&b, "%s{\"k\":\"%s\",\"i\":%d,\"b\":%d,\"d\":%d,\"st\":%s,\"t\":", first ? "" : ",", Q_KIND[e->kind], e->idx,
                        e->base_id, e->dur_ms, e->kind == QV_OTHER && e->ord ? "true" : "false");
         rmt_buf_str(&b, e->title); rmt_buf_put(&b, ",\"a\":"); rmt_buf_str(&b, e->artist);
+        if(e->kind == QV_QUEUE && queue_item_who(e->idx)){ rmt_buf_put(&b, ",\"by\":"); rmt_buf_str(&b, party_guest_name(queue_item_who(e->idx))); }
         rmt_buf_put(&b, ",\"f\":"); rmt_buf_str(&b, f ? f + 1 : e->path); rmt_buf_put(&b, "}");
         first = 0;
     }
@@ -879,7 +896,14 @@ static int queue_add_next(int b, const char **why, char **body){
 static int queue_cmd(const rmt_cmd_t *c, const char **why, char **body){
     if(c->sub == RMT_Q_ADD && c->item == -1) return queue_add_next((int)c->id, why, body);
     if(c->sub == RMT_Q_ADD){                               /* as the Disc's song / album / artist menu "Add to queue" */
-        int id = (int)c->song_id, r = c->item == RMT_I_SONG ? queue_add_ids(&id, 1) : queue_add_group(c->item == RMT_I_ALBUM ? "ALBUM" : "ARTIST", c->name);
+        int id = (int)c->song_id, r;
+        if(c->item == RMT_I_FILE){                       /* a file from Folders: all its tracks (a CUE/ISO image has several) */
+            char full[PATH_MAX]; int pr = -1;
+            if(sd_io_begin()){ pr = card_path(c->name, full, sizeof full); sd_io_end(); }
+            if(pr){ *why = "No such file"; return -1; }
+            r = queue_add_path(full);
+            if(r == 0){ *why = "Not in the library yet - rescan the card on the Disc"; return -1; }
+        } else r = c->item == RMT_I_SONG ? queue_add_ids(&id, 1) : queue_add_group(c->item == RMT_I_ALBUM ? "ALBUM" : "ARTIST", c->name);
         if(r == -2){ *why = "The library is busy - try again"; return -1; }
         if(r == -1){ *why = "The queue is full"; return -1; }
         if(r <= 0){ *why = "Nothing new to add"; return -1; }
@@ -1048,6 +1072,7 @@ static char *read_cover(const char **why){
 }
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL; g_blob_len = 0;
+    if(c->guest || c->kind == RMT_CMD_PARTY) return party_dispatch(c, why, body);   /* checks, then back here as the host */
     if(c->kind == RMT_CMD_COVER){ *body = read_cover(why); return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_SCREEN){
         size_t n = 0; *body = rscr_bmp(&n, why);
@@ -1106,22 +1131,26 @@ int remote_test_request(const char *method, const char *path_query, const char *
     static const char tok[] = "testtesttesttesttest";
     char raw[REMOTE_REQ_MAX];
     *out = NULL; *why = NULL;
-    snprintf(raw, sizeof raw, "%s /%s%s HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s", method, tok, path_query, strlen(body ? body : ""), body ? body : "");
+    int guest = path_query[0] == '~';                  /* "~/api/..." : through the guests' link /Party_1/ */
+    snprintf(raw, sizeof raw, "%s /%s%s HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s", method, guest ? "Party_1" : tok, path_query + guest,
+             strlen(body ? body : ""), body ? body : "");
     rmt_req_t r; if(rmt_req_parse(raw, &r)) return -99;
-    rmt_route_t rt = rmt_route(&r, tok);
+    rmt_route_t rt = guest ? rmt_route_party(&r, "Party_1") : rmt_route(&r, tok);
     if(rt.kind != RMT_R_CMD) return -100 - (int)rt.kind;
     return dispatch(&rt.cmd, why, out);
 }
 void remote_pump(void){
     static uint32_t last;
     if(!rsrv_running()) return;
+    rsrv_set_party(party_link_name());
     rmt_state_t s;
     if(!last || lv_tick_elaps(last) >= 250){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }   /* a page polls 1/s */
     rmt_cmd_t c;
     if(rsrv_take(&c)){
         const char *why = NULL; char *body = NULL;
         int rc = dispatch(&c, &why, &body);
-        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_SCREEN || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST || (c.kind == RMT_CMD_QUEUE && c.sub == RMT_Q_LIST);
+        int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_SCREEN || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST || (c.kind == RMT_CMD_QUEUE && c.sub == RMT_Q_LIST)
+                 || c.kind == RMT_CMD_PARTY_STATE || (c.kind == RMT_CMD_PARTY && !c.arg);
         if(!ro || rc != 0){ fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr); }   /* pages poll the reads: log only changes and failures */
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);

@@ -3,7 +3,8 @@
 # Copyright (C) 2026 diskOS contributors
 """Build ui/remote_page.c (the Remote Control web pages) from ui/remote_page/.
 
-remote.html (Now playing, queue, library) and system.html (Status, Bluetooth, Screen) each contain the markers
+remote.html (Now playing, queue, library), system.html (Status, Bluetooth, Screen, Party) and party.html (the
+guests' page in party mode) each contain the markers
 @@STYLE@@ (style.css) and @@COMMON@@ (common.js), which are pasted in, so every page is one self-contained file
 (the server sends no other files and the Content-Security-Policy allows inline code only).
 
@@ -16,7 +17,7 @@ import sys
 UI = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(UI, 'remote_page')
 OUT = os.path.join(UI, 'remote_page.c')
-PAGES = [('RMT_PAGE_HTML', 'remote.html'), ('RMT_SYS_HTML', 'system.html')]
+PAGES = [('RMT_PAGE_HTML', 'remote.html'), ('RMT_SYS_HTML', 'system.html'), ('RMT_PARTY_HTML', 'party.html')]
 
 
 def read(name):

@@ -36,6 +36,63 @@ static rmt_route_t req(const char *method, const char *path, const char *body){
 }
 static char *p(const char *suffix){ static char b[256]; snprintf(b, sizeof b, "/%s%s", TOK, suffix); return b; }
 
+static rmt_route_t preq(const char *method, const char *path, const char *body){
+    static char buf[REMOTE_REQ_MAX];
+    if(body) snprintf(buf, sizeof buf, "%s %s HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s", method, path, strlen(body), body);
+    else     snprintf(buf, sizeof buf, "%s %s HTTP/1.1\r\n\r\n", method, path);
+    rmt_req_t r; rmt_route_t bad; memset(&bad, 0, sizeof bad); bad.kind = -1;
+    if(rmt_req_parse(buf, &r)) return bad;
+    return rmt_route_party(&r, "Fest_1");
+}
+static void test_party(void){
+    CHECK(rmt_party_name_ok("ab") && rmt_party_name_ok("Fest_1-x") && !rmt_party_name_ok("a") && !rmt_party_name_ok("System")
+          && !rmt_party_name_ok("api") && !rmt_party_name_ok("a b") && !rmt_party_name_ok("f%C3%BC") && !rmt_party_name_ok("123456789012345678901234567890123"));
+    /* turns: who queued each song (0 = the host) */
+    int q1[] = { 1, 2 }; CHECK(rmt_party_place(q1, 2, 1, 1, 0) == 2);          /* A B + A -> A B A */
+    int q2[] = { 1, 2, 1 }; CHECK(rmt_party_place(q2, 3, 2, 1, 0) == 3);       /* B's 2nd after A's 2nd */
+    int q3[] = { 1, 1, 1 }; CHECK(rmt_party_place(q3, 3, 2, 1, 0) == 1);       /* B's 1st right after A's 1st */
+    CHECK(rmt_party_place(q3, 3, 1, 1, 0) == 3);                                 /* only A's songs wait: A may go on */
+    CHECK(rmt_party_place(NULL, 0, 1, 1, 1) == 0);                               /* nothing queued, A's song plays: fine */
+    int q4[] = { 2, 1 }; CHECK(rmt_party_place(q4, 2, 1, 1, 0) == -1);         /* B A + A: two of A's in a row */
+    CHECK(rmt_party_place(q4, 2, 1, 2, 0) == 2);                                 /* allowed with 2 in a row */
+    int q5[] = { 0, 0, 2 }; CHECK(rmt_party_place(q5, 3, 1, 1, 0) == 3);       /* never before the host's songs */
+    int q6[] = { 1, 0 }; CHECK(rmt_party_place(q6, 2, 1, 1, 1) == 2);          /* the host's song separates */
+    int q7[] = { 2 }; CHECK(rmt_party_place(q7, 1, 1, 1, 1) == 1);             /* A plays now, B queued: A after B */
+    /* the guests' link: their page and API only, everything else 404 */
+    CHECK(preq("GET", "/Fest_1", NULL).kind == RMT_R_REDIRECT && preq("GET", "/Fest_1", NULL).cmd.guest);
+    CHECK(preq("GET", "/Fest_1/", NULL).kind == RMT_R_PARTY_PAGE);
+    CHECK(preq("GET", "/fest_1/", NULL).kind == RMT_R_NOT_FOUND && preq("GET", "/Fest_12/", NULL).kind == RMT_R_NOT_FOUND);
+    CHECK(preq("GET", "/Fest_1/system", NULL).kind == RMT_R_NOT_FOUND);
+    rmt_route_t r = preq("GET", "/Fest_1/api/state?g=abcdefgh12", NULL);
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY_STATE && r.cmd.guest && !strcmp(r.cmd.gid, "abcdefgh12"));
+    CHECK(preq("GET", "/Fest_1/api/state?g=short", NULL).kind == RMT_R_BAD_PARAM);
+    r = preq("POST", "/Fest_1/api/queue", "action=add&kind=song&song_id=3&g=abcdefgh12&n=Anna+B");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_QUEUE && r.cmd.sub == RMT_Q_ADD && r.cmd.song_id == 3 && !strcmp(r.cmd.gname, "Anna B"));
+    CHECK(preq("POST", "/Fest_1/api/queue", "action=add&kind=song&song_id=3").kind == RMT_R_BAD_PARAM);   /* who adds it? */
+    CHECK(preq("POST", "/Fest_1/api/queue", "action=add&kind=album&name=X&g=abcdefgh12").kind == RMT_R_NOT_FOUND);   /* single songs only */
+    CHECK(preq("POST", "/Fest_1/api/queue", "action=clear&ver=1&g=abcdefgh12").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/queue", "action=add&kind=file&path=a%2Fb.flac&g=abcdefgh12").cmd.item == RMT_I_FILE);
+    CHECK(preq("GET", "/Fest_1/api/queue", NULL).kind == RMT_R_CMD);
+    CHECK(preq("POST", "/Fest_1/api/volume", "value=100").kind == RMT_R_CMD && preq("POST", "/Fest_1/api/volume", "value=101").kind == RMT_R_BAD_PARAM);
+    CHECK(preq("POST", "/Fest_1/api/volume", "step=5").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/next", "").kind == RMT_R_CMD && preq("POST", "/Fest_1/api/previous", "").kind == RMT_R_NOT_FOUND);
+    const char *no[] = { "/Fest_1/api/play_pause", "/Fest_1/api/balance", "/Fest_1/api/outputs", "/Fest_1/api/eq", "/Fest_1/api/bluetooth",
+                         "/Fest_1/api/reboot", "/Fest_1/api/party", "/Fest_1/api/list_end", "/Fest_1/api/favorite", "/Fest_1/api/playlist_create",
+                         "/Fest_1/api/radio_fav_add", "/Fest_1/api/work_mode", "/Fest_1/api/touch", "/Fest_1/api/seek", "/Fest_1/api/radio_stop" };
+    for(size_t i = 0; i < sizeof no / sizeof no[0]; i++) CHECK(preq("POST", no[i], "value=1&preset=1&confirm=1&g=abcdefgh12").kind == RMT_R_NOT_FOUND
+                                                               || preq("POST", no[i], "value=1&preset=1&confirm=1&g=abcdefgh12").kind == RMT_R_BAD_PARAM);
+    CHECK(preq("GET", "/Fest_1/api/status", NULL).kind == RMT_R_NOT_FOUND && preq("GET", "/Fest_1/api/screen", NULL).kind == RMT_R_NOT_FOUND);
+    CHECK(preq("GET", "/Fest_1/api/library/playlists", NULL).kind == RMT_R_CMD && preq("GET", "/Fest_1/api/library/folder?path=Music", NULL).kind == RMT_R_CMD);
+    CHECK(preq("GET", "/Fest_1/api/library/radio", NULL).kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/play_item", "kind=song&song_id=1").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/play_item", "kind=radio_hit&pos=1&url=http%3A%2F%2Fx").kind == RMT_R_CMD);
+    /* the host's settings */
+    r = req("POST", p("/api/party"), "on=1&name=Fest_1&maxvol=80&total=5");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY && r.cmd.arg == 1 && r.cmd.party[RMT_P_ON] == 1 && r.cmd.party[RMT_P_MAXVOL] == 80
+          && r.cmd.party[RMT_P_TOTAL] == 5 && r.cmd.party[RMT_P_SKIP] == -1 && !strcmp(r.cmd.name, "Fest_1"));
+    CHECK(req("POST", p("/api/party"), "maxvol=0").kind == RMT_R_BAD_PARAM && req("POST", p("/api/party"), "name=a").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/party"), "").kind == RMT_R_BAD_PARAM && req("GET", p("/api/party"), NULL).cmd.arg == 0);
+}
 static void test_core(void){
     unsigned char rnd[13]; for(int i = 0; i < 13; i++) rnd[i] = (unsigned char)(i * 37 + 11);
     char t[REMOTE_TOKEN_LEN + 1]; rmt_token_encode(rnd, sizeof rnd, t);
@@ -283,7 +340,7 @@ static void test_core(void){
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
     memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0; memset(s.bt_device, 1, sizeof s.bt_device - 1); s.bt_device[sizeof s.bt_device - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
-    CHECK(strlen(RMT_PAGE_HTML) < 32768 && strlen(RMT_SYS_HTML) < 32768);   /* each page stays light */
+    CHECK(strlen(RMT_PAGE_HTML) < 32768 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768);   /* each page stays light */
 }
 
 /* ---------------------------------------------------------------- server round trip */
@@ -395,6 +452,39 @@ static void fake_bt_cmd(const rmt_cmd_t *c){
     }
     rsrv_done(1, NULL);
 }
+/* stand-in party: settings, guests' state and queue (the real rules are remote_library_test.py's) */
+static int g_pv[RMT_P_N]; static char g_pname[40] = "Fest_1"; static int g_pq;
+static void fake_party(const rmt_cmd_t *c, rmt_state_t *s){
+    rmt_buf_t b = {0};
+    if(c->kind == RMT_CMD_PARTY){
+        for(int k = 0; c->arg && k < RMT_P_N; k++) if(c->party[k] >= 0) g_pv[k] = c->party[k];
+        if(c->arg && c->name[0]){ snprintf(g_pname, sizeof g_pname, "%.32s", c->name); rsrv_set_party(g_pname); }
+        rmt_buf_put(&b, "{\"ok\":true,\"settings\":{");
+        for(int k = 0; k < RMT_P_N; k++) rmt_buf_printf(&b, "\"%s\":%d,", RMT_PARTY_KEYS[k].key, g_pv[k]);
+        rmt_buf_put(&b, "\"own_player\":true,\"name\":"); rmt_buf_str(&b, g_pname);
+        rmt_buf_put(&b, "},\"guests\":[{\"name\":\"Anna <A>\",\"queued\":2,\"seen_s\":4},{\"name\":\"\",\"queued\":0,\"seen_s\":300}]}");
+    } else if(c->kind == RMT_CMD_PARTY_STATE){
+        rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"you\":",
+                       g_pv[RMT_P_NP], g_pv[RMT_P_QUEUE], g_pv[RMT_P_VOL], g_pv[RMT_P_SKIP], g_pv[RMT_P_RADIO], g_pv[RMT_P_NAMES], g_pv[RMT_P_TOTAL], g_pv[RMT_P_CONSEC],
+                       g_pv[RMT_P_REPEAT], g_pq, g_pv[RMT_P_TOTAL] > g_pq ? g_pv[RMT_P_TOTAL] - g_pq : 0);
+        rmt_buf_str(&b, c->gname);
+        rmt_buf_printf(&b, "},\"playing\":true,\"has_track\":true,\"controllable\":true,\"source\":\"local\",\"volume\":%d,\"title\":", s->volume * 100 / 120);
+        rmt_buf_str(&b, s->title); rmt_buf_put(&b, ",\"artist\":\"Artist\",\"album\":\"Album\",\"station\":\"\",\"stream_title\":\"\",\"art\":\"a1\",\"position_ms\":61000,\"duration_ms\":200000,\"by\":\"Anna <A>\",\"by_you\":false");
+        rmt_buf_printf(&b, ",\"queue_ver\":%d}", g_pq + 1);
+    } else if(c->kind == RMT_CMD_QUEUE && c->sub == RMT_Q_ADD){
+        if(g_pq >= g_pv[RMT_P_TOTAL]){ rsrv_done(0, "Your songs are all in the queue - you can add another once one plays"); return; }
+        g_pq++; rmt_buf_printf(&b, "{\"ok\":true,\"added\":1,\"place\":%d,\"left\":%d}", g_pq * 2, g_pv[RMT_P_TOTAL] - g_pq);
+    } else if(c->kind == RMT_CMD_QUEUE){
+        rmt_buf_put(&b, "{\"ok\":true,\"ver\":1,\"items\":[{\"k\":\"cur\",\"d\":200000,\"mine\":false,\"t\":\"Track <one>\",\"a\":\"Artist\",\"by\":\"Anna <A>\"}");
+        for(int i = 0; i < 4 + g_pq; i++) rmt_buf_printf(&b, ",{\"k\":\"queue\",\"d\":180000,\"mine\":%s,\"t\":\"Song %d\",\"a\":\"Band\",\"by\":\"%s\"}",
+                                                         i >= 4 ? "true" : "false", i + 1, i >= 4 ? c->gname : i % 2 ? "" : "Ben");
+        rmt_buf_put(&b, "]}");
+    } else if(c->kind == RMT_CMD_NEXT && !g_pv[RMT_P_SKIP]){ rsrv_done(0, "Skipping is off at this party"); return; }
+    else if(c->kind == RMT_CMD_BROWSE){ rsrv_done_body(1, NULL, fake_browse(c)); return; }
+    else if(c->kind == RMT_CMD_VOLUME){ s->volume = (int)(c->arg * 120 / 100); rsrv_done(1, NULL); return; }
+    else { rsrv_done(1, NULL); return; }
+    rsrv_done_body(1, NULL, rmt_buf_take(&b));
+}
 static int g_touch_n, g_touch_x, g_touch_y;   /* the stand-in screen marks where the last touch lifted */
 static void *emu(void *a){
     (void)a;
@@ -410,7 +500,8 @@ static void *emu(void *a){
             rmt_cmd_t c;
             if(rsrv_take(&c)){
                 g_last = c; g_ncmd++;
-                if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
+                if((c.guest && c.kind != RMT_CMD_COVER) || c.kind == RMT_CMD_PARTY) fake_party(&c, &s);
+                else if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));
                 else if(c.kind == RMT_CMD_RESCAN){ g_scan = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_BT_LIST) rsrv_done_body(1, NULL, fake_bt());
@@ -577,11 +668,14 @@ int main(int argc, char **argv){
     rmt_token_encode(rnd, sizeof rnd, tok); TOK = tok;
     if(argc == 3 && !strcmp(argv[1], "--serve")){          /* manual/browser check: serve the page with the stand-in player */
         if(rsrv_start("127.0.0.1", atoi(argv[2]), TOK)) return 1;
+        for(int k = 0; k < RMT_P_N; k++) g_pv[k] = RMT_PARTY_KEYS[k].def;
+        g_pv[RMT_P_ON] = 1; rsrv_set_party(g_pname);
         printf("http://127.0.0.1:%d/%s/\n", rsrv_port(), TOK); fflush(stdout);
         pthread_t th; pthread_create(&th, NULL, emu, NULL); pthread_join(th, NULL);
         return 0;
     }
     test_core();
+    test_party();
     test_server();
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     puts("PASS remote control: parsing, routing, token, JSON, HTTP round trip");

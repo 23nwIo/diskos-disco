@@ -303,17 +303,15 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_OUTPUTS) return "outputs";
     if(k == RMT_CMD_QUEUE) return "queue";
     if(k == RMT_CMD_LIST_END) return "list_end";
+    if(k == RMT_CMD_PARTY_STATE) return "party_state";
+    if(k == RMT_CMD_PARTY) return "party";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
 
-rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
+/* everything after /<token>: slash is "/..." or NULL (the bare /<token>) */
+static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
     rmt_route_t rt; memset(&rt, 0, sizeof rt); rt.kind = RMT_R_NOT_FOUND;
-    if(!r || !r->path || r->path[0] != '/') return rt;
-    const char *seg = r->path + 1;
-    const char *slash = strchr(seg, '/');
-    size_t sl = slash ? (size_t)(slash - seg) : strlen(seg);
-    if(!rmt_token_eq(seg, sl, token)) return rt;
     int get = !strcmp(r->method, "GET"), post = !strcmp(r->method, "POST");
     if(!slash){ rt.kind = get ? RMT_R_REDIRECT : RMT_R_BAD_METHOD; return rt; }
     const char *rest = slash;                                    /* "/" | "/api/..." */
@@ -329,6 +327,25 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
             memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
         rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LIST_END; rt.cmd.arg = m; rt.cmd.pos = pp == 0 ? pos : 0;
         if(pp != 0) rt.cmd.name[0] = 0;
+        return rt;
+    }
+    if(!strcmp(ep, "party")){
+        if(get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_PARTY; return rt; }
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        int any = 0, bad = 0;
+        for(int k = 0; k < RMT_P_N; k++){
+            long v; int pr = param(r, RMT_PARTY_KEYS[k].key, &v);
+            rt.cmd.party[k] = -1;
+            if(pr == -1) continue;
+            if(pr || v < RMT_PARTY_KEYS[k].min || v > RMT_PARTY_KEYS[k].max) bad = 1;
+            else { rt.cmd.party[k] = (int)v; any = 1; }
+        }
+        int pn = param_str(r, "name", rt.cmd.name, RMT_PARTY_NAME_MAX + 1);
+        if(pn == 0){ if(!rmt_party_name_ok(rt.cmd.name)) bad = 1; else any = 1; }
+        else if(pn == -2) bad = 1;
+        else rt.cmd.name[0] = 0;
+        if(bad || !any){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_PARTY; rt.cmd.arg = 1;
         return rt;
     }
     if(!strcmp(ep, "queue")){
@@ -347,6 +364,9 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
             else if(ok && (!strcmp(k, "album") || !strcmp(k, "artist"))){
                 rt.cmd.item = k[1] == 'l' ? RMT_I_ALBUM : RMT_I_ARTIST;
                 ok = !param_str(r, "name", rt.cmd.name, sizeof rt.cmd.name) && rt.cmd.name[0];
+            } else if(ok && !strcmp(k, "file")){
+                rt.cmd.item = RMT_I_FILE;
+                ok = !param_str(r, "path", rt.cmd.name, sizeof rt.cmd.name) && rt.cmd.name[0] && rmt_relpath_ok(rt.cmd.name);
             } else if(ok && !strcmp(k, "next")){ rt.cmd.item = -1; ok = !param(r, "b", &rt.cmd.id) && rt.cmd.id > 0; }
             else ok = 0;
             if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
@@ -508,6 +528,90 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         return rt;
     }
     return rt;
+}
+rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
+    rmt_route_t rt; memset(&rt, 0, sizeof rt); rt.kind = RMT_R_NOT_FOUND;
+    if(!r || !r->path || r->path[0] != '/') return rt;
+    const char *seg = r->path + 1;
+    const char *slash = strchr(seg, '/');
+    size_t sl = slash ? (size_t)(slash - seg) : strlen(seg);
+    if(!rmt_token_eq(seg, sl, token)) return rt;
+    return route_rest(r, slash);
+}
+
+/* ---------------------------------------------------------------- party mode (the guests' link) */
+const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N] = {
+    [RMT_P_ON] = { "on", 0, 1, 0 },          [RMT_P_VOL] = { "vol", 0, 1, 1 },        [RMT_P_MAXVOL] = { "maxvol", 1, 100, 100 },
+    [RMT_P_NP] = { "np", 0, 1, 1 },          [RMT_P_QUEUE] = { "queue", 0, 1, 1 },    [RMT_P_SKIP] = { "skip", 0, 1, 0 },
+    [RMT_P_TOTAL] = { "total", 1, 50, 3 },   [RMT_P_CONSEC] = { "consec", 1, 10, 1 }, [RMT_P_REPEAT] = { "repeat", 0, 1, 0 },
+    [RMT_P_RADIO] = { "radio", 0, 1, 0 },    [RMT_P_NAMES] = { "names", 0, 1, 1 },
+};
+int rmt_party_name_ok(const char *s){
+    size_t n = s ? strlen(s) : 0;
+    if(n < 2 || n > RMT_PARTY_NAME_MAX || !strcasecmp(s, "api") || !strcasecmp(s, "system")) return 0;
+    for(size_t i = 0; i < n; i++) if(!isalnum((unsigned char)s[i]) && s[i] != '-' && s[i] != '_') return 0;
+    return 1;
+}
+int rmt_party_place(const int *who, int n, int g, int consec, int now_who){
+    int r = 1, at = 0, others = 0;
+    for(int i = 0; i < n; i++){ if(who[i] == g) r++; else others = 1; }
+    if(!others) return n;                                          /* only g's songs (or none): nobody to take turns with */
+    for(int i = 0; i < n; i++){
+        int round = 1;
+        if(who[i]) for(int j = 0; j < i; j++) if(who[j] == who[i]) round++;
+        if(!who[i] || round <= r) at = i + 1;
+    }
+    int run = 1;
+    for(int i = at - 1; i >= 0 && who[i] == g; i--) run++;
+    if(run == at + 1) run += now_who == g;                         /* everything before it is g's: the song playing counts */
+    for(int i = at; i < n && who[i] == g; i++) run++;
+    return run > consec ? -1 : at;
+}
+static int guest_id_ok(const char *g){
+    size_t n = strlen(g);
+    if(n < 8 || n > RMT_GID_MAX) return 0;
+    for(size_t i = 0; i < n; i++) if(!isalnum((unsigned char)g[i])) return 0;
+    return 1;
+}
+rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
+    rmt_route_t rt; memset(&rt, 0, sizeof rt); rt.kind = RMT_R_NOT_FOUND;
+    if(!r || !r->path || r->path[0] != '/' || !rmt_party_name_ok(party)) return rt;
+    const char *seg = r->path + 1, *slash = strchr(seg, '/');
+    size_t sl = slash ? (size_t)(slash - seg) : strlen(seg);
+    if(sl != strlen(party) || strncmp(seg, party, sl)) return rt;
+    rmt_route_t a = route_rest(r, slash);
+    int ok = 0;
+    switch(a.kind){
+    case RMT_R_REDIRECT: case RMT_R_BAD_METHOD: case RMT_R_BAD_PARAM: ok = 1; break;
+    case RMT_R_PAGE: a.kind = RMT_R_PARTY_PAGE; ok = 1; break;
+    case RMT_R_STATE: a.kind = RMT_R_CMD; memset(&a.cmd, 0, sizeof a.cmd); a.cmd.kind = RMT_CMD_PARTY_STATE; ok = 1; break;
+    case RMT_R_CMD:
+        switch(a.cmd.kind){
+        case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: ok = 1; break;
+        case RMT_CMD_VOLUME:                                       /* the guests' scale: 100 = the host's maximum */
+            ok = 1; if(a.cmd.arg > 100){ memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; }
+            break;
+        case RMT_CMD_QUEUE: ok = a.cmd.sub == RMT_Q_LIST || (a.cmd.sub == RMT_Q_ADD && (a.cmd.item == RMT_I_SONG || a.cmd.item == RMT_I_FILE)); break;
+        case RMT_CMD_PLAY_ITEM: ok = a.cmd.sub == RMT_I_RADIO_HIT; break;
+        case RMT_CMD_BROWSE:
+            ok = a.cmd.sub != RMT_L_RADIO;                         /* the whole library; not the host's radio favourites */
+            break;
+        default: break;
+        }
+        break;
+    default: break;
+    }
+    if(!ok) return rt;                                             /* 404, like a path that doesn't exist */
+    a.cmd.guest = 1;
+    if(a.kind == RMT_R_CMD){
+        int pg = param_str(r, "g", a.cmd.gid, sizeof a.cmd.gid), pn = param_str(r, "n", a.cmd.gname, sizeof a.cmd.gname);
+        if(pg == -1) a.cmd.gid[0] = 0;
+        if(pn == -1) a.cmd.gname[0] = 0;
+        int need = a.cmd.kind == RMT_CMD_QUEUE && a.cmd.sub == RMT_Q_ADD;   /* adding counts against the guest's songs */
+        if(pg == -2 || pn == -2 || (pg == 0 && !guest_id_ok(a.cmd.gid)) || (need && pg != 0)){
+            memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; a.cmd.guest = 1; }
+    }
+    return a;
 }
 
 /* ---------------------------------------------------------------- JSON */

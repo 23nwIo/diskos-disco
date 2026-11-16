@@ -46,6 +46,8 @@ typedef enum {
     RMT_CMD_BALANCE,         /* left/right balance arg -10..10 (as Settings > Audio > Balance) */
     RMT_CMD_OUTPUTS,         /* Settings > Audio > Outputs: sub = rmt_out_t, arg = its value */
     RMT_CMD_QUEUE,           /* what plays next (queueview.h): sub = rmt_queue_t; see api/queue below */
+    RMT_CMD_PARTY_STATE,     /* a guest's view of the state (party page; JSON answer) */
+    RMT_CMD_PARTY,           /* the party settings: arg 0 read (JSON answer), 1 change (party[] / name; -1 = leave) */
     RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
                               * (1-based, 0 = keep the station), name = its url (checked) */
 } rmt_cmd_kind_t;
@@ -81,6 +83,22 @@ typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
 #define RMT_PL_NAME_MAX 64
+/* Party mode: guests use their own link /<party name>/ with a reduced page (rmt_route_party). The settings, as numbers: */
+enum { RMT_P_ON, RMT_P_VOL, RMT_P_MAXVOL, RMT_P_NP, RMT_P_QUEUE, RMT_P_SKIP, RMT_P_TOTAL, RMT_P_CONSEC, RMT_P_REPEAT,
+       RMT_P_RADIO, RMT_P_NAMES, RMT_P_N };
+typedef struct { const char *key; int min, max, def; } rmt_party_key_t;
+extern const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N];   /* key = the API parameter and (with "party_") the cfg key */
+#define RMT_PARTY_NAME_MAX 32
+#define RMT_GID_MAX 24          /* a guest's random id (the page makes it), [A-Za-z0-9], 8..24 */
+#define RMT_GNAME_MAX 24        /* a guest's name as shown in the queue (bytes) */
+/* 1 if s can be a party name: A-Z a-z 0-9 '-' '_', 2..RMT_PARTY_NAME_MAX, not "api" / "system" */
+int  rmt_party_name_ok(const char *s);
+/* Where a guest's song goes in the queue. who[0..n-1]: the guest of each queued song (0 = the host's). Guests take
+ * turns: the song joins the guest's next round (round k = each guest's k-th queued song), after every host song and
+ * every song of that round or earlier. now_who: the guest whose song plays now. Returns the position (0..n), or -1
+ * when it would make more than consec of g's songs play in a row (someone else has to add one first) - unless every
+ * queued song is g's (nobody else waits: Jo, 2026-11-16). */
+int  rmt_party_place(const int *who, int n, int g, int consec, int now_who);
 #define RMT_LIMIT_DEF 200
 #define RMT_LIMIT_MAX 500
 typedef struct {
@@ -92,6 +110,9 @@ typedef struct {
     long offset, limit;
     char name[512];          /* album / artist name, a folder/file path relative to the SD card, or a station URL */
     char q[96];              /* filter text */
+    int  guest;              /* 1: came in through the party link (rmt_route_party); gid/gname from g= / n= */
+    char gid[RMT_GID_MAX + 1], gname[RMT_GNAME_MAX + 1];
+    int  party[RMT_P_N];     /* RMT_CMD_PARTY: new values, -1 = unchanged; name = the new party name ("" = unchanged) */
 } rmt_cmd_t;
 
 typedef enum {
@@ -99,6 +120,7 @@ typedef enum {
     RMT_R_REDIRECT,        /* 301 to /<token>/ (the page uses relative URLs) */
     RMT_R_PAGE,            /* 200 the control page */
     RMT_R_SYS_PAGE,        /* 200 the system page (/<token>/system) */
+    RMT_R_PARTY_PAGE,      /* 200 the guests' page (/<party>/) */
     RMT_R_STATE,           /* 200 state JSON */
     RMT_R_CMD,             /* run route.cmd */
     RMT_R_BAD_METHOD,      /* 405 */
@@ -119,6 +141,10 @@ int  rmt_req_complete(const char *buf, int n);
 int  rmt_req_parse(char *buf, rmt_req_t *r);
 /* Route a parsed request against the token. */
 rmt_route_t rmt_route(const rmt_req_t *r, const char *token);
+/* Route a request on the guests' link /<party>/ (party = a valid party name, mode on). Only what guests may use
+ * routes; everything else is RMT_R_NOT_FOUND. Commands carry guest 1 and the guest's g= / n=; the main thread still
+ * checks the party settings (remote.c). REDIRECT here means 301 to /<party>/. */
+rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party);
 
 /* Constant-time comparison of a path segment of length n with the token (1 = equal). */
 int  rmt_token_eq(const char *seg, size_t n, const char *token);
@@ -181,5 +207,5 @@ char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NU
 /* The pages (static HTML, remote_page.c, generated from ui/remote_page/ by ui/tools/gen_remote_page.py): the control
  * page at /<token>/ (Now playing, queue, library) and the system page at /<token>/system (Status, Bluetooth, Screen).
  * Both are self-contained and use relative URLs. */
-extern const char RMT_PAGE_HTML[], RMT_SYS_HTML[];
+extern const char RMT_PAGE_HTML[], RMT_SYS_HTML[], RMT_PARTY_HTML[];
 #endif

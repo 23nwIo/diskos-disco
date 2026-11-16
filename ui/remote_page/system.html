@@ -3,13 +3,28 @@
 <style>
 @@STYLE@@
 </style><main><div class=top><h1>diskOS System</h1><a href=./>&#8249; Remote</a></div>
-<div class=seg id=tabs><button data-v=status id=statust>Status</button><button data-v=bt id=btt>Bluetooth</button><button data-v=scr id=scrt>Screen</button></div>
+<div class=seg id=tabs><button data-v=status id=statust>Status</button><button data-v=bt id=btt>Bluetooth</button><button data-v=scr id=scrt>Screen</button><button data-v=party id=partyt>Party</button></div>
 <div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div><div id=btc class='card hide'><label for=btk>Bluetooth codec <span id=btn></span></label><select id=btk></select><div id=bth class=hint></div></div></div>
 <div id=sys class='card hide'><label for=wm>Working mode</label><select id=wm><option value=0>Playback<option value=1>USB DAC<option value=2>Bluetooth DAC
 <option value=4>Bluetooth streaming<option value=5>AirPlay<option value=3>USB storage</select><button id=rbt class=more>Restart the Disc</button>
 <label for=lka>Page colour (this browser)</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
 <label for=lkf>Favourites</label><select id=lkf><option value=heart>Hearts (red)<option value=star>Stars (yellow)</select></div>
 <div id=stv class=hide></div>
+<div id=ptv class='hide blk'><div class=card><label><input type=checkbox data-k=on> Party mode: guests use their own link</label>
+<label for=pnm>Party name (the guests' link)</label><div class=hd><input id=pnm maxlength=32 placeholder=e.g.&nbsp;birthday autocapitalize=none style='flex:1;margin-right:.5em'><button id=pns>Save</button></div>
+<div id=plw class='hd hide'><small id=pl class='hint u' style=flex:1></small><button id=plc>Copy</button></div><div class=hint>At least 2 letters, digits, "-" or "_" (upper and lower case differ). Changing it locks out guests with the old link. Kept on the SD card.</div></div>
+<div class=card><b>Guests may</b>
+<label><input type=checkbox data-k=vol> Change the volume</label><label for=pmv>Up to <span id=pmvv></span> % of the Disc's volume (their 100 %)</label><input id=pmv data-k=maxvol type=range min=1 max=100>
+<label><input type=checkbox data-k=np> See what plays now</label><label><input type=checkbox data-k=queue> See the queue</label>
+<label><input type=checkbox data-k=skip> Skip songs</label><label><input type=checkbox data-k=repeat> Add a song that is already queued</label>
+<label><input type=checkbox data-k=names> Give their name (shown with their songs)</label>
+<label><input type=checkbox data-k=radio> Pick the radio station for when the queue is empty</label>
+<label for=ptot>Songs each guest may have in the queue</label><input id=ptot data-k=total type=number min=1 max=50 inputmode=numeric>
+<label for=pcon>Songs of one guest in a row (at most)</label><input id=pcon data-k=consec type=number min=1 max=10 inputmode=numeric>
+<div class=hint>Guests take turns: a new song joins the guest's next round instead of the end of the queue. While only one guest's songs are queued, that guest may add more in a row (up to their number of songs).</div></div>
+<div class=card id=pew><label for=pe>When the queue is empty</label><select id=pe><option value=0>Stop<option value=1>Random songs from the library<option value=2>A radio station</select>
+<div class=hd id=psw><small id=pes class=hint style=flex:1></small><button id=psc>Choose station</button></div><div id=pen class=hint></div></div>
+<h2>Guests</h2><div id=pg class=card>None yet</div></div>
 <div id=scv class=hide><div class=card><img id=si alt='The Disc screen'><div class=hd><button id=srf class=pa>Refresh</button><b></b><label><input type=checkbox id=sau> Live</label></div>
 <div class=hint>Tap or drag on the picture to touch the Disc; hold for a long press.</div></div></div>
 <div id=shb class=hide></div><div id=sh class=hide></div>
@@ -52,10 +67,26 @@ $('si').onpointercancel=function(){sdn=null};$('si').ondragstart=function(){retu
 $('si').onpointerup=function(e){if(!sdn)return;var a=sdn,b=spt(e),ms=Math.min(3000,Date.now()-a.t);sdn=null;
 if(Math.abs(b.x-a.x)<5&&Math.abs(b.y-a.y)<5){b=a;if(ms<350)ms=100}
 cmd('touch',enc({x:a.x,y:a.y,x2:b.x,y2:b.y,ms:ms})).then(function(ok){setTimeout(shot,(ok?ms:0)+450);if(ok&&!$('sau').checked)setTimeout(shot,ms+1500)})};
-function refresh(){status();bt()}
+/* Party: the guests' link and what guests may do (api/party); "When the queue is empty" is After the list ends */
+function party(){if(V!=='party'||document.hidden)return;fetch('api/party',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='party'||!j.ok)return;var c=j.settings;
+[].forEach.call(document.querySelectorAll('#ptv [data-k]'),function(e){if(document.activeElement===e)return;if(e.type==='checkbox')e.checked=!!c[e.dataset.k];else e.value=c[e.dataset.k]});$('pmvv').textContent=$('pmv').value;
+if(document.activeElement!==$('pnm')&&!$('pnm').dataset.e)$('pnm').value=c.name;var u=c.name?location.origin+'/'+c.name+'/':'';$('plw').classList.toggle('hide',!u);$('pl').textContent=u+(c.on?'':' (off)');
+var g=$('pg');g.textContent='';if(!j.guests.length)g.textContent='None yet';g.style.padding=j.guests.length?'0':'';j.guests.forEach(function(x){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');
+a.textContent=x.name||'(no name)';b.textContent=x.queued+' queued · seen '+(x.seen_s<60?'just now':Math.round(x.seen_s/60)+' min ago');k.appendChild(a);k.appendChild(b);g.appendChild(k)})}).catch(function(){say('Player not reachable')});
+fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){var le=s.list_end;$('pe').disabled=!le;$('pen').textContent=le?'The same setting as After the list ends on the Disc and on the Remote page.':'Only with the own player (Settings > Playback).';
+if(le){if(document.activeElement!==$('pe'))$('pe').value=le.mode;$('psw').classList.toggle('hide',le.mode!==2);$('pes').textContent=le.station?'Station: '+le.station:'No station chosen yet'}else $('psw').classList.add('hide')}).catch(function(){})}
+setInterval(party,3000);
+[].forEach.call(document.querySelectorAll('#ptv [data-k]'),function(e){if(e.type==='range')e.oninput=function(){$('pmvv').textContent=e.value};
+e.onchange=function(){var v=e.type==='checkbox'?(e.checked?1:0):e.value;cmd('party',e.dataset.k+'='+encodeURIComponent(v)).then(function(ok){if(ok)say('Saved',1);party()})}});
+$('pnm').oninput=function(){$('pnm').dataset.e=1};$('pns').onclick=function(){var n=$('pnm').value.trim();cmd('party',enc({name:n})).then(function(ok){if(ok){$('pnm').dataset.e='';say('Saved',1)}party()})};
+$('plc').onclick=function(){var t=$('pl').textContent.split(' ')[0];try{navigator.clipboard.writeText(t).then(function(){say('Link copied',1)},function(){prompt('The guests\u2019 link',t)})}catch(e){prompt('The guests\u2019 link',t)}};
+$('pe').onchange=function(){var m=$('pe').value;cmd('list_end','mode='+m).then(function(ok){if(!ok&&m==='2')ppick();party()});$('pe').blur()};$('psc').onclick=ppick;
+function ppick(){fetch('api/library/radio?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){var a=(j.items||[]).map(function(x){return[x.name,function(){cmd('list_end',enc({mode:2,pos:x.pos,url:x.url})).then(function(ok){if(ok)say('Plays '+x.name+' when the queue is empty',1);party()})}]});
+if(!a.length){say('No radio favourites yet - save stations in the Radio tab of the Remote page');return}sheet('Station when the queue is empty',a)}).catch(function(){say('Player not reachable')})}
+function refresh(){status();bt();party()}
 function tab(v){if(!$(v+'t'))v='status';V=v;[].forEach.call($('tabs').children,function(b){b.classList.toggle('on',b.dataset.v===v)});try{history.replaceState(null,'','#'+v)}catch(e){}
-$('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');say('');
-if(v==='scr'){shot();return}if(v==='status'){$('stv').textContent='Loading…';status();return}$('btl').textContent='Loading…';bt()}
+$('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');$('ptv').classList.toggle('hide',v!=='party');say('');
+if(v==='scr'){shot();return}if(v==='party'){party();return}if(v==='status'){$('stv').textContent='Loading…';status();return}$('btl').textContent='Loading…';bt()}
 [].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
 $('lka').value=LK.acc;$('lkf').value=LK.fav;$('lka').onchange=function(){LK.acc=$('lka').value;look()};$('lkf').onchange=function(){LK.fav=$('lkf').value;look()};
 document.addEventListener('visibilitychange',function(){refresh();shot()});tab(location.hash.slice(1));

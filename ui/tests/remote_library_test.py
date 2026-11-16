@@ -12,7 +12,7 @@ sd = Path('/tmp/sdcard'); subprocess.run(['umount', str(sd)], capture_output=Tru
 sd.mkdir(parents=True); subprocess.run(['mount', '--bind', str(sd), str(sd)], check=True)   # a mounted card: the radio favourites live on it (default)
 (sd/'Music/Blue Album').mkdir(parents=True, exist_ok=True); (sd/'Music/Other').mkdir(parents=True)
 os.symlink('/etc', sd/'Music/escape')
-Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True)
+Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True); (ui/'tests/host_build/queue.tsv').unlink(missing_ok=True)   # host builds keep the Queue here
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
 con = sqlite3.connect(db)
 cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
@@ -61,7 +61,17 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/queue action=add&kind=song&song_id=1', 'POST /api/queue action=add&kind=album&name=Caf%C3%A9+%3CNoir%3E',
         'GET /api/queue', 'POST /api/queue action=move&ver=1&i=2&to=0', 'POST /api/queue action=remove&ver=1&i=0', 'GET /api/queue',
         'POST /api/queue action=remove&ver=2&i=0', 'GET /api/queue', 'POST /api/queue action=clear&ver=3', 'GET /api/queue',
-        'POST /api/queue action=jump&ver=4&kind=queue&i=0', 'POST /api/queue action=clear&ver=4', 'POST /api/queue action=add&kind=artist&name=Nobody', 'POST /api/queue action=add&kind=next&b=1', 'POST /api/list_end mode=1']
+        'POST /api/queue action=jump&ver=4&kind=queue&i=0', 'POST /api/queue action=clear&ver=4', 'POST /api/queue action=add&kind=artist&name=Nobody', 'POST /api/queue action=add&kind=next&b=1', 'POST /api/list_end mode=1',
+        # 76.. party mode: the host's settings (on the card), then guests through /Party_1/ ("~")
+        'GET /api/party', 'POST /api/party on=1', 'POST /api/party on=1&name=Party_1&total=2',
+        'GET ~/api/state', 'POST ~/api/queue action=add&kind=song&song_id=1',
+        'POST ~/api/queue action=add&kind=song&song_id=1&g=AnnaAnnaAnna1234&n=Anna', 'POST ~/api/queue action=add&kind=song&song_id=2&g=AnnaAnnaAnna1234',
+        'POST ~/api/queue action=add&kind=song&song_id=3&g=AnnaAnnaAnna1234', 'POST ~/api/queue action=add&kind=song&song_id=1&g=BenBenBenBen1234',
+        'POST ~/api/queue action=add&kind=song&song_id=4&g=BenBenBenBen1234&n=Ben', 'GET ~/api/queue?g=BenBenBenBen1234', 'GET /api/queue',
+        'POST ~/api/next g=BenBenBenBen1234', 'POST ~/api/volume value=50&g=BenBenBenBen1234', 'POST ~/api/eq preset=1', 'GET ~/system',
+        'POST ~/api/queue action=add&kind=file&path=Music%2FOther%2F01+Solo.flac&g=CarlCarlCarl1234', 'POST ~/api/play_item kind=radio_hit&pos=1&url=http%3A%2F%2Fx&g=CarlCarlCarl1234',
+        'GET ~/api/state?g=AnnaAnnaAnna1234', 'GET /api/party', 'POST /api/party name=x',
+        'POST /api/play_item kind=folder&path=Music%2FOther']   # last: the folder play's slot is checked after the run
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -75,6 +85,7 @@ for line in r.stdout.splitlines():
     elif line.startswith('RC '): res[-1]['rc'] = int(line.split()[1]); res[-1]['why'] = line.split(' WHY ')[1].split(' SENT ')[0]
     elif line.startswith('BODY '): res[-1]['body'] = None if line == 'BODY -' else json.loads(line[5:])
 assert len(res) == len(reqs), r.stdout
+party_conf = (sd/'.diskos/state/party.conf').read_text()
 def items(k): assert res[k]['rc'] == 0, res[k]; return res[k]['body']['items']
 assert [a['name'] for a in items(0)] == ['Blue Album', 'Café <Noir>', 'Other'] and items(0)[0] == {'name': 'Blue Album', 'artist': 'Ana & "Bo"', 'count': 3}
 assert [a['name'] for a in items(1)] == ['Café <Noir>']
@@ -160,3 +171,26 @@ assert res[73]['rc'] == -1 and res[73]['why'] == 'Nothing new to add', res[73]
 assert res[74]['rc'] == -1 and res[74]['why'] == 'The queue changed - here it is again', res[74]   # no Up next on a host
 assert res[75]['rc'] == -1 and res[75]['why'].startswith('Only with the own player'), res[75]
 print('PASS Remote Control queue: add (song, album), list, move, remove, clear, stale version refused')
+# party mode
+p = res[76]['body']; assert p['settings'] == {'on': 0, 'vol': 1, 'maxvol': 100, 'np': 1, 'queue': 1, 'skip': 0, 'total': 3, 'consec': 1, 'repeat': 0, 'radio': 0, 'names': 1, 'name': '', 'own_player': False} and p['guests'] == [], p
+assert res[77]['rc'] == -1 and res[77]['why'] == 'Choose a party name first', res[77]
+assert res[78]['rc'] == 0 and res[78]['body']['settings']['name'] == 'Party_1' and res[78]['body']['settings']['total'] == 2, res[78]
+assert 'name=Party_1\n' in party_conf and 'on=1\n' in party_conf and 'total=2\n' in party_conf, party_conf   # on the SD card
+g = res[79]['body']; assert g['party']['left'] == 2 and g['party']['mine'] == 0 and g['party']['radio'] == 0 and 'volume' in g and 'title' in g and 'balance' not in g and 'outputs' not in g, g
+assert res[80]['rc'] == -100 - 8, res[80]                                         # adding needs the guest's id (400)
+assert res[81]['rc'] == 0 and res[81]['body'] == {'ok': True, 'added': 1, 'place': 1, 'left': 1}, res[81]
+assert res[82]['rc'] == 0 and res[82]['body']['place'] == 2, res[82]             # only Anna's songs wait: she may add in a row
+assert res[83]['rc'] == -1 and 'once one plays' in res[83]['why'], res[83]       # but never more than her total
+assert res[84]['rc'] == -1 and res[84]['why'] == 'That song is already in the queue', res[84]
+assert res[85]['rc'] == 0 and res[85]['body']['place'] == 2, res[85]             # Ben's first song goes before Anna's second
+q = res[86]['body']; assert [(x['k'], x['t'], x['by'], x['mine']) for x in q['items'][1:]] == [('queue', 'Uno', 'Anna', False), ('queue', 'Nuit', 'Ben', True), ('queue', 'Dos', 'Anna', False)] and 'f' not in q['items'][1], q
+assert [x.get('by') for x in res[87]['body']['items'][1:4]] == ['Anna', 'Ben', 'Anna'], res[87]
+assert res[88]['rc'] == -1 and res[88]['why'] == 'Skipping is off at this party', res[88]
+assert res[89]['rc'] == 0, res[89]
+assert res[90]['rc'] == -100 and res[91]['rc'] == -100, res[90:92]               # 404: not for guests
+assert res[92]['rc'] == 0 and res[92]['body']['place'] == 3, res[92]             # a file from Folders: Carl's first song joins round 1
+assert res[93]['rc'] == -1 and res[93]['why'] == 'Radio is off at this party', res[93]
+assert res[94]['body']['party']['mine'] == 2 and res[94]['body']['party']['left'] == 0 and res[94]['body']['party']['you'] == 'Anna', res[94]
+assert sorted((x['name'], x['queued']) for x in res[95]['body']['guests']) == [('', 1), ('Anna', 2), ('Ben', 1)], res[95]
+assert res[96]['rc'] == -100 - 8, res[96]                                        # a name of one letter
+print('PASS Remote Control party mode: settings on the card, guest link, total and turns, repeats, names, scaled volume, guests kept out of the rest')

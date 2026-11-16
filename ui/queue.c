@@ -41,7 +41,8 @@ LV_FONT_DECLARE(font_zune_regular_16)
 #ifndef QUEUE_FILE
 #define QUEUE_FILE "/usr/data/diskos_queue.tsv"
 #endif
-typedef struct { char path[256]; char title[96]; char artist[96]; long dur; int id, track, cue, iso, have_key; } qitem_t;
+typedef struct { char path[256]; char title[96]; char artist[96]; long dur; int id, track, cue, iso, have_key;
+                 int who; } qitem_t;   /* who: the party guest who queued it (party.c), 0 = not a guest; not saved */
 static qitem_t g_q[QMAX];                         /* what's still to come, in play order */
 static int g_qn, g_loaded;
 
@@ -63,6 +64,7 @@ static int  g_skip_change;                        /* the user just started somet
  * name, not its rows - and the position after the interrupted song: it is restarted there when the queue ends. */
 static int  g_resume_type = -1; static char g_resume_name[256]; static long g_resume_pid; static int g_resume_pos;
 static int  g_was_playing;
+static int  g_now_who;                            /* the guest whose queued song plays now (0 none) */
 
 static void view_reload(void);
 /* ---------------------------------------------------------------- storage */
@@ -213,7 +215,7 @@ static int add_one(int id, const char *path, const char *title, const char *arti
     size_t pl = strlen(path); if(pl > 4 && !strcasecmp(path + pl - 4, ".m4b")) return 0;   /* never an audiobook */
     qitem_t *q = &g_q[g_qn++];
     snprintf(q->path, sizeof q->path, "%s", path); snprintf(q->title, sizeof q->title, "%s", title ? title : "");
-    snprintf(q->artist, sizeof q->artist, "%s", artist ? artist : ""); q->dur = dur; q->id = id; q->have_key=0;
+    snprintf(q->artist, sizeof q->artist, "%s", artist ? artist : ""); q->dur = dur; q->id = id; q->have_key=0; q->who = 0;
     return 1;
 }
 static int add_path_tracks(const char *path){
@@ -263,6 +265,25 @@ int queue_add_ids(const int *ids, int n){
     if(r > 0) changed();
     return r;
 }
+/* Party mode (party.c): exact songs as queue_add_ids, inserted at position at (clamped) and tagged with guest who. */
+int queue_add_ids_at(const int *ids, int n, int at, int who){
+    load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; }
+    int start = g_qn, r = add_ids(ids, n);
+    if(r <= 0) return r;
+    for(int i = start; i < g_qn; i++) g_q[i].who = who;
+    if(at < 0) at = 0;
+    if(at < start){                                           /* rotate the new ones from the end to at */
+        static qitem_t tmp[QMAX]; int k = g_qn - start;
+        memcpy(tmp, &g_q[start], (size_t)k * sizeof g_q[0]);
+        memmove(&g_q[at + k], &g_q[at], (size_t)(start - at) * sizeof g_q[0]);
+        memcpy(&g_q[at], tmp, (size_t)k * sizeof g_q[0]);
+    }
+    changed();
+    return r;
+}
+int queue_item_who(int i){ load(); return i >= 0 && i < g_qn ? g_q[i].who : 0; }
+int queue_now_who(void){ return g_now_who; }
+int queue_item_song(int i){ load(); return i >= 0 && i < g_qn ? g_q[i].id : 0; }
 int queue_add_folder(const char *dir){
     load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; }
     int *ids = NULL, n = mdb_folder_ids(dir, &ids);    /* in file order; each CUE/ISO sub-track once */
@@ -362,7 +383,7 @@ static void hand_back(int song){                   /* the queue is done: back to
     else sent=ui_play_restore(-1, "", 0, 0);
     if(sent) g_active=0;                       /* nothing to return to: just the play mode back */
 }
-static void pop_through(int k){ memmove(&g_q[0], &g_q[k+1], (size_t)(g_qn - k - 1) * sizeof g_q[0]); g_qn -= k + 1; g_gen++; save(); ui_queue_changed();
+static void pop_through(int k){ g_now_who = g_q[k].who; memmove(&g_q[0], &g_q[k+1], (size_t)(g_qn - k - 1) * sizeof g_q[0]); g_qn -= k + 1; g_gen++; save(); ui_queue_changed();
                                 if(screen_current() == SCR_QUEUE) view_reload(); }
 /* Nothing to come back to (nothing loaded, or nothing playing whose song we can identify): the queue is the whole
  * list. Song `first` starts now and the rest follow in order; in the Shuffle play mode the queue is shuffled first.
@@ -464,6 +485,7 @@ void queue_tick(const track_state_t *st, int playing){
     int current = k_id;
     if(!current) return;  /* unverified subtrack metadata never advances the editable queue */
     if(current != g_last_id){                        /* a new song began */
+        g_now_who = 0;                               /* pop_through() below sets it when it is a queued one */
         int prev=g_last_id;
         int before=g_prev2;
         long prev_pos = g_last_pos, prev_dur = g_last_dur;
