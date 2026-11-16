@@ -190,14 +190,7 @@ static const char *cover_file(void){                     /* the decoded cover of
 }
 /* The player reports its volume only when it changes (a714), so after a boot the Disc had 0 until the first change while
  * the player played at the level it restored from SYSCONFIG.VOLUME. Until that first report, use that saved level. */
-/* Is url a radio favourite? The favourites file is read at most every 2 s (and at once after a change from here). */
-static uint32_t g_favs_at;
-static int station_is_fav(const char *url){
-    static rc_station_t f[RC_MAX_FAV]; static int n = -1;
-    if(n < 0 || !g_favs_at || lv_tick_elaps(g_favs_at) >= 2000){ n = radio_favorites(f, RC_MAX_FAV); g_favs_at = lv_tick_get() | 1; }
-    for(int i = 0; i < n; i++) if(!strcmp(f[i].url, url)) return 1;
-    return 0;
-}
+static int station_is_fav(const char *url){ return radio_fav_has(url); }   /* the file is looked at at most once a second */
 static int vol_now(const track_state_t *st){
     static int boot = -2; static uint32_t at;
     if(st->volume_seq) return st->volume;
@@ -460,22 +453,23 @@ static char *browse(const rmt_cmd_t *c, const char **why){
         return page_end(&pg); }
     case RMT_L_FOLDER: return list_folder(c, why);
     case RMT_L_RADIO: case RMT_L_RADIO_HITS: {             /* the Radio app's favourites, or its last search; pos counts from 1 */
-        static rc_station_t fav[RC_MAX_FAV], hits[RC_MAX_HITS];
+        static rc_station_t hits[RC_MAX_HITS];
         static const char *const SEARCH[] = { "idle", "busy", "done", "failed" };
-        int nf = radio_favorites(fav, RC_MAX_FAV), n = nf, st = 0;
-        const rc_station_t *l = fav;
-        if(c->sub == RMT_L_RADIO_HITS){
-            n = radio_search_result(hits, RC_MAX_HITS, &st); l = hits;
+        int hit = c->sub == RMT_L_RADIO_HITS, n = radio_fav_count(), st = 0;
+        if(hit){
+            n = radio_search_result(hits, RC_MAX_HITS, &st);
             char ex[32]; snprintf(ex, sizeof ex, "\"search\":\"%s\",", SEARCH[st >= 0 && st <= 3 ? st : 0]);
             page_begin_with(&pg, c, ex);
         } else page_begin(&pg, c);
         for(int i = 0; i < n; i++){
-            if(!(rmt_match(l[i].name, c->q) || rmt_match(l[i].country, c->q)) || !page_take(&pg)) continue;
-            rmt_buf_printf(&pg.b, "{\"pos\":%d,\"name\":", i + 1); rmt_buf_str(&pg.b, l[i].name);
-            rmt_buf_put(&pg.b, ",\"url\":"); rmt_buf_str(&pg.b, l[i].url);
-            rmt_buf_put(&pg.b, ",\"codec\":"); rmt_buf_str(&pg.b, l[i].codec);
-            rmt_buf_printf(&pg.b, ",\"bitrate\":%d,\"country\":", l[i].bitrate); rmt_buf_str(&pg.b, l[i].country);
-            rmt_buf_printf(&pg.b, ",\"fav\":%s}", l == fav || rc_fav_find(fav, nf, l[i].url) >= 0 ? "true" : "false");
+            rc_station_t one; const rc_station_t *x = hit ? &hits[i] : radio_fav_get(i, &one) == 0 ? &one : NULL;
+            if(!x) break;
+            if(!(rmt_match(x->name, c->q) || rmt_match(x->country, c->q)) || !page_take(&pg)) continue;
+            rmt_buf_printf(&pg.b, "{\"pos\":%d,\"name\":", i + 1); rmt_buf_str(&pg.b, x->name);
+            rmt_buf_put(&pg.b, ",\"url\":"); rmt_buf_str(&pg.b, x->url);
+            rmt_buf_put(&pg.b, ",\"codec\":"); rmt_buf_str(&pg.b, x->codec);
+            rmt_buf_printf(&pg.b, ",\"bitrate\":%d,\"country\":", x->bitrate); rmt_buf_str(&pg.b, x->country);
+            rmt_buf_printf(&pg.b, ",\"fav\":%s}", !hit || radio_fav_has(x->url) ? "true" : "false");
         }
         return page_end(&pg); }
     default: *why = "Unknown list"; return out;
@@ -487,22 +481,22 @@ static int play_song_id(int id){                       /* in the all-songs scope
 }
 /* The station a request names: favourite or search hit number pos, checked against its url when one is given. */
 static const rc_station_t *radio_pick(const rmt_cmd_t *c, const char **why){
-    static rc_station_t l[RC_MAX_FAV > RC_MAX_HITS ? RC_MAX_FAV : RC_MAX_HITS];
+    static rc_station_t l[RC_MAX_HITS], one;
     if(c->sub == RMT_I_RADIO_NOW){                         /* the station playing now (Now playing's star) */
-        if(!radio_active() || !radio_station(&l[0]) || !l[0].url[0]){ *why = "No station is playing"; return NULL; }
-        return &l[0];
+        if(!radio_active() || !radio_station(&one) || !one.url[0]){ *why = "No station is playing"; return NULL; }
+        return &one;
     }
-    int hit = c->sub == RMT_I_RADIO_HIT, st = 0;
-    int n = hit ? radio_search_result(l, RC_MAX_HITS, &st) : radio_favorites(l, RC_MAX_FAV);
-    if(c->pos < 1 || c->pos > n || (c->name[0] && strcmp(c->name, l[c->pos - 1].url))){
+    int hit = c->sub == RMT_I_RADIO_HIT, st = 0, ok;
+    if(hit){ int n = radio_search_result(l, RC_MAX_HITS, &st); ok = c->pos >= 1 && c->pos <= n; if(ok) one = l[c->pos - 1]; }
+    else ok = c->pos >= 1 && radio_fav_get(c->pos - 1, &one) == 0;
+    if(!ok || (c->name[0] && strcmp(c->name, one.url))){
         *why = hit ? "The search results changed - search again" : "The radio favourites changed - reload"; return NULL;
     }
-    return &l[c->pos - 1];
+    return &one;
 }
 static int radio_fav_cmd(const rmt_cmd_t *c, const char **why){
     const rc_station_t *s = radio_pick(c, why);
     if(!s) return -1;
-    g_favs_at = 0;                                         /* Now playing's star follows at once */
     rc_station_t copy = *s;
     if((c->arg ? radio_fav_add(&copy) : radio_fav_remove(copy.url)) == 0) return 0;
     const char *e = radio_last_error();

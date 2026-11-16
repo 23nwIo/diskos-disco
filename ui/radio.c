@@ -24,10 +24,14 @@
 #include "theme.h"
 #include "theme_kit.h"
 #include "curvelist.h"
+#include "vlist.h"
 #include "zune_dial.h"
 #include "command_spawn.h"
 #include "version.h"
 #include "ipc.h"
+#include "config.h"
+#include "sdio.h"
+#include "system.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -55,6 +59,15 @@ void screen_show(int which);
 #ifndef RADIO_FAV_PATH
 #define RADIO_FAV_PATH "/usr/data/radio_favorites.txt"
 #endif
+#ifndef RADIO_FAV_SD_ROOT
+#define RADIO_FAV_SD_ROOT "/tmp/sdcard"
+#endif
+#ifndef RADIO_MOUNTS
+#define RADIO_MOUNTS "/proc/mounts"
+#endif
+#define RADIO_FAV_SD_NAME "radio_favorites.txt"
+#define RADIO_FAV_CFG "radio_fav_sd"
+#define RADIO_FAV_MAX_BYTES (RC_MAX_FAV * 800)         /* a full list is at most ~700 bytes a station */
 #ifndef RADIO_TMP_JSON
 #define RADIO_TMP_JSON "/tmp/radio_search.json"
 #endif
@@ -394,36 +407,148 @@ static void icy_kick(void){                             /* caller holds g_mu */
 }
 
 /* ================================================================ favourites (main thread) */
-static rc_station_t g_fav[RC_MAX_FAV];
-static int g_nfav, g_fav_loaded, g_fav_test;
-static void fav_load(void){
-    g_fav_loaded = 1; g_nfav = 0;
-    size_t len = 0; char *t = slurp(RADIO_FAV_PATH, 128 * 1024, &len);
-    if(t){ g_nfav = rc_fav_parse(t, g_fav, RC_MAX_FAV); free(t); }
+/* The list lives either on the player (RADIO_FAV_PATH) or on the SD card (RADIO_FAV_SD_ROOT/radio_favorites.txt), as
+ * Settings > System > Library > Radio Favourites says (cfg radio_fav_sd). The file is read again when that place
+ * changes, when the card comes or goes, or when the file itself changes (an edit on a computer or over SSH): checked
+ * at most once a second. Without the card, the card list is empty and is never written. Nothing is copied between
+ * the two places. */
+static rc_station_t *g_fav;
+static int g_nfav, g_fav_cap, g_fav_loaded, g_fav_test;
+static int g_fav_where, g_fav_nocard;                   /* the place g_fav was read from; 1 = that card was missing */
+static int g_fav_bad;                                   /* the file exists but could not be read: never overwrite it */
+static struct { dev_t dev; ino_t ino; off_t size; time_t mtime; long mns; int have; } g_fav_sig;
+static long long g_fav_checked;
+static int fav_cfg_sd(void){ return cfg_get_int(RADIO_FAV_CFG, 1) ? 1 : 0; }   /* default: the card */
+static const char *fav_path(int sd){ return sd ? RADIO_FAV_SD_ROOT "/" RADIO_FAV_SD_NAME : RADIO_FAV_PATH; }
+static int fav_card(void){ return sys_is_mounted(RADIO_MOUNTS, RADIO_FAV_SD_ROOT); }
+static int fav_grow(int n){
+    if(n <= g_fav_cap) return 0;
+    int cap = g_fav_cap ? g_fav_cap : 16;
+    while(cap < n) cap *= 2;
+    if(cap > RC_MAX_FAV) cap = RC_MAX_FAV;
+    if(cap < n) return -1;
+    rc_station_t *f = realloc(g_fav, sizeof *f * (size_t)cap);
+    if(!f) return -1;
+    g_fav = f; g_fav_cap = cap; return 0;
 }
-static int fav_save(void){
-    static char buf[RC_MAX_FAV * (RC_NAME_LEN + RC_URL_LEN + 96)];
-    int n = rc_fav_format(g_fav, g_nfav, buf, sizeof buf);
-    if(n < 0) return -1;
-    char tmp[] = RADIO_FAV_PATH ".XXXXXX";
-    int fd = mkstemp(tmp); if(fd < 0) return -1;
-    int ok = write(fd, buf, (size_t)n) == n && fsync(fd) == 0;
+static void fav_stat(int sd){
+    struct stat st;
+    memset(&g_fav_sig, 0, sizeof g_fav_sig);
+    if(stat(fav_path(sd), &st) != 0) return;
+    g_fav_sig.dev = st.st_dev; g_fav_sig.ino = st.st_ino; g_fav_sig.size = st.st_size;
+    g_fav_sig.mtime = st.st_mtim.tv_sec; g_fav_sig.mns = st.st_mtim.tv_nsec; g_fav_sig.have = 1;
+}
+/* read the list of place sd into g_fav; the caller holds the SD lease for the card */
+static int fav_read(int sd, rc_station_t **out, int *n){
+    *out = NULL; *n = 0;
+    size_t len = 0; char *t = slurp(fav_path(sd), RADIO_FAV_MAX_BYTES, &len);
+    if(!t) return errno == ENOENT ? 0 : -1;
+    int lines = 1;
+    for(size_t i = 0; i < len; i++) if(t[i] == '\n') lines++;
+    if(lines > RC_MAX_FAV) lines = RC_MAX_FAV;
+    rc_station_t *f = malloc(sizeof *f * (size_t)lines);
+    if(!f){ free(t); return -1; }
+    *n = rc_fav_parse(t, f, lines); *out = f;
+    free(t); return 0;
+}
+static void fav_take(rc_station_t *f, int n){
+    g_nfav = 0;
+    if(n > 0 && fav_grow(n) == 0){ memcpy(g_fav, f, sizeof *f * (size_t)n); g_nfav = n; }
+    free(f);
+}
+static unsigned g_fav_gen;                              /* bumped by every read of the file */
+static void fav_load(void){
+    g_fav_loaded = 1; g_nfav = 0; g_fav_gen++;
+    g_fav_where = fav_cfg_sd(); g_fav_nocard = 0;
+    g_fav_checked = ms_now();
+    rc_station_t *f = NULL; int n = 0;
+    g_fav_bad = 0;
+    if(g_fav_where){
+        if(!fav_card() || !sd_io_begin()){ g_fav_nocard = 1; memset(&g_fav_sig, 0, sizeof g_fav_sig); return; }
+        g_fav_bad = fav_read(1, &f, &n) != 0; fav_stat(1);
+        sd_io_end();
+    } else { g_fav_bad = fav_read(0, &f, &n) != 0; fav_stat(0); }
+    fav_take(f, n);
+}
+/* reload when the place, the card or the file changed; force skips the once-a-second limit */
+static void fav_fresh(int force){
+    if(g_fav_test) return;
+    if(!g_fav_loaded){ fav_load(); return; }
+    if(!force && ms_now() - g_fav_checked < 1000) return;
+    g_fav_checked = ms_now();
+    int sd = fav_cfg_sd();
+    if(sd != g_fav_where){ fav_load(); return; }
+    if(sd){
+        int card = fav_card();
+        if(!card){ if(!g_fav_nocard) fav_load(); return; }
+        if(g_fav_nocard){ fav_load(); return; }
+        if(!sd_io_begin()) return;
+    }
+    struct stat st; int have = stat(fav_path(sd), &st) == 0;
+    if(sd) sd_io_end();
+    if(have != g_fav_sig.have || (have && (st.st_dev != g_fav_sig.dev || st.st_ino != g_fav_sig.ino ||
+       st.st_size != g_fav_sig.size || st.st_mtim.tv_sec != g_fav_sig.mtime || st.st_mtim.tv_nsec != g_fav_sig.mns))) fav_load();
+}
+/* write f[0..n) to place sd (temp file, fsync, rename); the caller holds the SD lease for the card */
+static int fav_write(int sd, const rc_station_t *f, int n){
+    size_t cap = (size_t)(n > 0 ? n : 1) * (RC_NAME_LEN + RC_URL_LEN + 96) + 1;
+    char *buf = malloc(cap);
+    if(!buf) return -1;
+    int len = rc_fav_format(f, n, buf, cap);
+    if(len < 0){ free(buf); return -1; }
+    char tmp[sizeof RADIO_FAV_SD_ROOT "/" RADIO_FAV_SD_NAME + sizeof RADIO_FAV_PATH + 16];
+    snprintf(tmp, sizeof tmp, "%s.XXXXXX", fav_path(sd));
+    int fd = mkstemp(tmp);
+    if(fd < 0){ free(buf); return -1; }
+    int ok = write(fd, buf, (size_t)len) == len && fsync(fd) == 0;
     if(close(fd) != 0) ok = 0;
-    if(!ok || rename(tmp, RADIO_FAV_PATH) != 0){ unlink(tmp); return -1; }
+    free(buf);
+    if(!ok || rename(tmp, fav_path(sd)) != 0){ unlink(tmp); return -1; }
     return 0;
 }
+static const char *const FAV_NOCARD = "Insert the SD card to change radio favourites";
+static int fav_save(void){
+    if(g_fav_bad) return -1;
+    if(g_fav_where){
+        if(g_fav_nocard || !fav_card() || !sd_io_begin()) return -1;
+        int r = fav_write(1, g_fav, g_nfav);
+        if(!r) fav_stat(1);
+        sd_io_end();
+        return r;
+    }
+    int r = fav_write(0, g_fav, g_nfav);
+    if(!r) fav_stat(0);
+    return r;
+}
 int radio_favorites(rc_station_t *out, int cap){
-    if(!g_fav_loaded) fav_load();
+    fav_fresh(0);
     int n = g_nfav < cap ? g_nfav : cap;
     if(n > 0) memcpy(out, g_fav, sizeof g_fav[0] * (size_t)n);
     return n < 0 ? 0 : n;
 }
+int radio_fav_count(void){ fav_fresh(0); return g_nfav; }
+int radio_fav_get(int i, rc_station_t *out){
+    fav_fresh(0);
+    if(i < 0 || i >= g_nfav) return -1;
+    *out = g_fav[i]; return 0;
+}
+int radio_fav_has(const char *url){ fav_fresh(0); return url && rc_fav_find(g_fav, g_nfav, url) >= 0; }
+int radio_fav_nocard(void){ fav_fresh(0); return g_fav_where && g_fav_nocard; }
+/* Settings changed the place to sd (the setting is already saved). Nothing is copied: each place keeps its own file
+ * (docs/RADIO.md says where), the next look reads the new one. Returns 0, or 1 with a note in *why (no card). */
+int radio_fav_move(int sd, const char **why){
+    g_fav_loaded = 0;
+    if(sd && !fav_card()){ *why = "Your favourites appear when the SD card is in"; return 1; }
+    return 0;
+}
 static void fav_toggle(const rc_station_t *s){
-    if(!g_fav_loaded) fav_load();
+    fav_fresh(1);
+    if(g_fav_where && g_fav_nocard){ ui_toast(FAV_NOCARD); return; }
     int i = rc_fav_find(g_fav, g_nfav, s->url);
     if(i >= 0){ memmove(&g_fav[i], &g_fav[i + 1], sizeof g_fav[0] * (size_t)(g_nfav - i - 1)); g_nfav--; }
     else {
         if(g_nfav >= RC_MAX_FAV){ ui_toast("Favourites are full"); return; }
+        if(fav_grow(g_nfav + 1)){ ui_toast("Couldn't save favourites"); return; }
         g_fav[g_nfav++] = *s;
     }
     if(fav_save()){ fav_load(); ui_toast("Couldn't save favourites"); return; }
@@ -432,17 +557,20 @@ static void fav_toggle(const rc_station_t *s){
 static void refuse(const char *why);
 int radio_fav_add(const rc_station_t *s){
     if(!s || !s->name[0] || !rc_url_ok(s->url)){ refuse("That station address can't be saved"); return -1; }
-    if(!g_fav_loaded) fav_load();
+    fav_fresh(1);
     if(rc_fav_find(g_fav, g_nfav, s->url) >= 0) return 0;
+    if(g_fav_where && g_fav_nocard){ refuse(FAV_NOCARD); return -1; }
     if(g_nfav >= RC_MAX_FAV){ refuse("Favourites are full"); return -1; }
+    if(fav_grow(g_nfav + 1)){ refuse("Couldn't save favourites"); return -1; }
     g_fav[g_nfav++] = *s;
     if(fav_save()){ fav_load(); refuse("Couldn't save favourites"); return -1; }
     return 0;
 }
 int radio_fav_remove(const char *url){
-    if(!g_fav_loaded) fav_load();
+    fav_fresh(1);
     int i = url ? rc_fav_find(g_fav, g_nfav, url) : -1;
     if(i < 0) return 0;
+    if(g_fav_where && g_fav_nocard){ refuse(FAV_NOCARD); return -1; }
     memmove(&g_fav[i], &g_fav[i + 1], sizeof g_fav[0] * (size_t)(g_nfav - i - 1)); g_nfav--;
     if(fav_save()){ fav_load(); refuse("Couldn't save favourites"); return -1; }
     return 0;
@@ -639,17 +767,26 @@ static void station_detail(const rc_station_t *s, char *out, size_t n){
     snprintf(out, n, "%s%s%s%s", playing ? "Playing" : saved ? "Saved" : "", (playing || saved) && d[0] ? " \xC2\xB7 " : "", d,
              !d[0] && !playing && !saved ? "Web radio" : "");
 }
+static vlist_t g_fv;
+static unsigned g_fav_shown;                            /* the g_fav_gen the favourite rows show */
+static void fav_add_row(int i){ char d[160]; station_detail(&g_fav[i], d, sizeof d); add_row(i, LV_SYMBOL_AUDIO, g_fav[i].name, d, 0); }
+static void fav_scroll_cb(lv_event_t *e){ (void)e; vlist_follow(&g_fv); }
 static void rebuild(void){
     if(!g_list) return;
+    vlist_end(&g_fv);
     lv_obj_clean(g_list);
     if(g_view == V_FAV){
         theme_title_text(g_title, th_zune() ? "radio" : "Radio");
         add_row(ACT_SEARCH, LV_SYMBOL_EDIT, "Search stations", NULL, 1);
         add_row(ACT_POPULAR, LV_SYMBOL_LIST, "Popular stations", NULL, 1);
         if(radio_active()) add_row(ACT_STOP, LV_SYMBOL_CLOSE, "Stop radio", radio_station_name(), 1);
-        if(!g_fav_loaded) fav_load();
-        if(!g_nfav) note("No favourites yet", "Hold a station to save it here.");
-        for(int i = 0; i < g_nfav; i++){ char d[160]; station_detail(&g_fav[i], d, sizeof d); add_row(i, LV_SYMBOL_AUDIO, g_fav[i].name, d, 0); }
+        fav_fresh(0); g_fav_shown = g_fav_gen;
+        if(g_fav_where && g_fav_nocard) note("No SD card", "Your radio favourites are kept on the SD card.");
+        else if(!g_nfav) note("No favourites yet", "Hold a station to save it here.");
+        else if(g_nfav >= VLIST_MIN){                    /* long lists: only the rows near the view exist */
+            int lead = (lv_obj_get_child_count(g_list)) * (ROW_H + 4);
+            vlist_begin(&g_fv, g_list, g_nfav, ROW_H, 4, lead, th_zune() ? 236 : 272, fav_add_row);
+        } else for(int i = 0; i < g_nfav; i++) fav_add_row(i);
     } else {
         int st = g_res_state, n = g_nres;
         theme_title_text(g_title, th_zune() ? (g_hits_popular ? "popular" : "results") : (g_hits_popular ? "Popular" : "Results"));
@@ -683,8 +820,15 @@ static void search_done(const char *text){
     snprintf(g_last_query, sizeof g_last_query, "%s", text);
     start_search(g_last_query);
 }
+static int fav_stale(intptr_t id){                     /* a favourite row of an older read of the file: show the new list */
+    if(g_view != V_FAV || id < 0) return 0;
+    fav_fresh(1);
+    if(g_fav_gen == g_fav_shown) return 0;
+    rebuild(); return 1;
+}
 static void row_cb(lv_event_t *e){
     intptr_t id = (intptr_t)lv_event_get_user_data(e);
+    if(fav_stale(id)) return;
     if(id == ACT_SEARCH){ kbinput_open("Station name", g_last_query, search_done); return; }
     if(id == ACT_POPULAR){ start_search(""); return; }
     if(id == ACT_STOP){ radio_stop(); rebuild(); return; }
@@ -692,13 +836,14 @@ static void row_cb(lv_event_t *e){
     if(s){ rc_station_t c = *s; radio_play(&c); }
 }
 static void row_long_cb(lv_event_t *e){
+    if(fav_stale((intptr_t)lv_event_get_user_data(e))) return;
     const rc_station_t *s = row_station((intptr_t)lv_event_get_user_data(e));
     if(!s) return;
     rc_station_t c = *s;
     fav_toggle(&c);
     int y = lv_obj_get_scroll_y(g_list);
     rebuild();
-    lv_obj_update_layout(g_list); lv_obj_scroll_to_y(g_list, y, LV_ANIM_OFF); curvelist_update(&g_cl);
+    lv_obj_update_layout(g_list); lv_obj_scroll_to_y(g_list, y, LV_ANIM_OFF); vlist_follow(&g_fv); curvelist_update(&g_cl);
 }
 static void poll_cb(lv_timer_t *t){
     (void)t;
@@ -748,20 +893,24 @@ void radio_create(lv_obj_t *root){
     lv_obj_set_scroll_dir(g_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(g_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_flag(g_list, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_add_event_cb(g_list, fav_scroll_cb, LV_EVENT_SCROLL, NULL);  /* the window first, then the curve */
     curvelist_attach(&g_cl, g_list, root, ROW_W);
     if(th_zune()) ui_library_list_watch(g_list);
 }
 void radio_open(void){
     g_view = V_FAV;
-    if(!g_fav_test) fav_load();
+    fav_fresh(1);
     rebuild();
     screen_show(SCR_RADIO);
 }
 /* host renders: favourites and results without /usr/data or the network */
 void radio_test_favorites(const rc_station_t *s, int n){
-    g_fav_test = 1; g_fav_loaded = 1; g_nfav = n < 0 ? 0 : n > RC_MAX_FAV ? RC_MAX_FAV : n;
+    g_fav_test = 1; g_fav_loaded = 1; g_fav_where = 0; g_fav_nocard = 0;
+    n = n < 0 ? 0 : n > RC_MAX_FAV ? RC_MAX_FAV : n;
+    g_nfav = n && fav_grow(n) == 0 ? n : 0;
     if(g_nfav) memcpy(g_fav, s, sizeof s[0] * (size_t)g_nfav);
 }
+void radio_test_scroll(int y){ if(g_list){ lv_obj_scroll_to_y(g_list, y, LV_ANIM_OFF); vlist_follow(&g_fv); lv_obj_update_layout(g_list); curvelist_update(&g_cl); } }
 void radio_test_results(const rc_station_t *s, int n, int popular){
     pthread_mutex_lock(&g_mu);
     if(n > RC_MAX_HITS) n = RC_MAX_HITS;

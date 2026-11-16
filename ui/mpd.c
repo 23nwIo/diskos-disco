@@ -568,9 +568,10 @@ static int plp_cb(void *ud, const mdb_row_t *r){
 static const char RADIO_PL[] = "Radio";
 static int is_radio_pl(const char *name){ return !strcmp(name, RADIO_PL); }
 static int is_stream(const char *uri){ return !strncmp(uri, "http://", 7) || !strncmp(uri, "https://", 8); }
-static rc_station_t *radio_favs(int *n){                 /* malloc'd copy (RC_MAX_FAV stations are ~45 KB: not on the stack) */
-    rc_station_t *f = calloc(RC_MAX_FAV, sizeof *f);
-    *n = f ? radio_favorites(f, RC_MAX_FAV) : 0;
+static rc_station_t *radio_favs(int *n){                 /* malloc'd copy (up to RC_MAX_FAV stations of ~680 bytes) */
+    int c = radio_fav_count();
+    rc_station_t *f = calloc(c > 0 ? (size_t)c : 1, sizeof *f);
+    *n = f ? radio_favorites(f, c) : 0;
     return f;
 }
 static int radio_err(const char **msg, const char *fallback){

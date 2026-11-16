@@ -1391,7 +1391,8 @@ int main(int argc, char **argv){
                 {"Deutschlandfunk Kultur - a long station name that scrolls","https://st02.sslstream.dlf.de/dlf/02/128/mp3/stream.mp3","MP3","Germany",128},
                 {"Classic Opus","https://icecast.walmradio.com:8443/classic_opus","OGG","",0},{"Radio Paradise FLAC","http://stream.radioparadise.com/flac","FLAC","USA",0}};
             void radio_test_favorites(const rc_station_t*,int); void radio_test_results(const rc_station_t*,int,int);
-            radio_test_favorites(rs,!strcmp(page,"radio-empty")?0:3);scr=SCR_RADIO;radio_open();
+            if(!strcmp(page,"radio-file")){void radio_test_scroll(int);scr=SCR_RADIO;radio_open();if(getenv("RADIO_SCROLL"))radio_test_scroll(atoi(getenv("RADIO_SCROLL")));}   /* the favourites file itself (card or player) */
+            else {radio_test_favorites(rs,!strcmp(page,"radio-empty")?0:3);scr=SCR_RADIO;radio_open();}
             if(!strcmp(page,"radio-results"))radio_test_results(rs,4,0);
             if(!strcmp(page,"radio-fail"))radio_test_results(rs,-1,1);}
         else if(!strcmp(page,"battery")){void usage_demo(int);scr=SCR_USAGE;screen_show(scr);usage_demo(getenv("CHG")!=NULL);}

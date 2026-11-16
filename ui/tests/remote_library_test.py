@@ -8,8 +8,9 @@ artist, playlist and file plays go through main.c's own local-playback admission
 import json, os, shutil, sqlite3, subprocess, tempfile
 from pathlib import Path
 ui = Path(__file__).resolve().parents[1]
-sd = Path('/tmp/sdcard'); shutil.rmtree(sd, ignore_errors=True)
-(sd/'Music/Blue Album').mkdir(parents=True); (sd/'Music/Other').mkdir(parents=True)
+sd = Path('/tmp/sdcard'); subprocess.run(['umount', str(sd)], capture_output=True); shutil.rmtree(sd, ignore_errors=True)
+sd.mkdir(parents=True); subprocess.run(['mount', '--bind', str(sd), str(sd)], check=True)   # a mounted card: the radio favourites live on it (default)
+(sd/'Music/Blue Album').mkdir(parents=True, exist_ok=True); (sd/'Music/Other').mkdir(parents=True)
 os.symlink('/etc', sd/'Music/escape')
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
 con = sqlite3.connect(db)
@@ -31,7 +32,7 @@ con.execute("INSERT INTO CUSTOM_PLAYLIST_INDEX VALUES(1,'Road trip','')")
 con.execute('INSERT INTO CUSTOM_PLAYLIST SELECT *,1 FROM SONG WHERE ID IN (6,1)')
 con.commit(); con.close()
 (sd/'Music/notes.txt').write_text('x'); (sd/'Music/unindexed.mp3').write_bytes(b'x')
-favs = Path('/usr/data/radio_favorites.txt'); favs.write_text('Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n'
+favs = (sd/'radio_favorites.txt'); favs.write_text('Jazz <FM>\thttp://s.example/jazz\tMP3\t128\tGermany\n'
                                                             'Talk\thttps://s.example/talk\tAAC\t64\tFrance\n')
 
 reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/library/album?name=Blue+Album',
@@ -136,3 +137,4 @@ assert res[58]['rc'] == -1 and res[58]['why'] and res[58]['why'] != "Couldn't sw
 assert res[59]['body']['work_mode'] == 0, res[59]['body'].get('work_mode')
 assert res[60]['rc'] == -1 and res[60]['why'] == 'No station is playing', res[60]
 print('PASS Remote Control library: lists, search, paging, folders (symlink escape refused), album/song/favourites/all plays, radio favourites, search, save/remove, playlist and favourite edits, rescan, EQ, status, Bluetooth, working mode, folder play')
+subprocess.run(['umount', str(sd)], capture_output=True)

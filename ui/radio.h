@@ -28,6 +28,13 @@ int  radio_search(const char *query);                   /* "" = popular; 0 start
 int  radio_search_result(rc_station_t *out, int cap, int *state);   /* stations copied; state 0 idle 1 busy 2 done 3 failed */
 int  radio_fav_add(const rc_station_t *s);              /* 0 saved (or already there), -1 refused (radio_last_error) */
 int  radio_fav_remove(const char *url);                 /* 0 removed (or not there), -1 couldn't save */
+int  radio_fav_count(void);                             /* the saved stations (up to RC_MAX_FAV) */
+int  radio_fav_get(int i, rc_station_t *out);           /* favourite i (0-based); 0, -1 no such */
+int  radio_fav_has(const char *url);                    /* 1 = url is a favourite */
+int  radio_fav_nocard(void);                            /* 1 = the list is kept on the SD card and no card is in */
+/* Settings > System > Library > Radio Favourites changed to the card (sd 1) or the player (sd 0); the setting is
+ * already saved; nothing is copied. 0 done, 1 done with a note in *why (no card). */
+int  radio_fav_move(int sd, const char **why);
 
 void radio_restart(void);                   /* main.c: the output was re-initialised (Bluetooth -> headphones): start the station again */
 void radio_mode_leaving(void);              /* main.c ui_set_source_mode: another source takes over (no mode switch here) */

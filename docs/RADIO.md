@@ -14,7 +14,22 @@ keep favourites on the Disc.
 2. Open **Radio** from Apps (or from the app menu of your theme).
 3. **Search stations** (type part of a name) or **Popular stations**. Tap a station to play it.
 4. **Hold** a station to save it as a favourite; hold a favourite to remove it. Favourites are listed on the Radio
-   screen.
+   screen (up to 1000).
+
+### Where the favourites are kept
+
+**Settings > System > Library > Radio Favourites** chooses the file:
+
+| Setting | File |
+|---|---|
+| **On SD Card** (default) | `radio_favorites.txt` in the root of the SD card (`/tmp/sdcard/radio_favorites.txt` on the Disc) |
+| **On Player** | `/usr/data/radio_favorites.txt` inside the player (where favourites were kept before) |
+
+Switching copies nothing: each place keeps its own file, and the Radio app shows the one the setting names. To take
+your list along, copy the file yourself, for example over SSH (`cp /usr/data/radio_favorites.txt /tmp/sdcard/`) or
+with a computer. Without an SD card the card list is empty ("No SD card") and saving a favourite is refused; the file
+on the card is never overwritten then. The Disc reads the file again when the setting changes, when a card is
+inserted or removed, and when the file changes (an edit on a computer or over SSH), at most once a second.
 
 While the radio plays, the Music screen shows the station name and "Web radio". The elapsed and total time are the
 player's own and mean nothing for a live stream; pause works, skip and seek do nothing useful. **Stop radio** on the
@@ -29,9 +44,10 @@ and hands it the station with the standard UPnP `SetAVTransportURI` and `Play` a
 audio passes through the UI and no decoder was added.
 
 Stations come from [radio-browser.info](https://www.radio-browser.info/) (`url_resolved`, broken stations hidden),
-fetched with `wget` over HTTPS. Favourites live in `/usr/data/radio_favorites.txt`, one per line:
-`name<TAB>url<TAB>codec<TAB>bitrate<TAB>country`. You can edit it over SSH; only `http://` and `https://` addresses are
-accepted.
+fetched with `wget` over HTTPS. The favourites file (see [above](#where-the-favourites-are-kept)) holds one station per
+line, `name<TAB>url<TAB>codec<TAB>bitrate<TAB>country` (UTF-8, at most 1000 lines). You can edit it in a text editor
+or over SSH; only `http://` and `https://` addresses are accepted, other lines are skipped. A save writes a temporary
+file next to it and renames it over the old one.
 
 ## Limits
 
@@ -49,5 +65,5 @@ accepted.
 
 For a front end such as Remote Control, `ui/radio.h` offers `radio_favorites`, `radio_play`, `radio_play_url`,
 `radio_stop`, `radio_state`, `radio_station_name`, `radio_stream_title` ("Artist - Title", "" none), the directory search (`radio_search`, `radio_search_result`) and
-`radio_fav_add` / `radio_fav_remove` (main thread only). [Remote Control](REMOTE_CONTROL.md) uses them for
+`radio_fav_add` / `radio_fav_remove`, `radio_fav_count` / `radio_fav_get` / `radio_fav_has` (main thread only). [Remote Control](REMOTE_CONTROL.md) uses them for
 its Radio tab, the [MPD Server](MPD.md#web-radio) for the stored playlist "Radio".

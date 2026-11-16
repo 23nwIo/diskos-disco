@@ -39,6 +39,7 @@
 #include "command_spawn.h"
 #include "own_player.h"     /* opl_running: About > Player; the Outputs page */
 #include "ipc.h"
+#include "radio.h"
 #include "sdio.h"
 #include "art.h"
 #include "scanner.h"
@@ -385,6 +386,11 @@ static void apply_charge_protect(int v){
         ui_toast("Couldn't change it - try again");
         lv_async_call(detail_refresh_async, NULL);
     }
+}
+/* Radio Favourites: the list on the SD card (default) or in the player; nothing is copied (docs/RADIO.md) */
+static void apply_radio_fav(int v){
+    const char *why = NULL;
+    if(radio_fav_move(v, &why) && why) ui_toast(why);
 }
 /* Track Numbers: album song lists show each song's track number (stock "TRACK_DISPLAY", drawn by diskOS) */
 static void apply_track_numbers(int v){ ui_set_track_display(v); library_refresh(); }
@@ -880,6 +886,7 @@ static const char *const OPT_GAIN[]   = { "Low", "High" };
 static const char *const OPT_DFILTER[]= { "Fast LL","Slow LL","Slow PC","Fast PC","NOS","Wideband" };
 static const char *const OPT_MEMORY[] = { "Off", "Position", "Song" };
 static const char *const OPT_ARTISTCLASS[] = { "By Artist", "By Album Artist" };
+static const char *const OPT_RADIOFAV[] = { "On Player", "On SD Card" };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
 static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 static const char *const D_ARTCACHE[] = {
@@ -1158,6 +1165,8 @@ static const setting_t TABLE[] = {
       "Re-scan the SD card for new or removed music.", NULL },
     { "Library",   "Import Playlists", ST_ACTION, NULL, 0,0,0, NULL,0, "Import", apply_import_m3u, 0,
       "Import .m3u / .m3u8 playlists found on the SD card.", NULL },
+    { "Library",   "Radio Favourites", ST_CYCLER, "radio_fav_sd", 0,0,0, OPT_RADIOFAV, 2, NULL, apply_radio_fav, 1,
+      "Where Radio keeps its favourites. Card: radio_favorites.txt in its root. Switching copies nothing.", NULL },
     { "Controls",   "Volume Keys", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_volkeys_group, 0,
       "Choose volume-key actions for press, double-press and hold: volume or track change.", NULL },
     { "Controls",   "Default UI",  ST_CYCLER, "boot_default", 0,0,0, OPT_BOOTDEF, 2, NULL, apply_boot_default, 0,

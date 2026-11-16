@@ -70,7 +70,7 @@ Song ids: Up Next songs use the player's list row id; queued songs and new-list 
 
 ## Web radio
 
-The Disc's radio favourites (the ones held on the Radio screen, `/usr/data/radio_favorites.txt`) are the stored
+The Disc's radio favourites (the ones held on the Radio screen, from the file that Settings > System > Library > Radio Favourites names, see [Radio](RADIO.md#where-the-favourites-are-kept)) are the stored
 playlist **Radio**. It is listed first by `listplaylists` and in the root of `lsinfo`; it hides a Disc playlist of the
 same name.
 

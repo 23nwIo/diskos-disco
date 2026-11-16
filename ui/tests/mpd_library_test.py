@@ -7,10 +7,11 @@ is not running on a host: commands that end in a player frame are checked by the
 import os, shutil, sqlite3, subprocess, tempfile
 from pathlib import Path
 ui = Path(__file__).resolve().parents[1]
-sd = Path('/tmp/sdcard'); shutil.rmtree(sd, ignore_errors=True)
-(sd/'Music/Blue Album').mkdir(parents=True); (sd/'Music/Other').mkdir(parents=True); (sd/'Music/Other/Deep').mkdir(parents=True)
+sd = Path('/tmp/sdcard'); subprocess.run(['umount', str(sd)], capture_output=True); shutil.rmtree(sd, ignore_errors=True)
+sd.mkdir(parents=True); subprocess.run(['mount', '--bind', str(sd), str(sd)], check=True)   # a mounted card: the radio favourites live on it (default)
+(sd/'Music/Blue Album').mkdir(parents=True, exist_ok=True); (sd/'Music/Other').mkdir(parents=True); (sd/'Music/Other/Deep').mkdir(parents=True)
 db = Path('/usr/data/fiio/db/song.db'); db.parent.mkdir(parents=True, exist_ok=True); db.unlink(missing_ok=True)
-Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True); Path('/usr/data/radio_favorites.txt').unlink(missing_ok=True); (ui/'tests/host_build/queue.tsv').unlink(missing_ok=True)   # host builds keep the Queue here
+Path('/usr/data/diskos_queue.tsv').unlink(missing_ok=True); (sd/'radio_favorites.txt').unlink(missing_ok=True); (ui/'tests/host_build/queue.tsv').unlink(missing_ok=True)   # host builds keep the Queue here
 con = sqlite3.connect(db)
 cols = ('ID INTEGER PRIMARY KEY,PATH,NAME,TITLE,ALBUM,ARTIST,GENRE,DISC,TRACK,IS_CUE,IS_ISO,IS_DSD,OFFSET,DURATION,'
         'ALBUM_ARTIST,IS_M3U,M3U_PATH,TITLE_CODE,NAME_CODE,ALBUM_CODE,ARTIST_CODE,GENRE_CODE,'
@@ -44,10 +45,11 @@ con.commit(); con.close()
 sc = Path('/usr/data/fiio/db/sysconfig.db'); sc.unlink(missing_ok=True)
 c2 = sqlite3.connect(sc); c2.execute('CREATE TABLE SYSCONFIG(ID INTEGER PRIMARY KEY, PLAY_MODE, VOLUME)'); c2.execute('INSERT INTO SYSCONFIG VALUES(1,0,60)'); c2.commit(); c2.close()
 
-def run(reqs, track=None):
+def run(reqs, track=None, conf=None):
     with tempfile.TemporaryDirectory() as tmp:
         rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
         (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
+        if conf: (ui/'tests/host_build/diskos.conf').write_text(conf)
         env = {**os.environ, 'MPD_REQS': str(rf), 'ZUNE_LIBRARY_FIXTURE': '1'}
         env['MPD_TRACK'] = track or ''
         r = subprocess.run([str(ui/'tests/host_build/host-render'), '10', '0', 'preview-home', '0', str(Path(tmp)/'o.ppm')],
@@ -159,7 +161,7 @@ ack(r[28], 52); ok(r[29])
 ok(r[30]); ok(r[31]); assert kv(ok(r[32]), 'playlist')[-1] == 'Night drive'; ok(r[33])
 
 # ---- web radio: the favourites are the stored playlist "Radio"
-Path('/usr/data/radio_favorites.txt').write_text('Jazz FM\thttps://jazz.example/live.mp3\tMP3\t128\tGermany\nTalk\thttp://talk.example/a.aac\tAAC\t64\t\n')
+(sd/'radio_favorites.txt').write_text('Jazz FM\thttps://jazz.example/live.mp3\tMP3\t128\tGermany\nTalk\thttp://talk.example/a.aac\tAAC\t64\t\n')
 r = run(['listplaylist Radio', 'listplaylistinfo Radio', 'playlistadd Radio http://new.example/s.ogg', 'listplaylist Radio',
          'playlistdelete Radio 1', 'listplaylist Radio', 'playlistdelete Radio 9', 'playlistadd Radio ftp://x/y', 'playlistadd "Road trip" http://a/b',
          'rm Radio', 'save Radio', 'load Radio', 'load Radio 1:2', 'addid https://jazz.example/live.mp3', 'add http://bad url'])
@@ -171,6 +173,31 @@ ack(r[6], 2); ack(r[7], 2); assert 'Radio' in ack(r[8], 52)
 ack(r[9], 52); ack(r[10], 56)
 assert 'Wi-Fi' in ack(r[11], 52) and 'Wi-Fi' in ack(r[12], 52) and 'Wi-Fi' in ack(r[13], 52), r[11:14]   # load / add play the station (no Wi-Fi on a host)
 ack(r[14], 2)
-assert 'new.example' in Path('/usr/data/radio_favorites.txt').read_text() and 'talk.example' not in Path('/usr/data/radio_favorites.txt').read_text()
-Path('/usr/data/radio_favorites.txt').unlink()
+assert 'new.example' in (sd/'radio_favorites.txt').read_text() and 'talk.example' not in (sd/'radio_favorites.txt').read_text()
+(sd/'radio_favorites.txt').unlink()
+
+# ---- where the favourites live (Settings > System > Library > Radio Favourites, cfg radio_fav_sd; default the card)
+dev = Path('/usr/data/radio_favorites.txt'); dev.write_text('Player One\thttp://player.example/1\tMP3\t128\t\n')
+r = run(['listplaylist Radio'])                                     # card default: the player's file is not read
+assert kv(ok(r[0]), 'file') == [], r[0]
+(sd/'radio_favorites.txt').write_text('Card One\thttp://card.example/1\tMP3\t128\t\n')
+r = run(['listplaylist Radio', 'playlistadd Radio http://player.example/2'], conf='radio_fav_sd=0\n')   # "On Player"
+assert kv(ok(r[0]), 'file') == ['http://player.example/1'], r[0]; ok(r[1])
+assert 'player.example/2' in dev.read_text() and (sd/'radio_favorites.txt').read_text() == 'Card One\thttp://card.example/1\tMP3\t128\t\n'   # nothing copied
+dev.unlink()
+# 1000 favourites fit; the 1001st is refused and the file stays as it was
+big = ''.join(f'Station {i}\thttp://s{i}.example/live\tMP3\t128\tGermany\n' for i in range(1000))
+(sd/'radio_favorites.txt').write_text(big)
+r = run(['listplaylist Radio', 'playlistadd Radio http://extra.example/x', 'playlistdelete Radio 999', 'listplaylist Radio'])
+f0 = kv(ok(r[0]), 'file'); assert len(f0) == 1000 and f0[999] == 'http://s999.example/live', len(f0)
+assert 'full' in ack(r[1], 52), r[1]; ok(r[2]); assert len(kv(ok(r[3]), 'file')) == 999, r[3]
+# no card: the card list is empty, a save is refused, and the card's file is never written
+subprocess.run(['umount', str(sd)], check=True)
+before = (sd/'radio_favorites.txt').read_text()
+r = run(['listplaylist Radio', 'playlistadd Radio http://new.example/s.ogg'])
+assert kv(ok(r[0]), 'file') == [], r[0]; assert 'SD card' in ack(r[1], 52), r[1]
+assert (sd/'radio_favorites.txt').read_text() == before
+subprocess.run(['mount', '--bind', str(sd), str(sd)], check=True)
+(sd/'radio_favorites.txt').unlink()
 print('mpd_library_test: all passed')
+subprocess.run(['umount', str(sd)], capture_output=True)

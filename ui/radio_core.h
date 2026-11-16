@@ -8,7 +8,7 @@
 
 #define RC_NAME_LEN 96
 #define RC_URL_LEN  512
-#define RC_MAX_FAV  60          /* favourites kept */
+#define RC_MAX_FAV  1000        /* favourites kept */
 #define RC_MAX_HITS 40          /* stations per directory reply */
 
 typedef struct {
