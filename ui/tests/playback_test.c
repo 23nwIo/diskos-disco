@@ -52,8 +52,13 @@ int eng_advanced(const eng_status_t *s){ (void)s; int a = e_advanced_flag; e_adv
 int eng_toggle(void){ e_state = e_state == ENG_PLAY ? ENG_PAUSE : ENG_PLAY; e_armed = 0; return 0; }
 int eng_pause(int on){ if(on && e_state == ENG_PLAY) e_state = ENG_PAUSE; else if(!on && e_state == ENG_PAUSE) e_state = ENG_PLAY; return 0; }
 int eng_seek_ms(long ms){ e_ms = ms; return 0; }
+static int e_cert_stale, e_restarts;
+static char e_title[64];
+int eng_cert_stale(void){ return e_cert_stale; }
+int eng_restart(void){ e_restarts++; e_cert_stale = 0; e_cur[0] = 0; e_cur_id = -1; e_state = ENG_STOP; return 0; }
 int eng_status(eng_status_t *s){
     memset(s, 0, sizeof *s);
+    snprintf(s->title, sizeof s->title, "%s", e_title);
     s->state = e_state; s->songid = e_cur_id; s->song = e_cur_id >= 0 ? 0 : -1; s->elapsed_ms = e_ms;
     s->rate = e_state == ENG_PLAY ? rate_of(e_cur) : 0; s->bits = 16; s->channels = 2;
     snprintf(s->file, sizeof s->file, "%s", e_cur);
@@ -519,6 +524,15 @@ static void test_radio(void){
     if(getenv("PB_DUMP")) for(int i = 0; i < nsent; i++) puts(sent[i]);
     CHECK(sent_count("Jazz & More") == 1 && sent_count("\"work_mode\":\"DLNA\"") == 1 && sent_count("a2020013{\"state\":0}") >= 1);
     CHECK(act("GetMediaInfo", "", out) == 0 && strstr(out, "<CurrentURI>http://radio.example/live?a=1&amp;b=2</CurrentURI>"));
+    /* the song the station names (MPD's Title, ICY "Artist - Title") goes to OPL_STREAM for ui/radio.c */
+    {
+        char b[2048] = "", u[256], ar[64], ti[64];
+        snprintf(e_title, sizeof e_title, "Some Band - Some\nSong"); pb_engine_event();
+        FILE *f = fopen(OPL_STREAM, "r"); size_t n = f ? fread(b, 1, sizeof b - 1, f) : 0; if(f) fclose(f); b[n] = 0;
+        CHECK(opl_stream_parse(b, u, sizeof u, ar, sizeof ar, ti, sizeof ti) == 0 && !strcmp(u, "http://radio.example/live?a=1&b=2")
+              && ar[0] == 0 && !strcmp(ti, "Some Band - Some Song"));
+        e_title[0] = 0;
+    }
     /* the Play key pauses and plays on; skip and seek do nothing */
     CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PAUSE);
     pb_engine_event();
@@ -529,7 +543,9 @@ static void test_radio(void){
     CHECK(act("Stop", "", out) == 0 && e_state == ENG_STOP);
     CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "STOPPED"));
     CHECK(act("Seek", "", out) == 401);
-    CHECK(act("Play", "", out) == 0 && e_state == ENG_PLAY);
+    CHECK(access(OPL_STREAM, F_OK) != 0);                     /* stopped: no song named */
+    e_cert_stale = 1;                                         /* Radio Certificates changed: MPD restarts before the station */
+    CHECK(act("Play", "", out) == 0 && e_state == ENG_PLAY && e_restarts == 1 && !strcmp(e_cur, "http://radio.example/live?a=1&b=2"));
     /* 0657 08: the station stops, the local song comes back paused where it was */
     CHECK(pl_core_handle(&c, "0657000C0008", 12) == 0 && c.work_mode == PL_WORK_LOCAL);
     pb_stream_mode(0);

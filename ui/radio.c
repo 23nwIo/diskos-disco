@@ -32,6 +32,7 @@
 #include "config.h"
 #include "sdio.h"
 #include "system.h"
+#include "own_player.h"     /* opl_running, OPL_STREAM: song titles from the own player */
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -301,7 +302,8 @@ static void post_job(int job){                          /* caller holds g_mu; a 
 }
 
 /* ================================================================ the song title (its own thread)
- * The player does not pass the stream's metadata on, so every ICY_EVERY_MS a second, short connection to the
+ * The own player names the song from MPD (OPL_STREAM, read every OWN_EVERY_MS). The stock player does not pass
+ * the stream's metadata on, so with it every ICY_EVERY_MS a second, short connection to the
  * station asks for it: ICY blocks (MP3/AAC from Icecast/SHOUTcast) or, for Ogg Vorbis/Opus, the comment header
  * the server sends every new listener. wget does DNS, HTTPS and redirects; it is killed once the title is read. */
 #define ICY_EVERY_MS 20000
@@ -366,9 +368,26 @@ static int icy_fetch(const char *url, char *title, size_t tn, char *artist, size
     while(waitpid(pid, NULL, 0) < 0 && errno == EINTR){}
     return res;
 }
+/* The own player names the song itself (OPL_STREAM, from MPD, which reads the stream anyway): 1 with title/artist
+ * when it is about this station, 0 not (yet). */
+#define OWN_EVERY_MS 2000
+static int own_stream_title(const char *url, char *title, size_t tn, char *artist, size_t an){
+    static char b[2048], u[RC_URL_LEN];
+    title[0] = artist[0] = 0;
+    int fd = open(OPL_STREAM, O_RDONLY | O_CLOEXEC);
+    if(fd < 0) return 0;
+    ssize_t n = read(fd, b, sizeof b - 1);
+    close(fd);
+    b[n > 0 ? n : 0] = 0;
+    char t[320];
+    if(opl_stream_parse(b, u, sizeof u, artist, an, t, sizeof t) != 0 || strcmp(u, url)) return 0;
+    if(!artist[0] && t[0]) rc_icy_split(t, artist, an, title, tn);   /* ICY: "Artist - Title" in one */
+    else snprintf(title, tn, "%s", t);
+    return 1;
+}
 static void *icy_thread(void *arg){
     (void)arg;
-    unsigned done_gen = 0; int misses = 0; long long next = 0;
+    unsigned done_gen = 0, own_gen = 0; int misses = 0, own = 0; long long next = 0;
     for(;;){
         pthread_mutex_lock(&g_mu);
         for(;;){
@@ -382,15 +401,17 @@ static void *icy_thread(void *arg){
         rc_station_t s = g_now; unsigned gen = g_play_gen;
         pthread_mutex_unlock(&g_mu);
         char t[160], a[160];
-        int r = icy_fetch(s.url, t, sizeof t, a, sizeof a);
+        if(own_gen != gen){ own = opl_running(); own_gen = gen;
+                            fprintf(stderr, "radio: song titles from %s\n", own ? "the own player (MPD)" : "a second connection"); }
+        int r = own ? own_stream_title(s.url, t, sizeof t, a, sizeof a) : icy_fetch(s.url, t, sizeof t, a, sizeof a);
         pthread_mutex_lock(&g_mu);
         if(gen == g_play_gen && r > 0 && (strcmp(t, g_icy) || strcmp(a, g_icy_artist))){
             snprintf(g_icy, sizeof g_icy, "%s", t); snprintf(g_icy_artist, sizeof g_icy_artist, "%s", a); g_icy_bump++;
             fprintf(stderr, "radio: now \"%s%s%s\"\n", a, a[0] ? " - " : "", t);
         }
         misses = r > 0 ? 0 : misses + 1;
-        /* a station that names nothing is asked again only every few minutes */
-        next = ms_now() + (misses >= 3 ? 5 * 60000 : ICY_EVERY_MS);
+        /* a station that names nothing is asked again only every few minutes; the own player's file is only read */
+        next = ms_now() + (own ? OWN_EVERY_MS : misses >= 3 ? 5 * 60000 : ICY_EVERY_MS);
         pthread_mutex_unlock(&g_mu);
         if(r > 0) ui_loop_wake();
     }

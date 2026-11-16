@@ -64,10 +64,18 @@ file next to it and renames it over the old one.
   dlnatest over Bluetooth). Headphones that connect only while the radio plays are not switched to automatically;
   connect them first.
 - The song the station names is shown on the Music screen (title, artist, the station as album): ICY metadata for
-  MP3/AAC from Icecast or SHOUTcast, the comment header (TITLE, ARTIST) for Ogg Vorbis and Opus. The player does not
-  pass this on, so the Disc opens a second, short connection to the station every 20 seconds (a few seconds of extra
-  data); a station that names nothing is asked again only every 5 minutes. A song change can take up to 20 seconds to
-  show. Without a title the station name is shown. FLAC streams are not read for titles. Not yet tested on a Disc.
+  MP3/AAC from Icecast or SHOUTcast, the comment header (TITLE, ARTIST) for Ogg Vorbis and Opus. With the own player
+  (docs/MPD_CORE.md) the title comes from MPD, which reads it from the stream it plays anyway: the player writes it to
+  `/tmp/diskos-player-stream` and the Radio app reads that file every 2 seconds, with no extra connection. The stock
+  player does not pass it on, so with it the Disc opens a second, short connection to the station every 20 seconds (a
+  few seconds of extra data); a station that names nothing is asked again only every 5 minutes, and a song change can
+  take up to 20 seconds to show. Without a title the station name is shown. FLAC streams are not read for titles.
+  Not yet tested on a Disc.
+- **Settings > System > Library > Radio Certificates** (own player only): On (default), an HTTPS station needs a
+  certificate the Disc's CA list (`/etc/ssl/certs/ca-certificates.crt`) trusts. Off, HTTPS stations play without that
+  check (for stations with an expired or self-made certificate; anyone in the network path could then pose as the
+  station). The setting is a file, `/usr/data/diskos-own/radio-no-cert-check`; MPD reads it when it starts, so the
+  player restarts MPD before the next station after a change.
 - As in the other working modes, a microSD card inserted while the radio plays is not mounted automatically.
 - Playlists (`.pls`, `.m3u`) are resolved by the directory; a bare playlist URL in the favourites file may not play.
 

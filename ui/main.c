@@ -1047,6 +1047,7 @@ static void reapply_sends(void){
         int gp = simple_cfg_get_int("gapless", -1);     if(gp >= 0)             ui_set_gapless(gp);
         int mv = simple_cfg_get_int("max_vol", -1);     if(mv >= 10)            ui_set_maxvol(mv);    /* <10 or unset = skip */
         int bl = simple_cfg_get_int("balance", -100);   if(bl >= -10 && bl<=10) ui_set_balance(bl);   /* -1 is a VALID balance */
+        { void settings_radio_cert_sync(void); settings_radio_cert_sync(); }   /* Radio Certificates: the player's flag file */
         int ao = simple_cfg_get_int("out_auto", 1);    if(opl_running() && ao >= 0 && ao <= 2){   /* Auto Outputs (own player only) */
             char f[16]; snprintf(f, sizeof f, "0d05000C%04X", (unsigned)ao); ipc_send_cmd(f); }
     }

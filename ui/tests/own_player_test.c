@@ -54,6 +54,11 @@ int main(void){
     EXPECT(!strcmp(o.codec, "LDAC") && !strcmp(o.codecs, "SBC AAC LDAC") && o.switching == 0);
     EXPECT(o.auto_out == 2 && o.notice_seq == 7 && o.notice == 1);
     EXPECT(opl_outputs_parse("vol_aux=3\n", &o) == -1 && o.jack == -1);
+    {   char u[32], a[16], t[16];
+        EXPECT(opl_stream_parse("uri=http://x/y\nartist=A\ntitle=A very long title that is cut\n", u, sizeof u, a, sizeof a, t, sizeof t) == 0
+               && !strcmp(u, "http://x/y") && !strcmp(a, "A") && !strcmp(t, "A very long tit"));
+        EXPECT(opl_stream_parse("title=T\n", u, sizeof u, a, sizeof a, t, sizeof t) == -1);
+    }
     char cmd[100]; snprintf(cmd, sizeof cmd, "rm -rf %s", dir); if(system(cmd)){ /* cleanup only */ }
     if(fails){ fprintf(stderr, "own_player_test: %d failure(s)\n", fails); return 1; }
     printf("own_player_test: ok\n");

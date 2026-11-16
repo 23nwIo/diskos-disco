@@ -27,6 +27,7 @@ typedef struct {
     int songs;                     /* queue length */
     unsigned rate;                 /* sample rate of the current stream, 0 unknown */
     char file[1100];               /* current song's path (file:// stripped) */
+    char title[256], artist[160];  /* its Title / Artist tags ("" none); a web radio's ICY StreamTitle is the Title */
 } eng_status_t;
 
 /* Start MPD (if its binary exists) and connect. 0, or -1 when there is no engine (the player then runs silent). */
@@ -66,6 +67,10 @@ int eng_seek_ms(long ms);
 int eng_status(eng_status_t *st);
 /* The CA bundle MPD's curl input is given for https streams, NULL none found. */
 const char *eng_ca_file(void);
+/* 1 when OPL_NO_CERT_CHECK came or went since MPD was started (its curl input reads it only at start). */
+int eng_cert_stale(void);
+/* Stop MPD and start it again with a fresh configuration (its queue is gone; the outputs are kept). 0 or -1. */
+int eng_restart(void);
 /* Raw command for tests and diagnosis; the answer in out. */
 int eng_cmd(const char *cmd, char *out, unsigned cap);
 #endif

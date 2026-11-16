@@ -43,7 +43,13 @@
 /* Outputs (Settings > Audio > Outputs): the own player writes their state here whenever it changes, one "key=value"
  * per line (aux, bt, vol_aux, vol_bt, bt_ready, jack, bal, codec, codecs, switching); the UI reads it. tmpfs. */
 #define OPL_OUTPUTS "/tmp/diskos-player-outputs"
-#define OPL_VOLUME_LOG "/tmp/diskos-volume.log"   /* one line per volume change (player/main.c volume_log) */
+#define OPL_VOLUME_LOG "/tmp/diskos-volume.log"
+/* Web radio: there = MPD does not check the stations' HTTPS certificates (Settings > Library > Radio Certificates). The
+ * UI puts it there or takes it away; the player reads it when it starts MPD and before each station. */
+#define OPL_NO_CERT_CHECK OPL_DIR "/radio-no-cert-check"
+/* Web radio: the song the station names, as MPD has it (ICY StreamTitle, Ogg comments), for ui/radio.c instead of a
+ * second connection to the station. "uri=", "artist=", "title=" lines; only while the own player plays a station. */
+#define OPL_STREAM "/tmp/diskos-player-stream"   /* one line per volume change (player/main.c volume_log) */
 #define OPL_VOLUMES OPL_DIR "/volumes"          /* the two output volumes, kept by the player: "vol_aux=N\nvol_bt=N" */
 
 enum { OPL_OFF = 0, OPL_ON, OPL_NO_BINARY, OPL_GAVE_UP };
@@ -168,6 +174,22 @@ static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
         l = e ? e + 1 : NULL;
     }
     return seen == 3 ? 0 : -1;
+}
+/* OPL_STREAM's text: 0 with the three values ("" when a line is missing), -1 without a uri= line */
+static inline int opl_stream_parse(const char *t, char *uri, size_t un, char *artist, size_t an, char *title, size_t tn){
+    uri[0] = artist[0] = title[0] = 0;
+    int seen = 0;
+    for(const char *l = t; l && *l; ){
+        const char *e = strchr(l, '\n');
+        size_t n = e ? (size_t)(e - l) : strlen(l);
+        char *dst = NULL; size_t cap = 0, k = 0;
+        if(n >= 4 && !strncmp(l, "uri=", 4)){ dst = uri; cap = un; k = 4; seen = 1; }
+        else if(n >= 7 && !strncmp(l, "artist=", 7)){ dst = artist; cap = an; k = 7; }
+        else if(n >= 6 && !strncmp(l, "title=", 6)){ dst = title; cap = tn; k = 6; }
+        if(dst && cap){ size_t m = n - k < cap - 1 ? n - k : cap - 1; memcpy(dst, l + k, m); dst[m] = 0; }
+        l = e ? e + 1 : NULL;
+    }
+    return seen ? 0 : -1;
 }
 static inline int opl_outputs_read(opl_outputs_t *o){
     char b[1024];

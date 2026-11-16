@@ -136,14 +136,22 @@ the local song again, paused. The Play key pauses and plays on; skip and seek do
 for the station (`song_name` = the station, `work_mode` "DLNA").
 - MPD's curl input plays `http://` and `https://` streams; HTTPS checks the certificate against `cacert` in mpd.conf,
   the first of `/usr/data/diskos-own/cacert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`,
-  `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem` (engine.c `eng_ca_file`). Which one the Disc has is not
-  checked yet; without one, HTTPS stations fail ("not correctly signed by the trusted CA") and the player logs it.
+  `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem` (engine.c `eng_ca_file`). The Disc has
+  `/etc/ssl/certs/ca-certificates.crt` (Jo, 2026-11-16); without one, HTTPS stations fail ("not correctly signed by
+  the trusted CA") and the player logs it. Settings > Library > Radio Certificates off puts
+  `/usr/data/diskos-own/radio-no-cert-check` in place: mpd.conf then gets `verify_peer "no"` and `verify_host "no"`
+  instead of `cacert`, and the player restarts MPD before the next station when the file came or went
+  (`eng_cert_stale`, `eng_restart`; in radio mode the local song is reloaded from the player's queue anyway). Checked
+  under qemu with the real MIPS MPD: a self-signed station plays with the check off and is refused with it on.
 - Host-tested 2026-11-16: playback_test (the actions and the mode change) and the real MIPS MPD under qemu-mipsel with a
   null output, driven by the host player over UPnP: an MP3 over HTTP and over HTTPS (own CA) played; with another CA
   bundle the HTTPS stream was refused.
 - The stream's rate is only known once MPD has opened it: the DAC is started for 44.1 kHz and started again for the
   stream's rate when MPD reports it (as for a song whose header has no rate). Not checked on a Disc.
-- The song titles still come from the UI's own ICY poll (RADIO.md); MPD has them too (`Title` from ICY), not used yet.
+- Song titles (2026-11-16): MPD's `Title` (ICY StreamTitle, "Artist - Title") and `Artist` (Ogg comments) of the
+  station go to `/tmp/diskos-player-stream` (`uri=`, `artist=`, `title=`) whenever MPD reports a change (idle
+  `player`); ui/radio.c reads it every 2 s instead of its own ICY connection (only when the own player runs). Checked
+  under qemu: MPD names the ICY title of a test stream.
 
 ## Next
 

@@ -290,12 +290,14 @@ static void update_status(void){
     g_es = s; g_es_t = now_s(); g_es_valid = 1;
 }
 
+static void stream_file(int on);
 void pb_engine_event(void){
     int was = g_es_valid ? g_es.state : ENG_STOP;
     update_status();
     if(!g_es_valid) return;
     if(g_stream){                                     /* the radio: no queue, no bookmark */
         if(g_st_loaded && g_es.state == ENG_PLAY && !g_st_told){ stream_a2(0); g_st_told = 1; }
+        stream_file(1);
         if(g_st_loaded && was == ENG_PLAY && g_es.state == ENG_STOP) L("radio: the stream stopped (%s)", g_st_uri);
         tell_state(g_es.state, 0);
         return;
@@ -611,6 +613,30 @@ static void stream_a2(int state){
 out:
     free(song); free(json); free(frame);
 }
+/* OPL_STREAM: the song the station names now, as MPD has it, for ui/radio.c (no second connection to the station).
+ * Written when it changes, removed when no station plays. */
+static char g_sf_last[1600];
+static void clean_line(char *d, size_t cap, const char *v){
+    size_t n = 0;
+    for(; *v && n + 1 < cap; v++) d[n++] = (*v == '\n' || *v == '\r') ? ' ' : *v;
+    d[n] = 0;
+}
+static void stream_file(int on){
+    if(!on || !g_st_loaded){
+        if(g_sf_last[0]){ if(unlink(OPL_STREAM) != 0 && errno != ENOENT) L("radio: unlink %s: %s", OPL_STREAM, strerror(errno)); g_sf_last[0] = 0; }
+        return;
+    }
+    char a[160] = "", t[256] = "", b[sizeof g_sf_last];
+    if(g_es_valid && !strcmp(g_es.file, g_st_uri)){ clean_line(a, sizeof a, g_es.artist); clean_line(t, sizeof t, g_es.title); }
+    snprintf(b, sizeof b, "uri=%s\nartist=%s\ntitle=%s\n", g_st_uri, a, t);
+    if(!strcmp(b, g_sf_last)) return;
+    char tmp[64]; snprintf(tmp, sizeof tmp, "%s.tmp", OPL_STREAM);
+    FILE *f = fopen(tmp, "we");
+    if(!f || fputs(b, f) < 0 || fclose(f) != 0){ L("radio: write %s: %s", tmp, strerror(errno)); return; }
+    if(rename(tmp, OPL_STREAM) != 0){ L("radio: rename %s: %s", tmp, strerror(errno)); return; }
+    if(t[0] || a[0]) L("radio: now \"%s%s%s\"", a, a[0] ? " - " : "", t);
+    snprintf(g_sf_last, sizeof g_sf_last, "%s", b);
+}
 void pb_stream_mode(int on){
     if(on && !g_stream){
         g_stream = 1; g_st_loaded = 0; g_st_uri[0] = g_st_title[0] = 0;
@@ -628,6 +654,7 @@ void pb_stream_mode(int on){
         g_stream = 0;
         if(g_st_loaded){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); }
         g_st_loaded = 0;
+        stream_file(0);
         L("radio: back to local playback");
         if(g_st_local >= 0 && g_st_local < Q.n){              /* the local song again, paused where it was */
             sqlite3 *d = db();
@@ -653,6 +680,10 @@ int pb_stream_play(void){
         update_status();
         return 0;
     }
+    if(eng_cert_stale()){                                /* Radio Certificates changed: MPD reads it only at its start */
+        L("radio: certificate check is now %s - restarting MPD", access(OPL_NO_CERT_CHECK, F_OK) == 0 ? "off" : "on");
+        if(eng_restart() != 0) L("radio: MPD did not start again");
+    }
     if(eng_load(g_st_uri, 0, 0, 0, 0) != 0){ L("radio: MPD can't play %s (an MPD without curl?)", g_st_uri); g_st_loaded = 0; return -1; }
     g_st_loaded = 1; g_st_told = 0; g_st_t = now_s();
     update_status();
@@ -666,6 +697,7 @@ int pb_stream_pause(void){
 int pb_stream_stop(void){
     if(!g_stream) return -1;
     if(g_st_loaded){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); g_st_loaded = 0; update_status(); tell_state(ENG_PAUSE, 0); }
+    stream_file(0);
     return 0;
 }
 const char *pb_stream_state(void){

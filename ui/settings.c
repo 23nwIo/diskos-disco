@@ -460,6 +460,20 @@ static void apply_radio_fav(int v){
     const char *why = NULL;
     if(radio_fav_move(v, &why) && why) ui_toast(why);
 }
+/* Radio Certificates (own player): off puts OPL_NO_CERT_CHECK in place, which MPD reads at its start; the player
+ * restarts MPD before the next station when it changed. The file is touched only when it is not as wanted (NAND). */
+void settings_radio_cert_sync(void){
+    int check = simple_cfg_get_int("radio_cert_check", 1) != 0, there = access(OPL_NO_CERT_CHECK, F_OK) == 0;
+    if(check && there && unlink(OPL_NO_CERT_CHECK) != 0)
+        fprintf(stderr, "settings: unlink %s: %s\n", OPL_NO_CERT_CHECK, strerror(errno));
+    if(!check && !there){
+        if(mkdir(OPL_DIR, 0755) != 0 && errno != EEXIST) fprintf(stderr, "settings: mkdir %s: %s\n", OPL_DIR, strerror(errno));
+        int fd = open(OPL_NO_CERT_CHECK, O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+        if(fd < 0){ fprintf(stderr, "settings: create %s: %s\n", OPL_NO_CERT_CHECK, strerror(errno)); ui_toast("Couldn't save settings"); }
+        else close(fd);
+    }
+}
+static void apply_radio_cert(int v){ (void)v; settings_radio_cert_sync(); }
 /* Track Numbers: album song lists show each song's track number (stock "TRACK_DISPLAY", drawn by diskOS) */
 static void apply_track_numbers(int v){ ui_set_track_display(v); library_refresh(); }
 /* Online Album Art (stock "Online cover", done by diskOS - netart.c): on tries the current song now; off drops any
@@ -1041,7 +1055,7 @@ static const setting_t TABLE[] = {
       "The headphone jacks (3.5 mm and 4.4 mm balanced). Auto Outputs says what plugging in does.", NULL },
     { "Outputs",  "Bluetooth",   ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_bt, 0,
       "The connected Bluetooth headphones; turn both on to play on both. Bluetooth is a little behind AUX.", NULL },
-    { "Outputs",  "Auto Outputs", ST_CYCLER, "out_auto", 0,0,0, OPT_OUTAUTO, 3, NULL, apply_out_auto, 1,
+    { "Outputs",  "Auto Outputs", ST_CHOICE, "out_auto", 0,0,0, OPT_OUTAUTO, 3, NULL, apply_out_auto, 1,
       "What plugging in or connecting headphones does to the outputs; unplugging or disconnecting turns that one off.", OPT_OUTAUTO_D },
     { "Outputs",  "AUX Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
       "The volume keys move every output that is on by the same step.", NULL },
@@ -1241,6 +1255,8 @@ static const setting_t TABLE[] = {
       "Import .m3u / .m3u8 playlists found on the SD card.", NULL },
     { "Library",   "Radio Favourites", ST_CYCLER, "radio_fav_sd", 0,0,0, OPT_RADIOFAV, 2, NULL, apply_radio_fav, 1,
       "Where Radio keeps its favourites. Card: radio_favorites.txt in its root. Switching copies nothing.", NULL },
+    { "Library",   "Radio Certificates", ST_TOGGLE, "radio_cert_check", 0,1,1, NULL,0, NULL, apply_radio_cert, 1,
+      "On: HTTPS stations need a valid certificate. Off: every station plays, unchecked. Own player only.", NULL },
     { "Controls",   "Volume Keys", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_volkeys_group, 0,
       "Choose volume-key actions for press, double-press and hold: volume or track change.", NULL },
     { "Controls",   "Default UI",  ST_CYCLER, "boot_default", 0,0,0, OPT_BOOTDEF, 2, NULL, apply_boot_default, 0,
@@ -2116,7 +2132,8 @@ void setting_detail_refresh(void){
     /* description at the bottom - per-option for cyclers (refreshes on change) */
     const char *desc = s->desc;
     if(s->type==ST_CYCLER && s->opt_descs && v>=0 && v<s->nopts) desc = s->opt_descs[v];
-    if(s->type == ST_CHOICE) desc = (s->opts == i18n_lang_names) ? "Screen redraws after selection."
+    if(s->type == ST_CHOICE && s->opt_descs && v >= 0 && v < s->nopts) desc = s->opt_descs[v];
+    else if(s->type == ST_CHOICE) desc = (s->opts == i18n_lang_names) ? "Screen redraws after selection."
                                   : (s->cfg_key && !strcmp(s->cfg_key, "bt_codec")) ? bt_codec_hint(v) : NULL;
     if(th_null() && s->cfg_key && !strcmp(s->cfg_key,"theme_variant"))desc="Null uses a fixed dark appearance.\nLight/Dark is unavailable in this theme.";
     if(th_null() && s->cfg_key && !strcmp(s->cfg_key,"null_side"))desc="Null is right-handed only. This option is disabled.";

@@ -99,12 +99,19 @@ const char *eng_ca_file(void){
     for(int i = 0; CA_FILES[i]; i++) if(access(CA_FILES[i], R_OK) == 0) return CA_FILES[i];
     return NULL;
 }
+static int g_cert_check = 1;                             /* what MPD was started with */
+static int cert_check_wanted(void){ return access(OPL_NO_CERT_CHECK, F_OK) != 0; }
+int eng_cert_stale(void){ return g_pid > 0 && cert_check_wanted() != g_cert_check; }
 static int spawn(void){
     if(mkdir(ENG_RUN_DIR, 0755) != 0 && errno != EEXIST){ g_log("engine: mkdir %s: %s", ENG_RUN_DIR, strerror(errno)); return -1; }
     FILE *f = fopen(ENG_CONF, "we");
     if(!f || fputs(CONF, f) < 0){ g_log("engine: write %s: %s", ENG_CONF, strerror(errno)); if(f) fclose(f); return -1; }
     const char *ca = eng_ca_file();
-    if(ca) fprintf(f, "input {\n  plugin \"curl\"\n  cacert \"%s\"\n}\n", ca);
+    g_cert_check = cert_check_wanted();
+    if(!g_cert_check){
+        fputs("input {\n  plugin \"curl\"\n  verify_peer \"no\"\n  verify_host \"no\"\n}\n", f);
+        g_log("engine: %s is there - https stations are not checked", OPL_NO_CERT_CHECK);
+    } else if(ca) fprintf(f, "input {\n  plugin \"curl\"\n  cacert \"%s\"\n}\n", ca);
     else g_log("engine: no CA bundle (put one at %s) - https web radio will not play", ENG_CA_OWN);
     if(fclose(f) != 0){ g_log("engine: write %s: %s", ENG_CONF, strerror(errno)); return -1; }
     f = fopen(ENG_BT_SCRIPT, "we");
@@ -146,6 +153,14 @@ int eng_start(int dry, eng_log_fn log){
 void eng_stop(void){
     disconnect();
     if(g_pid > 0){ kill(g_pid, SIGTERM); waitpid(g_pid, NULL, 0); g_pid = -1; }
+}
+
+int eng_restart(void){
+    if(g_dry || g_pid <= 0) return -1;
+    g_log("engine: restarting MPD");
+    eng_stop();
+    g_cur = g_next = -1; g_armed = 0;                    /* its queue goes with it */
+    return spawn();
 }
 
 int eng_ready(void){ return g_pid > 0 && g_idle >= 0; }
@@ -354,6 +369,8 @@ int eng_status(eng_status_t *st){
         const char *p = !strncmp(v, "file://", 7) ? v + 7 : v;
         snprintf(st->file, sizeof st->file, "%s", p);
         if(!st->rate && mc_get(r, "Format", v, sizeof v)) st->rate = (unsigned)strtoul(v, NULL, 10);
+        mc_get(r, "Title", st->title, sizeof st->title);
+        mc_get(r, "Artist", st->artist, sizeof st->artist);
     }
     if(g_armed && st->state == ENG_STOP){ st->state = ENG_PAUSE; st->elapsed_ms = g_armed_ms; }   /* a paused start */
     return 0;
