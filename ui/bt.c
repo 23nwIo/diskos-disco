@@ -1750,6 +1750,21 @@ static void dev_cb(lv_event_t *e){
 }
 
 #define BROW_W 268
+/* The connected row's second line, "Connected - SBC - 73%": the battery part follows btbatt.c, which the status poll
+ * (main.c, every 3 s) reads; bt_battery_refresh rewrites the line when the level changes, so it needs no rescan. */
+static lv_obj_t *g_conn_sl; static char g_conn_mac[18], g_conn_codec[16]; static int g_conn_lv = -2;
+static void conn_sl_text(void){
+    if(!g_conn_sl) return;
+    int lv = btbatt_level(g_conn_mac); g_conn_lv = lv;
+    char st[64], b[12] = "";
+    if(lv >= 0) snprintf(b, sizeof b, " - %d%%", lv);
+    snprintf(st, sizeof st, "Connected%s%s%s", g_conn_codec[0] ? " - " : "", g_conn_codec, b);
+    lv_label_set_text(g_conn_sl, st);
+}
+static void conn_sl_del_cb(lv_event_t *e){ if(lv_event_get_target(e) == g_conn_sl) g_conn_sl = NULL; }
+void bt_battery_refresh(void){
+    if(g_conn_sl && btbatt_level(g_conn_mac) != g_conn_lv) conn_sl_text();
+}
 static void add_dev_row(const char *mac, const char *name, int connected, const char *codec){
     lv_obj_t *r = lv_button_create(g_list);
     lv_obj_remove_style_all(r);
@@ -1778,8 +1793,14 @@ static void add_dev_row(const char *mac, const char *name, int connected, const 
     lv_obj_set_style_text_font(t, th_simple()?TF(UI_22):th_null()?TF(UI_20):ui_font_cjk(20), 0);       /* BT device names are user data: Cyrillic/CJK-capable (issue #3) */
     lv_obj_set_style_text_color(t, TC(TEXT_PRIMARY), 0);
     lv_obj_t *sl = lv_label_create(r);
-    char st[40]; snprintf(st, sizeof st, "Connected%s%s", (codec && codec[0]) ? " - " : "", (codec && codec[0]) ? codec : "");
-    lv_label_set_text(sl, connected ? st : "Tap to connect");
+    if(connected){
+        g_conn_sl = sl; snprintf(g_conn_mac, sizeof g_conn_mac, "%s", mac);
+        snprintf(g_conn_codec, sizeof g_conn_codec, "%s", codec ? codec : "");
+        lv_obj_add_event_cb(sl, conn_sl_del_cb, LV_EVENT_DELETE, NULL);
+        conn_sl_text();
+        lv_label_set_long_mode(sl, LV_LABEL_LONG_SCROLL_CIRCULAR);   /* "Connected - aptX HD - 100%" is wider than the row */
+        lv_obj_set_width(sl, (g_b2 ? 280 : BROW_W) - 42 - 40);
+    } else lv_label_set_text(sl, "Tap to connect");
     lv_obj_set_pos(sl, 42, 37);
     lv_obj_set_style_text_font(sl, TF(UI_18), 0);           /* the hint line, a bit larger (was 16) */
     lv_obj_set_style_text_color(sl, connected ? (th_null()?TC(TEXT_PRIMARY):g_b2?b2_accent():ui_current_accent()) : TC(TEXT_SECONDARY), 0);

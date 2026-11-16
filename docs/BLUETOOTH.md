@@ -60,8 +60,8 @@ everything goes back to normal when audio leaves Bluetooth.
 
 **Battery.** Many headphones report their battery over the hands-free profile (HFP), the way they do to a phone.
 Disco connects that profile too (**Settings › Connectivity › Headphone Battery**, on by default; no calls, no
-microphone) and shows the level on the headphones' details screen (Settings › Connectivity › Bluetooth, tap the
-connected headphones) and in Remote Control's Bluetooth tab. At 20 % and at 10 % the Disc says so once. Headphones
+microphone) and shows the level in the device list ("Connected - SBC - 70%"), on the headphones' details screen
+(Settings › Connectivity › Bluetooth, tap the connected headphones) and in Remote Control's Bluetooth tab. At 20 % and at 10 % the Disc says so once. Headphones
 report in 10 % steps. With the own player it works from the next start; with the stock player only after Bluetooth
 is switched off and on once on the Disc (at boot the stock player starts Bluetooth itself, without that profile).
 
@@ -72,7 +72,9 @@ is switched off and on once on the Disc (at boot the stock player starts Bluetoo
 and their volume buttons move the Disc's Bluetooth volume (Settings › Audio › Outputs), like on a phone or a Linux PC.
 The Disc's level is sent to them as soon as they connect, so nothing gets louder. Headphones without it keep their own
 volume, and the Disc's Bluetooth volume scales the sound as before. To keep the Disc's volume separate even on
-headphones that have absolute volume: `touch /usr/data/diskos-own/no-abs-volume`.
+headphones that have absolute volume: `touch /usr/data/diskos-own/no-abs-volume`. **Settings › Audio › Outputs ›
+Headphone Volume** sets what their volume buttons move: *Bluetooth only* (default) or *All outputs*, where AUX, when it
+plays too, moves by the same step (player command `0d06`, docs/PLAYER_PROTOCOL.md).
 
 How it works (verified on a Disc with firmware V2.57, 2026-11-16): FiiO's BlueZ 5.54 hands AVRCP button presses and
 the headphones' volume only to a media player registered over D-Bus (`org.bluez.Media1.RegisterPlayer`); without one

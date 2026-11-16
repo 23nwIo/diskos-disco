@@ -73,6 +73,8 @@ typedef struct {
     int bt_auto;                   /* 0666 2 seen: the next 06b3 turns Bluetooth on and AUX off */
     int codec_want;                /* 0d04: the codec asked for this connection (ui/bt.c numbering), -1 none */
     int auto_out;                  /* 0d05: PL_AUTO_*; PL_AUTO_NEWEST until the UI says */
+    int hp_vol_all;                /* 0d06: 1 = the headphones' own volume also moves AUX when it plays too; 0 (default)
+                                    * = only the Bluetooth volume */
     int end_mode;                  /* 0d11: PL_END_*; PL_END_STOP until the UI says */
     char end_name[128], end_url[600];   /* 0d12: the station for PL_END_STATION ("" none) */
     int notice;                    /* PL_NOTICE_* of the last notice, for the UI (OPL_OUTPUTS "notice=") */
@@ -113,7 +115,8 @@ int pl_core_plugged(const pl_core_t *c);
  * 0..max_volume. Tells the UI (a714) when the lead volume changed. */
 void pl_core_set_volume(pl_core_t *c, int v);
 /* The headphones changed their own volume (AVRCP absolute volume, btavrcp.h): the Bluetooth volume becomes v (within
- * 0..max_volume); the UI hears it (a714) when Bluetooth is the lead output. AUX is left alone. */
+ * 0..max_volume); the UI hears it (a714) when Bluetooth is the lead output. AUX is left alone, unless hp_vol_all (0d06)
+ * is set and AUX is on: then AUX moves by the same step. */
 void pl_core_set_bt_volume(pl_core_t *c, int v);
 /* Set both volumes as stored (at start); the UI is told the lead one. */
 void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt);

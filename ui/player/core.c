@@ -64,8 +64,12 @@ void pl_core_set_volume(pl_core_t *c, int v){
 void pl_core_set_bt_volume(pl_core_t *c, int v){
     v = clampv(c, v);
     if(v == c->vol_bt) return;
+    int d = v - c->vol_bt;
     c->vol_bt = v;
-    logf_(c, "volume: Bluetooth %d (from the headphones)", v);
+    if(c->hp_vol_all && c->out_aux){                         /* 0d06 1: AUX that plays alongside moves by the same step */
+        c->vol_aux = clampv(c, c->vol_aux + d);
+        logf_(c, "volume: Bluetooth %d, AUX %d (from the headphones)", v, c->vol_aux);
+    } else logf_(c, "volume: Bluetooth %d (from the headphones)", v);
     lead_volume(c, 1);
 }
 
@@ -330,6 +334,12 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }
         if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_UI ? "the UI picks" : "station");
         c->end_mode = v;
+        return 0;
+    case 0x0d06:
+        if(v != 0 && v != 1){ c->bad_frames++; logf_(c, "headphone volume: bad value %d", v); return -1; }
+        if(v == c->hp_vol_all) return 0;
+        c->hp_vol_all = v;
+        logf_(c, "headphone volume = %s", v ? "all outputs" : "Bluetooth only");
         return 0;
     case 0x0d05:
         if(v < PL_AUTO_OFF || v > PL_AUTO_ALL){ c->bad_frames++; logf_(c, "auto outputs: bad value %d", v); return -1; }

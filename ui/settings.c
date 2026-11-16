@@ -248,6 +248,9 @@ static void out_volume(int which, int v){
 /* Auto Outputs (cfg out_auto, 0d05): what connecting and disconnecting a plug or headphones does (player/core.h
  * PL_AUTO_*). Saved here and sent again whenever the player (re)starts (main.c reapply_sends). */
 static void apply_out_auto(int v){ if(own_player_cached()) out_send("0d05", v); }
+/* Headphone Volume (cfg hp_vol_all, 0d06): what the headphones' own volume buttons move (player/core.h hp_vol_all);
+ * sent again whenever the player (re)starts, like Auto Outputs. */
+static void apply_hp_vol(int v){ if(own_player_cached()) out_send("0d06", v); }
 static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d11 + the station (0d12) */
 /* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
  * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
@@ -1003,6 +1006,9 @@ static const char *const OPT_OUTAUTO[] = { "Off", "Newest", "All connected" };
 static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",          /* short: Zune's dial */
                                              "The newest device plays alone.",
                                              "Every connected device plays." };
+static const char *const OPT_HPVOL[] = { "Bluetooth only", "All outputs" };
+static const char *const OPT_HPVOL_D[] = { "Only the Bluetooth volume follows them.",
+                                           "AUX, when it plays too, moves by the same step." };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
 static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 static const char *const D_ARTCACHE[] = {
@@ -1089,6 +1095,8 @@ static const setting_t TABLE[] = {
       "The connected Bluetooth headphones; turn both on to play on both. Bluetooth is a little behind AUX.", NULL },
     { "Outputs",  "Auto Outputs", ST_CHOICE, "out_auto", 0,0,0, OPT_OUTAUTO, 3, NULL, apply_out_auto, 1,
       "What plugging in or connecting headphones does to the outputs; unplugging or disconnecting turns that one off.", OPT_OUTAUTO_D },
+    { "Outputs",  "Headphone Volume", ST_CHOICE, "hp_vol_all", 0,0,0, OPT_HPVOL, 2, NULL, apply_hp_vol, 0,
+      "What the Bluetooth headphones' own volume buttons change, for headphones that send their volume.", OPT_HPVOL_D },
     { "Outputs",  "AUX Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
       "The volume keys move every output that is on by the same step.", NULL },
     { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,

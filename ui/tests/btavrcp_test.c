@@ -37,7 +37,7 @@ static void tr(int op){ if(nops < 16) ops[nops++] = op; }
 static void vol(const char *mac, int v, int first){ snprintf(volmac, sizeof volmac, "%s", mac); if(nvols < 16){ vols[nvols][0] = v; vols[nvols][1] = first; nvols++; } }
 
 /* ---- the fake BlueZ / BlueALSA ---- */
-static dm_conn fz, fa;                         /* org.bluez, org.bluealsa */
+static dm_conn fz = { .fd = -1 }, fa = { .fd = -1 };   /* org.bluez, org.bluealsa; -1: not connected (0 would poll stdin) */
 static char player_name[64], player_path[96];
 static int registrations, last_caps, pc_signals, set_soft = -1, battery_gets;
 static char last_status[32], last_title[64];

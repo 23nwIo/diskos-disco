@@ -209,6 +209,7 @@ static void bt_headphone_battery(int bt_on){
     const char *mac = bt_on ? ui_route_mac() : "";
     btbatt_poll(mac, bb_log);
     int lv = mac[0] ? btbatt_level(mac) : -1;
+    bt_battery_refresh();
     if(strcasecmp(warned_mac, mac)){ snprintf(warned_mac, sizeof warned_mac, "%s", mac); warned = 0; }
     if(lv < 0) return;
     if(lv > 20) warned = 0;
@@ -1079,6 +1080,8 @@ static void reapply_sends(void){
         { void settings_radio_cert_sync(void); settings_radio_cert_sync(); }   /* Radio Certificates: the player's flag file */
         int ao = simple_cfg_get_int("out_auto", 1);    if(opl_running() && ao >= 0 && ao <= 2){   /* Auto Outputs (own player only) */
             char f[16]; snprintf(f, sizeof f, "0d05000C%04X", (unsigned)ao); ipc_send_cmd(f); }
+        int hv = simple_cfg_get_int("hp_vol_all", 0);  if(opl_running() && (hv == 0 || hv == 1)){   /* Headphone Volume (own player only) */
+            char f[16]; snprintf(f, sizeof f, "0d06000C%04X", (unsigned)hv); ipc_send_cmd(f); }
         radio_end_sync();                                                  /* After the List Ends (own player only) */
     }
 }

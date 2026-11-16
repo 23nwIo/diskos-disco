@@ -11,10 +11,12 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   After the list ends (own player) can now also play a playlist, once, again and again or shuffled. Not yet tested on
   a Disc. [Guide](docs/REMOTE_CONTROL.md#party-mode)
 
-- Bluetooth headphones: their battery level shows on their details screen and in Remote Control, with a note at 20 %
+- Bluetooth headphones: their battery level shows in the device list ("Connected - SBC - 70%"), on their details
+  screen and in Remote Control, with a note at 20 %
   and 10 % (Settings > Connectivity > Headphone Battery, on by default; over the hands-free profile). With the own
   player, their Play/Pause, Next and Previous buttons control the Disc, and headphones with absolute volume share the
-  Bluetooth volume with the Disc both ways. Battery checked on a Disc by hand (Hi-X25BT); the build is not yet tested
+  Bluetooth volume with the Disc both ways (Settings > Audio > Outputs > Headphone Volume: Bluetooth only, the
+  default, or all outputs). Battery checked on a Disc by hand (Hi-X25BT); the build is not yet tested
   on a Disc. [Details](docs/BLUETOOTH.md#headphone-battery-buttons-and-volume)
 - Settings > System > Maintenance > Format SD Card: erase the microSD card as FAT32 (one MBR partition, as cards come
   from the factory; for other players and computers) or as ext4 on the whole card without a partition table (diskOS

@@ -206,6 +206,8 @@ void wifi_info_open(void);
 /* bluetooth settings (bt.c) */
 void bt_create(lv_obj_t *root);
 void bt_open(void);
+/* the connected headphones' battery in the device list changed? rewrite that line (bt.c; from the status poll) */
+void bt_battery_refresh(void);
 int  bt_toggle(void);          /* Quick Settings tile short-press: flip BT + persist, returns new state */
 int  bt_radio_on(void);        /* cheap actual BT-enabled state (rfkill), for the status icon + QS tile */
 enum { BT_OFF, BT_ON, BT_TURNING_ON };

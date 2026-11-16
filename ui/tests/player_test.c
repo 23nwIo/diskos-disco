@@ -172,6 +172,26 @@ static void test_core(void){
     CHECK(send1(&c, "0d04000C0001") == -1);
     c.jack = -1; c.bal = -1;
 
+    /* Headphone Volume (0d06): the headphones' own volume moves Bluetooth only (the default), or AUX with it */
+    {
+        pl_core_t h; pl_core_init(&h, cap_send, NULL, NULL);
+        CHECK(h.hp_vol_all == 0);
+        CHECK(send1(&h, "0d06000C0002") == -1 && h.hp_vol_all == 0);
+        CHECK(send1(&h, "0666000C0002") == 0 && send1(&h, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(send1(&h, "0d01000C0003") == 0 && h.out_aux == 1 && h.out_bt == 1);
+        pl_core_load_volumes(&h, 40, 50);
+        pl_core_set_bt_volume(&h, 60);
+        CHECK(h.vol_bt == 60 && h.vol_aux == 40 && h.volume == 60);
+        CHECK(send1(&h, "0d06000C0001") == 0 && h.hp_vol_all == 1);
+        pl_core_set_bt_volume(&h, 55);
+        CHECK(h.vol_bt == 55 && h.vol_aux == 35 && h.volume == 55);
+        pl_core_set_bt_volume(&h, 0);
+        CHECK(h.vol_bt == 0 && h.vol_aux == 0);                       /* AUX stops at 0 */
+        CHECK(send1(&h, "0d01000C0002") == 0 && h.out_aux == 0);
+        pl_core_set_bt_volume(&h, 20);
+        CHECK(h.vol_bt == 20 && h.vol_aux == 0);                      /* AUX off: left alone */
+    }
+
     /* Auto Outputs (0d05): newest (the default), all connected, off */
     {
         pl_core_t a; pl_core_init(&a, cap_send, NULL, NULL);
