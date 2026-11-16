@@ -211,16 +211,21 @@ void settings_outputs_notice_tick(void){
  * volume overlay for it, the page shows the value itself */
 int settings_outputs_recent(void){ return g_outp_t && lv_tick_get() - g_outp_t < 1500; }
 static int out_send(const char *tag, int v){ char f[16]; snprintf(f, sizeof f, "%s000C%04X", tag, (unsigned)v); return ipc_send_cmd(f); }
-static void out_set(int aux, int bt){
-    if(!aux && !bt){ ui_toast(tr("One output stays on")); return; }
-    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0)) < 0) return;      /* ipc tells the user when the player didn't take it */
+/* NULL when sent, else why not (the page toasts it, Remote Control answers it); OUT_NOT_TAKEN: ipc already told the user */
+static const char OUT_NOT_TAKEN[] = "The player didn't take it";
+static const char *out_set_why(int aux, int bt){
+    if(!aux && !bt) return "One output stays on";
+    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0)) < 0) return OUT_NOT_TAKEN;
     g_outp_aux = aux; g_outp_bt = bt; g_outp_t = lv_tick_get();
+    return NULL;
 }
+static const char *out_bt_why(int v){
+    if(v && !outputs_now()->bt_ready) return "Connect Bluetooth headphones first";
+    return out_set_why(outputs_now()->aux, v);
+}
+static void out_set(int aux, int bt){ const char *w = out_set_why(aux, bt); if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w)); }
 static void apply_out_aux(int v){ out_set(v, outputs_now()->bt); }
-static void apply_out_bt(int v){
-    if(v && !outputs_now()->bt_ready){ ui_toast(tr("Connect Bluetooth headphones first")); return; }
-    out_set(outputs_now()->aux, v);
-}
+static void apply_out_bt(int v){ const char *w = out_bt_why(v); if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w)); }
 /* the sliders send while they are dragged, at most every 80 ms; the last value always goes out (a short timer) */
 static int g_outv_want[2] = { -1, -1 }, g_outv_sent[2] = { -1, -1 };
 static uint32_t g_outv_t;
@@ -243,6 +248,34 @@ static void out_volume(int which, int v){
 /* Auto Outputs (cfg out_auto, 0d05): what connecting and disconnecting a plug or headphones does (player/core.h
  * PL_AUTO_*). Saved here and sent again whenever the player (re)starts (main.c reapply_sends). */
 static void apply_out_auto(int v){ if(own_player_cached()) out_send("0d05", v); }
+/* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
+ * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
+ * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX, 2 Bluetooth (v 0/1), 3 AUX volume, 4 Bluetooth volume
+ * (0..120), 5 Auto Outputs (0..2), as rmt_out_t numbers them; 0, or -1 with *why. */
+int settings_outputs_state(opl_outputs_t *o, int *auto_out){
+    if(!own_player_cached()) return -1;
+    *o = *outputs_now();
+    *auto_out = simple_cfg_get_int("out_auto", 1);
+    if(*auto_out < 0 || *auto_out > 2) *auto_out = 1;
+    return 0;
+}
+int settings_outputs_cmd(int what, int v, const char **why){
+    const char *w = NULL;
+    if(!own_player_cached()) w = "Outputs need the own player (Settings > About > Player)";
+    else switch(what){
+    case 1: w = out_set_why(v, outputs_now()->bt); break;
+    case 2: w = out_bt_why(v); break;
+    case 3: case 4: if(v < 0 || v > 120){ w = "Volume 0-120"; break; } out_volume(what == 4, v); break;
+    case 5:
+        if(v < 0 || v > 2){ w = "Unknown choice"; break; }
+        if(simple_cfg_set_int("out_auto", v) < 0){ w = "Couldn't save settings"; break; }
+        if(out_send("0d05", v) < 0) w = "Saved, but the player didn't take it";
+        break;
+    default: w = "Unknown output";
+    }
+    if(w){ *why = w; return -1; }
+    return 0;
+}
 static void apply_out_vol_aux(int v){ out_volume(0, v); }
 static void apply_out_vol_bt(int v){ out_volume(1, v); }
 static const char *const OUT_CODEC_OPTS[] = { "SBC", "AAC", "LDAC", "aptX", "aptX HD" };

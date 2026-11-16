@@ -8,6 +8,7 @@
  *   POST /<token>/api/<command>    play_pause | play | pause | next | previous
  *                                  volume (value=0..120 or step=-120..120) | seek (position_ms=N) | play_mode (mode=0..4)
  *                                  balance (value=-10..10: 0 centred, negative left, positive right)
+ *                                  outputs (one of aux=0/1, bt=0/1, vol_aux=0..120, vol_bt=0..120, auto=0..2; own player only)
  * Parameters come from the query string or an application/x-www-form-urlencoded body. Commands are POST only, so a
  * link preview or prefetch can never press a button. Anything without the exact token is a plain 404. */
 #ifndef DISKOS_REMOTE_CORE_H
@@ -39,7 +40,8 @@ typedef enum {
     RMT_CMD_RADIO_FAV,       /* arg 1 save / 0 remove a station: sub = rmt_item_t (RADIO or RADIO_HIT), pos, name = url */
     RMT_CMD_SCREEN,          /* the screen as it looks now (binary answer: BMP) */
     RMT_CMD_TOUCH,           /* a finger on the screen: pos,id = x,y down; offset,limit = x,y up; arg = ms down */
-    RMT_CMD_BALANCE          /* left/right balance arg -10..10 (as Settings > Audio > Balance) */
+    RMT_CMD_BALANCE,         /* left/right balance arg -10..10 (as Settings > Audio > Balance) */
+    RMT_CMD_OUTPUTS          /* Settings > Audio > Outputs: sub = rmt_out_t, arg = its value */
 } rmt_cmd_kind_t;
 /* POST api/touch x, y (0..359), optional x2, y2 (where it lifts; default x, y) and ms (0..3000, default 100). */
 #define RMT_SCREEN_PX 360
@@ -61,6 +63,8 @@ typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, R
 /* POST api/bluetooth action=on|off|refresh|search; POST api/bt_device action=connect|disconnect|forget|rename, mac
  * (AA:BB:CC:DD:EE:FF), name (rename; "" clears the local name) */
 /* action=codec with codec=0..9: the Bluetooth Codec setting (arg) */
+/* POST api/outputs: exactly one of aux=0/1 | bt=0/1 | vol_aux=0..120 | vol_bt=0..120 | auto=0..2 (0 off, 1 newest, 2 all connected) */
+typedef enum { RMT_OUT_AUX = 1, RMT_OUT_BT, RMT_OUT_VOL_AUX, RMT_OUT_VOL_BT, RMT_OUT_AUTO } rmt_out_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
 #define RMT_PL_NAME_MAX 64
@@ -116,6 +120,8 @@ typedef struct {
     long position_ms, duration_ms;
     int  volume, volume_max;
     int  balance;            /* -10..10, 0 centred (the saved setting) */
+    /* Settings > Audio > Outputs, only while the own player runs (out_own 1; else "outputs":null) */
+    int  out_own, out_aux, out_bt, out_vol_aux, out_vol_bt, out_bt_ready, out_auto, out_jack, out_bal;
     int  play_mode;          /* 0..4, -1 unknown */
     int  work_mode;          /* the source mode, 0..6 (6 web radio), -1 unknown */
     int  controllable;       /* 1 if transport commands can reach a player now */

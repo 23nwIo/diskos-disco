@@ -34,6 +34,10 @@
 #include "version.h"
 #include "ota.h"
 #include "simple_theme.h"
+#include "own_player.h"   /* opl_outputs_t: Settings > Audio > Outputs */
+/* settings.c: the Outputs page for the web page (main thread) */
+int settings_outputs_state(opl_outputs_t *o, int *auto_out);
+int settings_outputs_cmd(int what, int v, const char **why);
 /* defined elsewhere without a shared header */
 int  bt_state(void);
 int  bt_peer_name(char *out, int cap);
@@ -207,6 +211,11 @@ static void snapshot(rmt_state_t *s){
     s->playing = music_assistant() ? ma_playing() : ui_is_playing();
     s->position_ms = st.position_ms; s->duration_ms = st.duration_ms;
     s->volume = vol_now(&st); s->volume_max = VOL_MAX;
+    { opl_outputs_t o; int au;                           /* Settings > Audio > Outputs (own player only) */
+      if(settings_outputs_state(&o, &au) == 0){
+          s->out_own = 1; s->out_aux = o.aux; s->out_bt = o.bt; s->out_vol_aux = o.vol_aux; s->out_vol_bt = o.vol_bt;
+          s->out_bt_ready = o.bt_ready; s->out_auto = au; s->out_jack = o.jack; s->out_bal = o.bal;
+      } }
     s->balance = simple_cfg_get_int("balance", 0); if(s->balance < -10 || s->balance > 10) s->balance = 0;   /* main.c applies the same at boot */
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
@@ -257,6 +266,7 @@ static int run(const rmt_cmd_t *c, const char **why){
     case RMT_CMD_VOLUME_STEP: { track_state_t st; ipc_get_state(&st); int v = vol_now(&st);
         if(v < 0){ *why = "The volume is not known yet - set it once"; return -1; }
         return ui_set_volume(v + (int)c->arg); }
+    case RMT_CMD_OUTPUTS: return settings_outputs_cmd(c->sub, (int)c->arg, why);
     case RMT_CMD_BALANCE:
         ui_set_balance((int)c->arg);
         if(simple_cfg_set_int("balance", (int)c->arg) < 0){ *why = "Balance set, but it could not be saved"; return -1; }

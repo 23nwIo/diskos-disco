@@ -300,6 +300,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_RADIO_FAV) return "radio_fav";
     if(k == RMT_CMD_SCREEN) return "screen";
     if(k == RMT_CMD_TOUCH) return "touch";
+    if(k == RMT_CMD_OUTPUTS) return "outputs";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -409,6 +410,22 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
         if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);
         return rt;
     }
+    if(!strcmp(ep, "outputs")){
+        static const struct { const char *k; int sub; long max; } O[] = {
+            { "aux", RMT_OUT_AUX, 1 }, { "bt", RMT_OUT_BT, 1 }, { "vol_aux", RMT_OUT_VOL_AUX, 120 },
+            { "vol_bt", RMT_OUT_VOL_BT, 120 }, { "auto", RMT_OUT_AUTO, 2 } };
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        int found = 0; long v = 0;
+        for(size_t k = 0; k < sizeof O / sizeof O[0]; k++){
+            long x; int pr = param(r, O[k].k, &x);
+            if(pr == -1) continue;                                 /* not given */
+            if(pr || x < 0 || x > O[k].max || found++){ found = 2; break; }
+            rt.cmd.sub = O[k].sub; v = x;
+        }
+        if(found != 1){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.cmd.kind = RMT_CMD_OUTPUTS; rt.cmd.arg = v; rt.kind = RMT_R_CMD;
+        return rt;
+    }
     if(!strcmp(ep, "play_item")){
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         rt.kind = route_item(r, &rt.cmd) < 0 ? RMT_R_BAD_PARAM : RMT_R_CMD;
@@ -474,16 +491,21 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 || rmt_json_escape(su, sizeof su, s->station_url) < 0 || rmt_json_escape(bc, sizeof bc, s->bt_codec) < 0 || rmt_json_escape(bd, sizeof bd, s->bt_device) < 0 || rmt_json_escape(sti, sizeof sti, s->stream_title) < 0 ||
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
+    char ou[200] = "null";
+    if(s->out_own)
+        snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d}",
+                 s->out_aux ? "true" : "false", s->out_bt ? "true" : "false", s->out_vol_aux, s->out_vol_bt, s->out_bt_ready ? "true" : "false",
+                 s->out_auto, s->out_jack, s->out_bal);
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"play_mode\":%d,\"work_mode\":%d,"
         "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"bt_codec\":\"%s\",\"bt_device\":\"%s\",\"station_fav\":%s,\"radio_error\":\"%s\","
-        "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\"}",
+        "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\",\"outputs\":%s}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
         s->volume, s->volume_max, s->balance, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
         s->radio_state ? s->radio_state : "off", st, su, sti, bc, bd, s->station_fav < 0 ? "null" : s->station_fav ? "true" : "false", re,
-        fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn);
+        fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn, ou);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
     return n;
 }
@@ -549,7 +571,7 @@ const char RMT_PAGE_HTML[] =
 "#t,#a,#al,.r b,.r small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}\n"
 "#a,#al,.r small,#tx{color:var(--mut)}#tx{font-size:.8em;margin-top:.2em}\n"
 "#cv{display:block;width:100%;max-width:16em;aspect-ratio:1;margin:0 auto .8em;border-radius:10px;object-fit:cover;image-rendering:auto}\n"
-"input[type=range]{width:100%;accent-color:var(--acc)}\n"
+"input[type=range]{width:100%;accent-color:var(--acc)}input[type=checkbox]{accent-color:var(--acc)}\n"
 ".row{display:flex;justify-content:space-between;color:var(--mut);font-size:.85em}\n"
 ".tr{display:flex;gap:.6em;margin:0 0 1em}\n"
 ".tr button{flex:1;border:0;border-radius:12px;padding:.8em 0;font-size:1.3em;background:var(--card);color:var(--fg)}\n"
@@ -583,6 +605,9 @@ const char RMT_PAGE_HTML[] =
 "<div class=card><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=120 value=0>\n"
 "<div class=hd><label for=bal style=flex:1>Balance <span id=bv></span></label><button id=bc class=more style=margin:0>Centre</button></div>\n"
 "<input id=bal type=range min=-10 max=10 step=1 value=0>\n"
+"<div id=ow class=hide><div class=hint>Outputs: the Volume above moves every output that is on.</div><div class=hd><label style=flex:1><input type=checkbox id=oa> AUX <span id=oav></span></label></div><input id=ova type=range min=0 max=120 value=0 aria-label='AUX volume'>\n"
+"<div class=hd><label style=flex:1><input type=checkbox id=ob> Bluetooth <span id=obv></span></label></div><input id=ovb type=range min=0 max=120 value=0 aria-label='Bluetooth volume'>\n"
+"<label for=oau>Auto Outputs (when something connects)</label><select id=oau><option value=0>Off<option value=1>Newest<option value=2>All connected</select></div>\n"
 "<label for=eqs>EQ</label><select id=eqs></select>\n"
 "<div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one\n"
 "<option value=3>Repeat all<option value=4>Single</select></div></div></div>\n"
@@ -627,14 +652,21 @@ const char RMT_PAGE_HTML[] =
 "$('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);\n"
 "if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=Math.max(0,s.volume)}$('vv').textContent=s.volume<0?'(not known yet)':s.volume;\n"
 "if(!drag.bal){$('bal').value=s.balance}$('bv').textContent=bl($('bal').value);\n"
+"var o=s.outputs;$('ow').classList.toggle('hide',!o);if(o){$('oa').checked=o.aux;$('ob').checked=o.bt;$('ob').disabled=!o.bt&&!o.bt_ready;\n"
+"if(!drag.ova)$('ova').value=o.vol_aux;if(!drag.ovb)$('ovb').value=o.vol_bt;$('ovb').disabled=!o.bt_ready;\n"
+"$('oav').textContent=$('ova').value+(o.bal===1?' · 4.4 mm':o.jack===1?' · 3.5 mm':'');$('obv').textContent=$('ovb').value+(o.bt_ready?'':' · not connected');\n"
+"if(document.activeElement!==$('oau'))$('oau').value=o.auto}\n"
 "if(s.play_mode>=0&&document.activeElement!==$('pm'))$('pm').value=s.play_mode;\n"
 "if(document.activeElement!==$('eqs')){if(!$('eqs').options.length||$('eqs').dataset.n!==s.eq_name)eqload(s.eq);else $('eqs').value=s.eq}\n"
 "if(!s.controllable)say(s.source==='other'?'The player is in another mode (e.g. USB or Bluetooth)':'')\n"
 "}).catch(function(){busy=0;say('Player not reachable')})}\n"
 "$('pp').onclick=function(){cmd('play_pause')};$('nx').onclick=function(){cmd('next')};$('pv').onclick=function(){cmd('previous')};\n"
 "function bl(v){v=+v;return v?Math.abs(v)+(v<0?' left':' right'):'centre'}\n"
-"['pos','vol','bal'].forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value;if(i==='bal')$('bv').textContent=bl(e.value)};\n"
-"e.onchange=function(){drag[i]=0;cmd(i==='pos'?'seek':i==='vol'?'volume':'balance',(i==='pos'?'position_ms=':'value=')+e.value)}});\n"
+"var SL={pos:['seek','position_ms='],vol:['volume','value='],bal:['balance','value='],ova:['outputs','vol_aux='],ovb:['outputs','vol_bt=']};\n"
+"Object.keys(SL).forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value;if(i==='bal')$('bv').textContent=bl(e.value);if(i[0]==='o')$(i==='ova'?'oav':'obv').textContent=e.value};\n"
+"e.onchange=function(){drag[i]=0;cmd(SL[i][0],SL[i][1]+e.value)}});\n"
+"$('oa').onchange=function(){cmd('outputs','aux='+(this.checked?1:0))};$('ob').onchange=function(){cmd('outputs','bt='+(this.checked?1:0))};\n"
+"$('oau').onchange=function(){cmd('outputs','auto='+this.value)};\n"
 "$('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};\n"
 "$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};\n"
 "$('fv').onclick=function(){(($('fv').dataset.r)?cmd(fav?'radio_fav_remove':'radio_fav_add','kind=radio_now'):cmd('favorite','on='+(fav?0:1))).then(function(ok){if(ok)say(fav?'Removed from favourites':'Added to favourites',1)})};\n"
