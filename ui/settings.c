@@ -1047,7 +1047,7 @@ static const setting_t TABLE[] = {
     { "Audio", "DSD Output",  ST_READONLY, NULL, 0,0,0, NULL,0, "Player-managed", NULL, 0,
       "Disco has no verified DSD output selector. DSD handling remains with the stock player; this information row sends no command.", NULL },
     { "Playback", "Resume Playback", ST_CYCLER, "memory_play", 0,0,0, OPT_MEMORY, 3, NULL, apply_memory, 0,
-      "On startup: Off starts fresh; Position resumes the spot; Song resumes the track.", NULL },
+      "On startup: Off starts fresh; Position resumes the spot; Song resumes the track. Stock player only for now.", NULL },
     { "Playback", "Artists",     ST_CYCLER, "artist_class", 0,0,0, OPT_ARTISTCLASS, 2, NULL, apply_artist_class, 0,
       "Group Artists by song artist or album artist, matching the stock player.", NULL },
     { "Playback", "SongSphere", ST_TOGGLE, "songsphere", 0,1,1, NULL, 0, NULL, NULL, 1,

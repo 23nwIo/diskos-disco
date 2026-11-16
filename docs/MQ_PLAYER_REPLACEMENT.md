@@ -229,7 +229,7 @@ It reads the headphone jack as the stock player does (`/dev/gpio` `pb20`, polled
 USB storage mode (`0642 1`/`0`) exports the card to a USB host with the stock player's configfs gadget (ui/player/usbstorage.c);
 the cold-boot mount stays the UI's. Playback goes through MPD ([MPD_CORE.md](MPD_CORE.md)): the DAC sequences, the
 queue tables for `0100`, the play modes and the track frames are in place (2026-11-15, audible on a Disc after the
-mixer fix cfac7ae); resume and CUE tracks are in place (host-tested; SACD ISO tracks are skipped, MPD can't decode
+mixer fix cfac7ae); CUE tracks are in place, resume is switched off (see below) (host-tested; SACD ISO tracks are skipped, MPD can't decode
 disc images); the boot-time Bluetooth bring-up (done by the stock player, so Bluetooth stays off with the own player)
 comes next.
 
@@ -249,7 +249,10 @@ What the stock player does (`mq_player` strings and disassembly, 2026-11-15; fun
   deletes it. If the flag is there at the next start, the resume is skipped and `MEMORY_PLAY` is dropped. The check is
   behind a setting whose source was not found.
 
-The own player (ui/player/playback.c, 2026-11-15):
+The own player (ui/player/playback.c, 2026-11-15). **Switched off since 2026-11-16** (`PB_RESUME 0`): song.db is on
+the internal NAND and the bookmark wrote it every 30 s while playing; resume is not worth that (Jo). The own player
+now neither writes `MEMORY_PLAY` nor resumes at start; the code stays (the host tests build it with
+`-DPB_RESUME=1`), todo.md has the plan to bring it back without periodic flash writes. What it did when on:
 - Writes the row at every track start (only for songs in the library: `MUSIC_ID` must name a `SONG` row, the UI reads
   it too) and `POSITION` every 30 s while playing, on pause and at power off or an orderly stop. `0816` is not
   needed, because the player knows the position itself.

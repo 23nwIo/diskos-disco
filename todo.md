@@ -19,6 +19,7 @@ Targets below are proposals or verification work, not shipped features. Work bel
 - Radio: copy the favourites between the SD card and the player from the UI (today the setting only chooses the file; copy it by hand, docs/RADIO.md) (Jo, 2026-11-16).
 - Radio, own player: send the song title to the UI as a frame over the player queue instead of /tmp/diskos-player-stream (Jo, 2026-11-16).
 - Playlists: optionally keep them on the SD card (like the radio favourites) instead of only in song.db on the player; check what that means for the stock and the own player (Jo, 2026-11-16, not urgent).
+- Own player: Resume Playback (switched off 2026-11-16, `PB_RESUME 0` in ui/player/playback.c; Jo: unimportant, no flash writes for it). It wrote `MEMORY_PLAY` in song.db (internal NAND) at every track start, every 30 s while playing, on pause and at power off. To bring it back without periodic flash writes: keep the position in RAM and write the row only at track start, pause/stop and an orderly power off (menu, sleep timer, power key), optionally plus a rare fallback (every 10 min) against crashes and an empty battery; the price is an older position after a crash, a power loss or a `reboot` over SSH.
 - Own player: check an MPD-own library next to musicdb (only for ncmpcpp and other clients to browse natively; the UI stays on SQLite). Decide once playback runs over MPD and its RAM use on the device is known; costs a second scan, no SACD ISO in upstream MPD (Jo, 2026-11-15).
 
 ## Engineering validation

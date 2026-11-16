@@ -46,7 +46,13 @@ static int g_announce;
 static double g_announce_t;
 
 /* The resume bookmark (MEMORY_PLAY): the song in it is the one playing (g_mem_ok), its POSITION written every
- * PB_MEM_EVERY_S while playing, on pause and at power off. */
+ * PB_MEM_EVERY_S while playing, on pause and at power off.
+ * Off for now (Jo, 2026-11-16): song.db is on the internal NAND and resume is not worth the writes. With PB_RESUME 0
+ * the player neither writes MEMORY_PLAY nor resumes at start; todo.md "Resume Playback" has the plan to bring it back
+ * without periodic flash writes. The tests build it with -DPB_RESUME=1. */
+#ifndef PB_RESUME
+#define PB_RESUME 0
+#endif
 #define PB_MEM_EVERY_S 30.0
 static int g_mem_ok;
 static double g_mem_t;
@@ -236,8 +242,9 @@ out:
 /* The song that starts goes into the resume bookmark, with where it starts. Songs outside the library (no SONG.ID)
  * leave the bookmark as it is: MUSIC_ID has to name a SONG row (the UI reads it too, ui/musicdb.c mdb_current_play). */
 static void remember_song(sqlite3 *d, const eng_status_t *s){
-    qd_row_t *r = malloc(sizeof *r);
     g_mem_ok = 0;
+    if(!PB_RESUME) return;                 /* no flash writes (see PB_RESUME) */
+    qd_row_t *r = malloc(sizeof *r);
     if(r && qd_row(d, pq_id(&Q, Q.cur), r) == 1){
         if(r->song_id <= 0) L("resume: %s is not in the library, not remembered", r->path);
         else if(qd_memory_set(d, r->song_id, s->elapsed_ms, r->is_cue, r->is_iso, r->track) != 0)
@@ -472,6 +479,7 @@ const char *pb_bt_mac(void){ return g_bt_mac; }
 void pb_resume_begin(int (*mounted)(void), const char *flag_path){
     g_rs_mounted_fn = mounted;
     snprintf(g_rs_flag, sizeof g_rs_flag, "%s", flag_path ? flag_path : "");
+    if(!PB_RESUME){ L("resume: not built in (PB_RESUME 0, no flash writes)"); g_rs = 0; return; }
     g_rs = 1; g_rs_until = now_s() + PB_RESUME_WAIT_S; g_rs_mounted = g_rs_check = 0;
 }
 

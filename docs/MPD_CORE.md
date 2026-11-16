@@ -59,7 +59,8 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
 - **Frames**: every track start sends the stock sequence (`a102` mode on a play command or `{"state":1}` on a natural
   change, `aa1c`, the full `a2` with the song JSON and `pos_id` = `LIST_SONG_0.ID`, `aa05`, `aa1c`, `{"state":0}`
   twice); `0202` with a track loaded is answered with the full `a2`.
-- **Resume** (`MEMORY_PLAY`, mode `0684`): see docs/MQ_PLAYER_REPLACEMENT.md, "Resume (MEMORY_PLAY)".
+- **Resume** (`MEMORY_PLAY`, mode `0684`): switched off for now (no flash writes, 2026-11-16); see
+  docs/MQ_PLAYER_REPLACEMENT.md, "Resume (MEMORY_PLAY)".
 - **CUE tracks** (2026-11-15): a row with `IS_CUE=1` is the part of its file (`PATH`) from `OFFSET` for `DURATION`
   (both ms, ui/scanner.c "CUE sheets"); the engine adds the file and limits it with `rangeid ID start:end` (open end
   when the duration is 0). MPD then counts elapsed time, duration and seeks from the part's start (checked with MPD
