@@ -285,6 +285,25 @@ static volatile int g_emu_run = 1, g_emu_pause = 0;
 static int g_scan, g_work, g_reboots;
 static time_t g_search_until; static char g_search_q[96]; static int g_nfav = 3;   /* stand-in radio directory */
 static rmt_cmd_t g_last; static int g_ncmd;
+/* stand-in queue: 4 queued songs, 30 Up Next rows; g_qver moves on every change */
+static char g_q[8][32] = { "Queued one", "Queued <two>", "Queued three", "Queued four" }; static int g_qn = 4; static unsigned g_qver = 1;
+static char *fake_queue(const rmt_cmd_t *c, const char **why){
+    if(c->sub == RMT_Q_ADD){ if(g_qn < 8){ snprintf(g_q[g_qn++], 32, "Added %ld", c->song_id); g_qver++; } return strdup("{\"ok\":true,\"added\":1}"); }
+    if(c->sub != RMT_Q_LIST && (unsigned)c->arg != g_qver){ *why = "The queue changed - here it is again"; return NULL; }
+    if(c->sub == RMT_Q_REMOVE && c->pos < g_qn){ memmove(g_q[c->pos], g_q[c->pos + 1], (size_t)(g_qn - c->pos - 1) * 32); g_qn--; g_qver++; }
+    if(c->sub == RMT_Q_MOVE && c->pos < g_qn && c->offset < g_qn){ char t[32]; memcpy(t, g_q[c->pos], 32);
+        if(c->pos < c->offset) memmove(g_q[c->pos], g_q[c->pos + 1], (size_t)(c->offset - c->pos) * 32); else memmove(g_q[c->offset + 1], g_q[c->offset], (size_t)(c->pos - c->offset) * 32);
+        memcpy(g_q[c->offset], t, 32); g_qver++; }
+    if(c->sub == RMT_Q_CLEAR){ g_qn = 0; g_qver++; }
+    if(c->sub == RMT_Q_JUMP){ g_qver++; return strdup("{\"ok\":true}"); }
+    if(c->sub != RMT_Q_LIST) return strdup("{\"ok\":true}");
+    rmt_buf_t b = {0};
+    rmt_buf_printf(&b, "{\"ok\":true,\"ver\":%u,\"shuffle\":false,\"items\":[{\"k\":\"cur\",\"i\":0,\"b\":5,\"d\":200000,\"st\":false,\"t\":\"Track <one>\",\"a\":\"Artist\",\"f\":\"one.flac\"}", g_qver);
+    for(int i = 0; i < g_qn; i++){ rmt_buf_printf(&b, ",{\"k\":\"queue\",\"i\":%d,\"b\":0,\"d\":180000,\"st\":false,\"t\":", i); rmt_buf_str(&b, g_q[i]); rmt_buf_put(&b, ",\"a\":\"Someone\",\"f\":\"q.flac\"}"); }
+    for(int i = 0; i < 30; i++) rmt_buf_printf(&b, ",{\"k\":\"next\",\"i\":0,\"b\":%d,\"d\":%d,\"st\":false,\"t\":\"Next %d\",\"a\":\"Band\",\"f\":\"n.flac\"}", 6 + i, 150000 + i * 1000, i + 1);
+    rmt_buf_printf(&b, "],\"more\":12}");
+    return rmt_buf_take(&b);
+}
 static void notify(void){}
 /* stand-in library: 250 albums "Album N" (by "Artist N%7"), 12 songs each; a folder tree Music/ with files */
 static char *fake_browse(const rmt_cmd_t *c){
@@ -377,6 +396,7 @@ static void *emu(void *a){
     snprintf(s.title, sizeof s.title, "Track <one>"); s.has_track = 1; s.volume = 33; s.volume_max = 120; s.source = "local"; s.controllable = 1;
     snprintf(s.format, sizeof s.format, "FLAC"); s.bits = 24; s.sample_rate = 96000; s.kbps = 2304; s.channels = 2; s.favorite = 0;
     snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz"); snprintf(s.bt_codec, sizeof s.bt_codec, "LDAC"); snprintf(s.bt_device, sizeof s.bt_device, "XQ-50 <PRO2>"); s.station_fav = -1;
+    s.queue_ver = 1;
     s.out_own = 1; s.out_aux = 1; s.out_bt = 1; s.out_vol_aux = 40; s.out_vol_bt = 25; s.out_bt_ready = 1; s.out_auto = 1; s.out_jack = 0; s.out_bal = 1; s.out_codec = 2; s.out_codecs = 7;
     while(g_emu_run){
         if(!g_emu_pause){
@@ -429,6 +449,7 @@ static void *emu(void *a){
                         rsrv_done(1, NULL);
                     }
                 }
+                else if(c.kind == RMT_CMD_QUEUE){ const char *w = NULL; char *o = fake_queue(&c, &w); s.queue_ver = g_qver; rsrv_done_body(o != NULL, w, o); }
                 else if(c.kind == RMT_CMD_BALANCE){ s.balance = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_TOUCH){ g_touch_n++; g_touch_x = (int)c.offset; g_touch_y = (int)c.limit; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_COVER){                       /* a 16x16 24-bit BMP, a colour gradient */

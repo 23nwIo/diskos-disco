@@ -36,3 +36,4 @@ select,input[type=search]{width:100%;padding:.6em;border-radius:10px;font-size:1
 select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .4em}
 .kv{display:flex;justify-content:space-between;gap:1em;padding:.55em 1em;border-bottom:1px solid var(--line)}.kv span:first-child{color:var(--mut);flex:none}.kv span:last-child{text-align:right;overflow-wrap:anywhere}
 .top a{color:var(--acc);text-decoration:none;font-weight:600}
+.qh{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .3em}#ql .r:disabled{opacity:1;color:var(--fg)}

@@ -46,6 +46,19 @@ folder to open it; tap a song to play it in that context (the album, the artist'
 the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
 card on the Disc after copying new music). In Folders, **Play all** plays the open folder with its subfolders, in path order (A to Z), as one queue; files the library doesn't know are skipped. Folders never leave the card: `..` and links pointing elsewhere are refused.
 
+### Queue
+
+The **Queue** tab shows what plays next, the same list MPD clients see: the song playing now, the songs queued on the
+Disc (its Add to queue, from an MPD client or from this page), then **Up next**, the rest of the list the player plays
+(in shuffled order in Shuffle; the first 200, with a count of the rest). Tap a queued or upcoming song to play it now.
+The **⋯** on a queued song moves it (to the top, up, down, to the end) or removes it; **Clear queue** removes all
+queued songs (Up next stays). The song **⋯**, and the **⋯** of an album or artist, have **Add to the queue**.
+
+While the tab is open the page asks for the list's version every second and reads the list again when it changed (a
+song added on the Disc, the next song started, ...). Every change sends the version it was made on; when the list
+changed in between, the Disc refuses ("The queue changed") and the page shows the new list, so a tap never moves or
+removes the wrong song.
+
 ### Playlists and favourites
 
 The **⋯** button on a song adds it to or removes it from the favourites, adds it to a playlist (or a new one), and in a
@@ -120,7 +133,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 
 | Request | Effect |
 |---|---|
-| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"balance":-10..10,"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","stream_title":"Artist - Title" or "","bt_codec":"LDAC" or "" (the codec the Bluetooth headphones run),"bt_device":"…" (their name),"station_fav":true|false|null,"radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
+| `GET api/state` | `{"ok":true,"has_track":…,"playing":…,"title":"…","artist":"…","album":"…","position_ms":…,"duration_ms":…,"volume":…,"volume_max":120,"balance":-10..10,"queue_ver":N (with `?q=1`, else 0),"play_mode":0..4 or -1,"source":"local"\|"music_assistant"\|"radio"\|"other","controllable":…,"radio_state":"off"\|"starting"\|"playing"\|"error","station":"…","station_url":"…","stream_title":"Artist - Title" or "","bt_codec":"LDAC" or "" (the codec the Bluetooth headphones run),"bt_device":"…" (their name),"station_fav":true|false|null,"radio_error":"…","format":"FLAC"…,"kbps":…,"bits":…,"sample_rate":…,"channels":…,"favorite":true\|false\|null,"art":"…"}` (0 or "" = unknown) |
 | `GET api/status` | `{"ok":true,"groups":[{"name":"Wi-Fi","rows":[["Signal","-60 dBm (good)"],…]},…]}` (display text) |
 | `GET api/eq`, `POST api/eq` with `preset=0..20` | The presets (`{"current":N,"presets":[{"id":0,"name":"Off"},…]}`) / select one. |
 | `POST api/playlist_create` (`name`, 1-64 bytes), `playlist_rename` (`id`, `name`), `playlist_delete` (`id`) | Playlists. Create answers `{"ok":true,"id":N}`. |
@@ -139,6 +152,9 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/next`, `POST api/previous` | Skip. |
 | `POST api/volume` with `value=0..120` or `step=-120..120` | Absolute or relative volume. |
 | `POST api/balance` with `value=-10..10` | Left/right balance (negative = left), applied and saved as Settings > Audio > Balance. |
+| `GET api/queue` (`limit=1..500` Up next rows, default 100) | `{"ok":true,"ver":N,"shuffle":…,"items":[{"k":"cur"\|"queue"\|"next"\|"other","i":queue index,"b":Up next row id,"t":"title","a":"artist","f":"file name","d":ms,"st":true for a station}],"more":N}` |
+| `POST api/queue` with `action=add` and `kind=song&song_id=N`, `kind=album&name=…` or `kind=artist&name=…` | Adds to the end of the queue (`{"ok":true,"added":N}`). |
+| `POST api/queue` with `ver` and `action=jump&kind=queue&i=N` \| `action=jump&kind=next&b=ID` \| `action=remove&i=N` \| `action=move&i=N&to=M` \| `action=clear` | Refused with "The queue changed" when `ver` is not the list's version any more. |
 | `POST api/outputs` with one of `aux=0/1`, `bt=0/1`, `vol_aux=0..120`, `vol_bt=0..120`, `auto=0..2`, `codec=0..4` (0 SBC, 1 AAC, 2 LDAC, 3 aptX, 4 aptX HD) | Settings > Audio > Outputs (own player only; refused with the reason otherwise). `api/state` reports `"outputs":{"aux","bt","vol_aux","vol_bt","bt_ready","auto","jack","bal","codec" (-1 none),"codecs":[ids offered],"switching"}`, or `null` with the stock player. |
 | `POST api/seek` with `position_ms=N` | Seek. |
 | `POST api/play_mode` with `mode=0..4` | 0 Sequential, 1 Shuffle, 2 Repeat one, 3 Repeat all, 4 Single. |
@@ -162,6 +178,7 @@ curl "http://192.168.1.50:8088/<link code>/api/state"
 
 | File | Role |
 |---|---|
+| `ui/queueview.c` | The queue list and its jump checks, shared with the MPD server. |
 | `ui/remote_core.c` | Request parsing, routing, link code, JSON (pure, host-tested). |
 | `ui/remote_page/` | The two pages' source: `remote.html` (control page), `system.html` (system page), shared `style.css` and `common.js`. `python3 ui/tools/gen_remote_page.py` writes them into `ui/remote_page.c` (generated, committed; `--check` tells whether it is up to date). |
 | `ui/remote_srv.c` | The server thread and the one-slot command mailbox to the UI (no LVGL). |
