@@ -107,6 +107,7 @@ ui/trace/stub-libc.so.6
 ui/tests/own_player_test
 ui/tests/trace_launch_test
 ui/tests/usbsync_core_test
+ui/tests/bookmarks_test
 ui/tests/wd_override_test
 ui/tests/playback_test
 ui/tests/sqlite3_host.o
