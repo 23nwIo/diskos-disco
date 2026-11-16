@@ -302,6 +302,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_TOUCH) return "touch";
     if(k == RMT_CMD_OUTPUTS) return "outputs";
     if(k == RMT_CMD_QUEUE) return "queue";
+    if(k == RMT_CMD_LIST_END) return "list_end";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -321,6 +322,15 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
     if(strncmp(rest, "/api/", 5)) return rt;
     const char *ep = rest + 5;
     if(!strcmp(ep, "state")){ long q = 0; rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; rt.cmd.arg = param(r, "q", &q) == 0 && q == 1; return rt; }
+    if(!strcmp(ep, "list_end")){
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        long m = -1, pos = 0; int pp = param(r, "pos", &pos), pu = param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name);
+        if(param(r, "mode", &m) || m < 0 || m > 2 || pp == -2 || pu == -2 || (pp == 0 && (pos < 1 || pu != 0))){
+            memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LIST_END; rt.cmd.arg = m; rt.cmd.pos = pp == 0 ? pos : 0;
+        if(pp != 0) rt.cmd.name[0] = 0;
+        return rt;
+    }
     if(!strcmp(ep, "queue")){
         if(get){
             long l = 100; int pr = param(r, "limit", &l);
@@ -528,6 +538,8 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
     char ou[300] = "null", cl[32] = "";
+    char le[sizeof s->end_station * 6 + 48] = "null", les[sizeof s->end_station * 6];
+    if(s->end_mode >= 0 && rmt_json_escape(les, sizeof les, s->end_station) >= 0) snprintf(le, sizeof le, "{\"mode\":%d,\"station\":\"%s\"}", s->end_mode, les);
     for(int i = 0; i < 5; i++) if(s->out_codecs & (1 << i)) snprintf(cl + strlen(cl), sizeof cl - strlen(cl), "%s%d", cl[0] ? "," : "", i);
     if(s->out_own)
         snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d,\"codec\":%d,\"codecs\":[%s],\"switching\":%s}",
@@ -537,12 +549,12 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"queue_ver\":%u,\"play_mode\":%d,\"work_mode\":%d,"
         "\"source\":\"%s\",\"controllable\":%s,\"radio_state\":\"%s\",\"station\":\"%s\",\"station_url\":\"%s\",\"stream_title\":\"%s\",\"bt_codec\":\"%s\",\"bt_device\":\"%s\",\"station_fav\":%s,\"radio_error\":\"%s\","
-        "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\",\"outputs\":%s}",
+        "\"format\":\"%s\",\"kbps\":%d,\"bits\":%d,\"sample_rate\":%d,\"channels\":%d,\"favorite\":%s,\"art\":\"%s\",\"eq\":%d,\"eq_name\":\"%s\",\"outputs\":%s,\"list_end\":%s}",
         s->has_track ? "true" : "false", s->playing ? "true" : "false", t, a, al,
         s->position_ms < 0 ? 0 : s->position_ms, s->duration_ms < 0 ? 0 : s->duration_ms,
         s->volume, s->volume_max, s->balance, s->queue_ver, s->play_mode, s->work_mode, s->source ? s->source : "other", s->controllable ? "true" : "false",
         s->radio_state ? s->radio_state : "off", st, su, sti, bc, bd, s->station_fav < 0 ? "null" : s->station_fav ? "true" : "false", re,
-        fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn, ou);
+        fm, s->kbps, s->bits, s->sample_rate, s->channels, s->favorite < 0 ? "null" : s->favorite ? "true" : "false", ar, s->eq, eqn, ou, le);
     if(n < 0 || (size_t)n >= cap){ if(cap) dst[0] = 0; return -1; }
     return n;
 }

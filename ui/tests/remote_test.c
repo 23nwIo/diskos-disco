@@ -138,6 +138,10 @@ static void test_core(void){
     CHECK(req("POST", p("/api/queue"), "action=jump&ver=1&kind=next").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/queue"), "action=move&ver=1&i=1").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/queue"), "action=add&kind=song").kind == RMT_R_BAD_PARAM && req("POST", p("/api/queue"), "action=nope&ver=1").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/list_end"), "mode=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_LIST_END && r.cmd.arg == 1 && r.cmd.pos == 0);
+    r = req("POST", p("/api/list_end"), "mode=2&pos=3&url=http%3A%2F%2Fs.example%2Fa"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 2 && r.cmd.pos == 3 && !strcmp(r.cmd.name, "http://s.example/a"));
+    CHECK(req("POST", p("/api/list_end"), "mode=3").kind == RMT_R_BAD_PARAM && req("POST", p("/api/list_end"), "mode=2&pos=3").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/list_end"), "mode=2&pos=0&url=x").kind == RMT_R_BAD_PARAM && req("GET", p("/api/list_end"), NULL).kind == RMT_R_BAD_METHOD);
     r = req("GET", p("/api/state?q=1"), NULL); CHECK(r.kind == RMT_R_STATE && r.cmd.arg == 1);
     r = req("GET", p("/api/state"), NULL); CHECK(r.kind == RMT_R_STATE && r.cmd.arg == 0);
     CHECK(req("POST", p("/api/outputs"), "auto=x").kind == RMT_R_BAD_PARAM && req("GET", p("/api/outputs"), NULL).kind == RMT_R_BAD_METHOD);
@@ -260,16 +264,16 @@ static void test_core(void){
     CHECK(rmt_json_escape(j, sizeof j, "a\"b\\c\n<\x01") > 0);
     CHECK(!strcmp(j, "a\\\"b\\\\c\\n\\u003c\\u0001"));
     CHECK(rmt_json_escape(j, 4, "abcdef") == -1 && strlen(j) < 4);
-    rmt_state_t s; memset(&s, 0, sizeof s);
+    rmt_state_t s; memset(&s, 0, sizeof s); s.end_mode = -1;
     snprintf(s.title, sizeof s.title, "Song \"1\""); snprintf(s.artist, sizeof s.artist, "Art");
     s.has_track = 1; s.playing = 1; s.position_ms = 1000; s.duration_ms = 2000; s.volume = 40; s.volume_max = 120;
     s.play_mode = 1; s.controllable = 1; s.source = "local";
     char js[14000]; CHECK(rmt_state_json(js, sizeof js, &s) > 0);
     CHECK(strstr(js, "\"radio_state\":\"off\"") && strstr(js, "\"station\":\"\""));
     CHECK(strstr(js, "\"title\":\"Song \\\"1\\\"\"") != NULL);
-    CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"balance\":0,") && strstr(js, "\"outputs\":null}") && strstr(js, "\"source\":\"local\""));
+    CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"balance\":0,") && strstr(js, "\"outputs\":null,\"list_end\":null}") && strstr(js, "\"source\":\"local\""));
     s.out_own = 1; s.out_codec = -1; s.out_codecs = 1 | 4 | 16; s.out_aux = 1; s.out_vol_aux = 30; s.out_vol_bt = 12; s.out_auto = 2; s.out_jack = 1; s.out_bal = 0;
-    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"vol_aux\":30,\"vol_bt\":12,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false}}"));
+    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"vol_aux\":30,\"vol_bt\":12,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false},\"list_end\":null}"));
     s.out_own = 0;
     s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Radio <%s>", "X");
     snprintf(s.station_url, sizeof s.station_url, "https://radio.example/stream?a=1&b=\"2\"");
@@ -398,7 +402,7 @@ static void *emu(void *a){
     snprintf(s.title, sizeof s.title, "Track <one>"); s.has_track = 1; s.volume = 33; s.volume_max = 120; s.source = "local"; s.controllable = 1;
     snprintf(s.format, sizeof s.format, "FLAC"); s.bits = 24; s.sample_rate = 96000; s.kbps = 2304; s.channels = 2; s.favorite = 0;
     snprintf(s.art, sizeof s.art, "a1"); s.eq = 1; snprintf(s.eq_name, sizeof s.eq_name, "Jazz"); snprintf(s.bt_codec, sizeof s.bt_codec, "LDAC"); snprintf(s.bt_device, sizeof s.bt_device, "XQ-50 <PRO2>"); s.station_fav = -1;
-    s.queue_ver = 1;
+    s.queue_ver = 1; s.end_mode = 0;
     s.out_own = 1; s.out_aux = 1; s.out_bt = 1; s.out_vol_aux = 40; s.out_vol_bt = 25; s.out_bt_ready = 1; s.out_auto = 1; s.out_jack = 0; s.out_bal = 1; s.out_codec = 2; s.out_codecs = 7;
     while(g_emu_run){
         if(!g_emu_pause){
@@ -451,6 +455,7 @@ static void *emu(void *a){
                         rsrv_done(1, NULL);
                     }
                 }
+                else if(c.kind == RMT_CMD_LIST_END){ if(c.arg == 2 && !c.pos && !s.end_station[0]) rsrv_done(0, "Choose a station first"); else { s.end_mode = (int)c.arg; if(c.pos) snprintf(s.end_station, sizeof s.end_station, "Station %ld", c.pos); rsrv_done(1, NULL); } }
                 else if(c.kind == RMT_CMD_QUEUE){ const char *w = NULL; char *o = fake_queue(&c, &w); s.queue_ver = g_qver; rsrv_done_body(o != NULL, w, o); }
                 else if(c.kind == RMT_CMD_BALANCE){ s.balance = (int)c.arg; rsrv_done(1, NULL); }
                 else if(c.kind == RMT_CMD_TOUCH){ g_touch_n++; g_touch_x = (int)c.offset; g_touch_y = (int)c.limit; rsrv_done(1, NULL); }

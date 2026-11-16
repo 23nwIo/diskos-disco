@@ -220,6 +220,8 @@ static void snapshot(rmt_state_t *s){
           s->out_bt_ready = o.bt_ready; s->out_auto = au; s->out_jack = o.jack; s->out_bal = o.bal;
           s->out_codecs = settings_outputs_codecs(&s->out_codec); s->out_switching = o.switching;
       } }
+    s->end_mode = -1;
+    if(s->out_own){ rc_station_t es; memset(&es, 0, sizeof es); s->end_mode = radio_end_get(&es); snprintf(s->end_station, sizeof s->end_station, "%s", es.name); }   /* own player only */
     s->balance = simple_cfg_get_int("balance", 0); if(s->balance < -10 || s->balance > 10) s->balance = 0;   /* main.c applies the same at boot */
     if(!g_mode_at || lv_tick_elaps(g_mode_at) >= 2000){ g_mode = ui_play_mode_now(); g_mode_at = lv_tick_get() | 1; }   /* it can read the player's database */
     s->play_mode = music_assistant() ? -1 : g_mode;
@@ -249,6 +251,7 @@ static void snapshot(rmt_state_t *s){
     if(rsrv_queue_watched()){ const qv_view_t *q = qv_view(s, 0); s->queue_ver = q ? q->ver : 0; }   /* a page shows the queue */
 }
 static int radio_fav_cmd(const rmt_cmd_t *c, const char **why);
+static const rc_station_t *radio_pick(const rmt_cmd_t *c, const char **why);
 static const char *const NOT_LOCAL = "The player is not in local playback (e.g. USB DAC, Bluetooth or AirPlay mode)";
 static int run(const rmt_cmd_t *c, const char **why){
     static const char PP[] = "0201000C0000", NEXT[] = "0201000C0001", PREV[] = "0201000C0002";
@@ -272,6 +275,14 @@ static int run(const rmt_cmd_t *c, const char **why){
         if(v < 0){ *why = "The volume is not known yet - set it once"; return -1; }
         return ui_set_volume(v + (int)c->arg); }
     case RMT_CMD_OUTPUTS: return settings_outputs_cmd(c->sub, (int)c->arg, why);
+    case RMT_CMD_LIST_END: {                               /* Playback > After the List Ends (radio.c keeps it, tells the player) */
+        opl_outputs_t o; int au;
+        if(settings_outputs_state(&o, &au)){ *why = "Only with the own player (Settings > About > Player)"; return -1; }
+        rc_station_t st; const rc_station_t *ps = NULL;
+        if(c->pos){ rmt_cmd_t f = *c; f.sub = RMT_I_RADIO; if(!(ps = radio_pick(&f, why))) return -1; st = *ps; ps = &st; }
+        else if(c->arg == RADIO_END_STATION){ memset(&st, 0, sizeof st); radio_end_get(&st); if(!st.url[0]){ *why = "Choose a station first"; return -1; } }
+        if(radio_end_set((int)c->arg, ps)){ *why = "Couldn't save that"; return -1; }
+        return 0; }
     case RMT_CMD_BALANCE:
         ui_set_balance((int)c->arg);
         if(simple_cfg_set_int("balance", (int)c->arg) < 0){ *why = "Balance set, but it could not be saved"; return -1; }

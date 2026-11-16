@@ -9,6 +9,7 @@
  *   POST /<token>/api/<command>    play_pause | play | pause | next | previous
  *                                  volume (value=0..120 or step=-120..120) | seek (position_ms=N) | play_mode (mode=0..4)
  *                                  balance (value=-10..10: 0 centred, negative left, positive right)
+ *                                  list_end (mode=0..2 [pos=N url=U: a radio favourite as the station]; own player only)
  *                                  outputs (one of aux=0/1, bt=0/1, vol_aux=0..120, vol_bt=0..120, auto=0..2, codec=0..4;
  *                                  own player only)
  * Parameters come from the query string or an application/x-www-form-urlencoded body. Commands are POST only, so a
@@ -44,7 +45,9 @@ typedef enum {
     RMT_CMD_TOUCH,           /* a finger on the screen: pos,id = x,y down; offset,limit = x,y up; arg = ms down */
     RMT_CMD_BALANCE,         /* left/right balance arg -10..10 (as Settings > Audio > Balance) */
     RMT_CMD_OUTPUTS,         /* Settings > Audio > Outputs: sub = rmt_out_t, arg = its value */
-    RMT_CMD_QUEUE            /* what plays next (queueview.h): sub = rmt_queue_t; see api/queue below */
+    RMT_CMD_QUEUE,           /* what plays next (queueview.h): sub = rmt_queue_t; see api/queue below */
+    RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
+                              * (1-based, 0 = keep the station), name = its url (checked) */
 } rmt_cmd_kind_t;
 /* POST api/touch x, y (0..359), optional x2, y2 (where it lifts; default x, y) and ms (0..3000, default 100). */
 #define RMT_SCREEN_PX 360
@@ -131,6 +134,8 @@ typedef struct {
     long position_ms, duration_ms;
     int  volume, volume_max;
     int  balance;            /* -10..10, 0 centred (the saved setting) */
+    int  end_mode;           /* After the List Ends 0..2, -1 = not offered (stock player) */
+    char end_station[96];    /* its station's name */
     unsigned queue_ver;      /* the queue list's version (queueview.h); 0 while no page shows the queue */
     /* Settings > Audio > Outputs, only while the own player runs (out_own 1; else "outputs":null) */
     int  out_own, out_aux, out_bt, out_vol_aux, out_vol_bt, out_bt_ready, out_auto, out_jack, out_bal;
