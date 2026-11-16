@@ -58,20 +58,19 @@ int pb_switching(void);
 void pb_attenuation(unsigned char *a_right, unsigned char *c_left);
 /* Power off or an orderly stop: store the position in MEMORY_PLAY. */
 void pb_shutdown(void);
-/* Web radio: the DLNA work mode (0657 0C, core mode_seq), driven by the renderer in upnp.c. pb_stream_mode(1) pauses
- * the local song and keeps its place; pb_stream_mode(0) stops the station and loads the local song again, paused where
- * it was. pb_stream_set takes the station (http/https URL, title), pb_stream_play starts it in MPD (or plays on after
- * a pause); pb_stream_state is the UPnP transport state ("PLAYING", "PAUSED_PLAYBACK", "TRANSITIONING", "STOPPED"). */
+/* Web radio: the Radio app's work mode (0657 0C, core mode_seq) and its station (0d10). pb_stream_mode(1) pauses the
+ * local song and keeps its place; pb_stream_mode(0) stops the station and loads the local song again, paused where it
+ * was. pb_stream_set takes the station (http/https URL, title), pb_stream_play starts it in MPD (or plays on after a
+ * pause); pb_stream_start does both for a new station (0d10). */
 void pb_stream_mode(int on);
 int  pb_stream_active(void);
 int  pb_stream_set(const char *uri, const char *title);
 int  pb_stream_play(void);
 int  pb_stream_pause(void);
 int  pb_stream_stop(void);
-const char *pb_stream_state(void);
+int  pb_stream_start(const char *title, const char *uri);
 const char *pb_stream_uri(void);
-/* upnp.c's action callback (up_action_fn) for the Radio app's renderer requests */
-int pb_upnp_action(void *ctx, const char *action, const char *body, char *out, size_t cap);
+
 /* The last engine status and when it was read (CLOCK_MONOTONIC seconds); NULL before the first. */
 const eng_status_t *pb_status(double *when);
 #endif

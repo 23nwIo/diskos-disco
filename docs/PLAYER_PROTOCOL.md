@@ -42,7 +42,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0648 | `0648000C000v` | Artist grouping: 0 artist, 1 album artist (queue building for type 2) | main.c | do |
 | 064d | `064d000C000v` | Track numbers (stored only) | main.c | keep |
 | 0653 | `0653000C000v` | DAC filter 0..5 | main.c `ui_set_dac_filter` | do |
-| 0657 | `0657000C000v` | Work mode: 8 local playback; 1 USB DAC, 6 BT sink, 7 BT streaming, 10 AirPlay, 12 DLNA | main.c, modes.c | do 8 and 12 (the own player's renderer for the Radio app, RADIO.md), ack others |
+| 0657 | `0657000C000v` | Work mode: 8 local playback; 1 USB DAC, 6 BT sink, 7 BT streaming, 10 AirPlay, 12 DLNA | main.c, modes.c | do 8 and 12 (12: the Radio app's mode; the station comes with 0d10), ack others |
 | 0664 | `0664000C<s 4h>` | Idle power off after s seconds (0 off) | power.c | do |
 | 0666 | `0666000C000v` | Output route: 6 internal DAC, 4 S/PDIF, 3 USB audio, 2 Bluetooth | main.c, modes.c | do 6 and 2, ack others |
 | 0684 | `0684000C000v` | Resume memory mode 0..2 | main.c | keep |
@@ -54,6 +54,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d03 | `0d03000C<vol 4h>` | diskOS, own player only: Bluetooth volume 0..120 | settings.c (Outputs) | do |
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
 | 0d05 | `0d05000C000v` | diskOS, own player only: Auto Outputs, what connecting does: 0 off (nothing, a notice), 1 newest (the new device alone), 2 all connected | main.c (re-sent on start), settings.c (Outputs) | do |
+| 0d10 | `0d10<len 4h><name len 4h><name><url>` | diskOS, own player only, in work mode 12: play the Radio app's station (`http://` / `https://`); a new one replaces it; no name and no URL (`0d10000C0000`) = stop | radio.c (`rc_station_frame`) | do (MPD) |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
 | 0713 | `0713000C<v 4h>` | Balance: 0 centre, `00NN` one side, `01NN` the other, N 1..10 | main.c `ui_set_balance` | do |

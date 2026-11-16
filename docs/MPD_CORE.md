@@ -128,12 +128,17 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
 
 ## Web radio
 
-Since 2026-11-16 (Jo asked for it): the Radio app (RADIO.md) switches the player to work mode 0C and hands it the
-station over UPnP AVTransport on `127.0.0.1:49494`, as it does with the stock player's DLNA renderer. The own player
-opens that port only in work mode 0C (`ui/player/upnp.c`, local only, no SSDP) and plays the URL in MPD
-(`playback.c` `pb_stream_*`): the local song is paused and its place kept; leaving the mode stops the station and loads
-the local song again, paused. The Play key pauses and plays on; skip and seek do nothing. The UI gets one track frame
-for the station (`song_name` = the station, `work_mode` "DLNA").
+Since 2026-11-16 (Jo asked for it): the Radio app (RADIO.md) switches the player to work mode 0C, as for the stock
+player's DLNA renderer, and then sends the own player the station as one diskOS command, `0d10` (name length, name,
+URL; no URL = stop; ui/radio_core.c `rc_station_frame`). It knows which player runs from `opl_running()`; the stock
+player still gets SetAVTransportURI + Play over UPnP. The first version (98e361f) had the own player answer that UPnP
+on `127.0.0.1:49494`; Jo chose the direct command (2026-11-16), so the renderer (`ui/player/upnp.c`) is gone. The
+player plays the URL in MPD (`playback.c` `pb_stream_*`): the local song is paused and its place kept; a new `0d10`
+replaces the station; leaving the mode stops the station and loads the local song again, paused. The Play key pauses
+and plays on; skip and seek do nothing. The UI gets one track frame for the station (`song_name` = the station,
+`work_mode` "DLNA"). Host end-to-end (player + the MIPS MPD under qemu): an ICY stream over HTTP (its title reached
+`/tmp/diskos-player-stream`) and a self-signed HTTPS stream with Radio Certificates off played; stop removed the
+title file.
 - MPD's curl input plays `http://` and `https://` streams; HTTPS checks the certificate against `cacert` in mpd.conf,
   the first of `/usr/data/diskos-own/cacert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`,
   `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem` (engine.c `eng_ca_file`). The Disc has

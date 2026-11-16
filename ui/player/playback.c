@@ -7,7 +7,6 @@
 #include "proto.h"
 #include "queue.h"
 #include "queuedb.h"
-#include "upnp.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -700,58 +699,11 @@ int pb_stream_stop(void){
     stream_file(0);
     return 0;
 }
-const char *pb_stream_state(void){
-    if(!g_stream || !g_st_loaded) return "STOPPED";
-    if(g_es_valid && g_es.state == ENG_PLAY) return "PLAYING";
-    if(g_es_valid && g_es.state == ENG_PAUSE) return "PAUSED_PLAYBACK";
-    return now_s() - g_st_t < 15.0 ? "TRANSITIONING" : "STOPPED";   /* MPD is still connecting, or it gave up */
-}
 const char *pb_stream_uri(void){ return g_stream ? g_st_uri : ""; }
 
-/* The renderer's actions (upnp.c), as ui/radio.c uses them: SetAVTransportURI, Play, Pause, Stop, GetTransportInfo,
- * GetMediaInfo, GetPositionInfo. Other actions: 401 (invalid action). */
-int pb_upnp_action(void *ctx, const char *action, const char *body, char *out, size_t cap){
-    (void)ctx;
-    out[0] = 0;
-    if(!g_stream) return 701;                                       /* transition not available: not in the DLNA mode */
-    if(!strcmp(action, "SetAVTransportURI")){
-        char *uri = malloc(2048), *meta = malloc(16384), *title = malloc(512);
-        int r = 716;                                                /* resource not found */
-        if(uri && meta && title && up_xml_value(body, "CurrentURI", uri, 2048) == 0){
-            title[0] = 0;
-            if(up_xml_value(body, "CurrentURIMetaData", meta, 16384) == 0) up_xml_value(meta, "title", title, 512);
-            if(pb_stream_set(uri, title) == 0){
-                if(g_st_loaded){ char x[256]; eng_cmd("stop", x, sizeof x); g_st_loaded = 0; }   /* a new station waits for Play */
-                r = 0;
-            }
-        }
-        free(uri); free(meta); free(title);
-        return r;
-    }
-    if(!strcmp(action, "Play")) return pb_stream_play() == 0 ? 0 : 716;
-    if(!strcmp(action, "Pause")) return pb_stream_pause() == 0 ? 0 : 701;
-    if(!strcmp(action, "Stop")) return pb_stream_stop() == 0 ? 0 : 701;
-    if(!strcmp(action, "GetTransportInfo")){
-        snprintf(out, cap, "<CurrentTransportState>%s</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus>"
-                 "<CurrentSpeed>1</CurrentSpeed>", pb_stream_state());
-        return 0;
-    }
-    if(!strcmp(action, "GetMediaInfo")){
-        char *e = malloc(sizeof g_st_uri * 6);
-        if(!e || up_xml_escape(g_st_uri, e, sizeof g_st_uri * 6)){ free(e); return 501; }
-        snprintf(out, cap, "<NrTracks>%d</NrTracks><MediaDuration>NOT_IMPLEMENTED</MediaDuration><CurrentURI>%s</CurrentURI>"
-                 "<CurrentURIMetaData></CurrentURIMetaData><NextURI></NextURI><NextURIMetaData></NextURIMetaData>"
-                 "<PlayMedium>NETWORK</PlayMedium><RecordMedium>NOT_IMPLEMENTED</RecordMedium><WriteStatus>NOT_IMPLEMENTED</WriteStatus>",
-                 g_st_uri[0] ? 1 : 0, e);
-        free(e);
-        return 0;
-    }
-    if(!strcmp(action, "GetPositionInfo")){
-        long ms = g_es_valid && g_st_loaded ? g_es.elapsed_ms : 0;
-        snprintf(out, cap, "<Track>1</Track><TrackDuration>0:00:00</TrackDuration><TrackMetaData></TrackMetaData><TrackURI></TrackURI>"
-                 "<RelTime>%ld:%02ld:%02ld</RelTime><AbsTime>NOT_IMPLEMENTED</AbsTime><RelCount>2147483647</RelCount>"
-                 "<AbsCount>2147483647</AbsCount>", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60);
-        return 0;
-    }
-    return 401;
+/* 0d10: a new station; the one playing stops first */
+int pb_stream_start(const char *title, const char *uri){
+    if(pb_stream_set(uri, title) != 0) return -1;
+    if(g_st_loaded){ char x[256]; eng_cmd("stop", x, sizeof x); g_st_loaded = 0; }
+    return pb_stream_play();
 }

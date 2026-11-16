@@ -299,6 +299,13 @@ int rc_soap_body(const char *action, const char *args, char *out, size_t n){
         action, args ? args : "", action);
     return (k < 0 || (size_t)k >= n) ? -1 : 0;
 }
+int rc_station_frame(const rc_station_t *s, char *out, size_t n){
+    size_t nl = s ? strnlen(s->name, sizeof s->name) : 0, ul = s ? strnlen(s->url, sizeof s->url) : 0;
+    size_t len = 12 + nl + ul;
+    if(len > 0xFFFF || len + 1 > n) return -1;
+    int k = snprintf(out, n, "0d10%04X%04X%.*s%.*s", (unsigned)len, (unsigned)nl, (int)nl, s ? s->name : "", (int)ul, s ? s->url : "");
+    return k == (int)len ? k : -1;
+}
 int rc_set_uri_args(const rc_station_t *s, char *out, size_t n){
     char eurl[RC_URL_LEN * 2], ename[RC_NAME_LEN * 6], det[128], edet[128 * 6], didl[4096], edidl[8192];
     char detail[128];

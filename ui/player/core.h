@@ -8,7 +8,8 @@
 #define DISKOS_PLAYER_CORE_H
 
 #define PL_WORK_LOCAL 8            /* 0657 / a607: local playback */
-#define PL_WORK_DLNA  12           /* 0657 / a607: the DLNA renderer (0C), which the Radio app uses (upnp.h) */
+#define PL_WORK_DLNA  12           /* 0657 / a607: the stock player's DLNA renderer (0C); the Radio app's mode, in which
+                                    * the own player takes the station with 0d10 */
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
 #define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
 #define PL_VOL_MAX    120
@@ -30,6 +31,8 @@ typedef int (*pl_transport_fn)(void *ctx, int op, long arg);
 /* 0100: play list type from 0-based position pos; name is the frame's name field, NUL terminated. 0 or -1. Frames to
  * the UI are the callee's (it sends the track start sequence). */
 typedef int (*pl_play_fn)(void *ctx, int type, int pos, const char *name);
+/* 0d10: play the station url (name: the station, for the track frame), url "" = stop it. 0 or -1. */
+typedef int (*pl_radio_fn)(void *ctx, const char *name, const char *url);
 
 typedef struct {
     /* applied settings (Step 2 "do") */
@@ -78,6 +81,7 @@ typedef struct {
     pl_send_fn send; pl_log_fn log; void *ctx;
     pl_transport_fn transport;     /* set after pl_core_init; may stay NULL */
     pl_play_fn play;               /* set after pl_core_init; NULL = 0100 is only logged */
+    pl_radio_fn radio;             /* set after pl_core_init; NULL = 0d10 is only logged */
 } pl_core_t;
 
 void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx);

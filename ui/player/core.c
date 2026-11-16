@@ -294,6 +294,20 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         lead_volume(c, 1);
         return 0;
     }
+    case 0x0d10: {        /* the Radio app's station: name length (4 hex), the name, the URL; nothing after the length = stop */
+        long nl = f.dlen >= 4 ? strtol((char[]){ f.data[0], f.data[1], f.data[2], f.data[3], 0 }, NULL, 16) : -1;
+        if(f.dlen < 4 || nl < 0 || 4 + nl > f.dlen){ c->bad_frames++; logf_(c, "radio: bad frame"); return -1; }
+        char *name = malloc((size_t)nl + 1), *url = malloc((size_t)(f.dlen - 4 - nl) + 1);
+        if(!name || !url){ free(name); free(url); logf_(c, "radio: out of memory"); return -1; }
+        memcpy(name, f.data + 4, (size_t)nl); name[nl] = 0;
+        memcpy(url, f.data + 4 + nl, (size_t)(f.dlen - 4 - nl)); url[f.dlen - 4 - nl] = 0;
+        int r = 0;
+        if(c->work_mode != PL_WORK_DLNA){ logf_(c, "radio: not in the radio work mode (0657 0C), ignored"); r = -1; }
+        else if(!c->radio) logf_(c, "radio: \"%s\" %s (no playback here)", name, url[0] ? url : "stop");
+        else r = c->radio(c->ctx, name, url);
+        free(name); free(url);
+        return r;
+    }
     case 0x0d05:
         if(v < PL_AUTO_OFF || v > PL_AUTO_ALL){ c->bad_frames++; logf_(c, "auto outputs: bad value %d", v); return -1; }
         if(v == c->auto_out) return 0;

@@ -49,6 +49,9 @@ int  rc_soap_body(const char *action, const char *args, char *out, size_t n);
 /* SetAVTransportURI arguments for a station: the URL plus DIDL-Lite metadata (title = station name, artist =
  * "Web radio", album = the detail line), escaped twice as the action requires. */
 int  rc_set_uri_args(const rc_station_t *s, char *out, size_t n);
+/* The own player's station command (docs/PLAYER_PROTOCOL.md 0d10): name length (4 hex), the name, the URL; s NULL =
+ * stop. Returns the frame's length, -1 when it did not fit. */
+int  rc_station_frame(const rc_station_t *s, char *out, size_t n);
 /* The value of <tag>...</tag> in a reply (first occurrence), unescaped for the five XML entities. */
 int  rc_xml_value(const char *xml, const char *tag, char *out, size_t n);
 /* Split http://host[:port]/path. Returns 0, -1 for anything else (https is not used by UPnP control). */

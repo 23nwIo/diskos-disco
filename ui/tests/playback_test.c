@@ -11,7 +11,6 @@
 #include "../player/proto.h"
 #include "../player/queue.h"
 #include "../player/queuedb.h"
-#include "../player/upnp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -471,59 +470,43 @@ static void test_resume(void){
     unlink(flagp);
 }
 
-/* web radio: the DLNA work mode and the renderer's actions (upnp.c + playback.c pb_stream_*) */
-static int act(const char *action, const char *args, char *out){
-    char body[8192];
-    snprintf(body, sizeof body, "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body>"
-             "<u:%s xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>0</InstanceID>%s</u:%s></s:Body></s:Envelope>",
-             action, args, action);
-    out[0] = 0;
-    return pb_upnp_action(NULL, action, body, out, 4096);
+/* web radio: the Radio app's work mode (0657 0C) and its station (0d10, playback.c pb_stream_*) */
+static int radio_cb(void *ctx, const char *name, const char *url){   /* as player/main.c core_radio */
+    (void)ctx;
+    pb_stream_mode(1);
+    return url[0] ? pb_stream_start(name, url) : pb_stream_stop();
+}
+static int send_station(pl_core_t *c, const char *name, const char *url){
+    char f[2048];
+    int n = snprintf(f, sizeof f, "0d10%04X%04X%s%s", (unsigned)(12 + strlen(name) + strlen(url)), (unsigned)strlen(name), name, url);
+    return pl_core_handle(c, f, n);
 }
 static void test_radio(void){
-    char m[64], path[64], a[64], out[4096]; const char *body; size_t bl;
-    /* the request parser: incomplete, complete, the action from SOAPACTION */
-    static const char req[] = "POST /AVTransport/control HTTP/1.1\r\nHost: 127.0.0.1:49494\r\nContent-Length: 5\r\n"
-                              "SOAPACTION: \"urn:schemas-upnp-org:service:AVTransport:1#Play\"\r\n\r\nhello";
-    CHECK(up_parse(req, sizeof req - 3, m, sizeof m, path, sizeof path, a, sizeof a, &body, &bl) == 0);
-    CHECK(up_parse(req, sizeof req - 1, m, sizeof m, path, sizeof path, a, sizeof a, &body, &bl) == 1);
-    CHECK(!strcmp(m, "POST") && !strcmp(path, UP_CTL_PATH) && !strcmp(a, "Play") && bl == 5 && !strncmp(body, "hello", 5));
-    CHECK(up_parse("GARBAGE\r\n\r\n", 11, m, sizeof m, path, sizeof path, a, sizeof a, &body, &bl) == -1);
-    /* the description names the AVTransport control URL (what ui/radio_core.c rc_desc_control_url looks for) */
-    static char rep[65536];
-    CHECK(up_reply("GET", UP_DESC_PATH, "", "", NULL, NULL, rep, sizeof rep) > 0 && strstr(rep, "200 OK")
-          && strstr(rep, "urn:schemas-upnp-org:service:AVTransport:1") && strstr(rep, "<controlURL>" UP_CTL_PATH "</controlURL>"));
-    CHECK(up_reply("GET", "/nope", "", "", NULL, NULL, rep, sizeof rep) > 0 && strstr(rep, "404"));
-    CHECK(up_xml_value("<a><u:X x=\"1\">1 &amp;lt; 2</u:X></a>", "X", out, sizeof out) == 0 && !strcmp(out, "1 &lt; 2"));
-    CHECK(up_xml_value("<a/>", "X", out, sizeof out) == -1);
-
     pl_core_t c;
     pl_core_init(&c, cap_send, NULL, NULL);
+    c.radio = radio_cb;
     pb_init(&c, dbp, sysp, quiet);
     CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0);           /* a local song plays */
     pb_engine_event();
     e_ms = 42000; pb_engine_event();
-    /* not in the DLNA mode: actions are refused (701), the description is still served */
-    CHECK(up_reply("POST", UP_CTL_PATH, "Play", "", pb_upnp_action, NULL, rep, sizeof rep) > 0 && strstr(rep, "<errorCode>701</errorCode>"));
+    /* not in the radio work mode: the station is refused */
+    CHECK(send_station(&c, "Jazz FM", "http://radio.example/live") == -1 && !pb_stream_active());
+    CHECK(pl_core_handle(&c, "0d10000A00", 10) == -1);        /* too short */
+    CHECK(pl_core_handle(&c, "0d10000E0009abcdef", 18) == -1);   /* the name is longer than the frame */
     /* 0657 0C: the mode is taken and announced; the local song pauses */
     nsent = 0;
     CHECK(pl_core_handle(&c, "0657000C000C", 12) == 0 && c.work_mode == PL_WORK_DLNA && sent_count("a607000C000C") == 1);
     pb_stream_mode(1);
     CHECK(e_state == ENG_PAUSE && pb_stream_active());
     pb_engine_event();                                        /* MPD: paused */
-    /* the Radio app's sequence (ui/radio.c job_play): SetAVTransportURI with DIDL metadata, then Play */
-    CHECK(act("SetAVTransportURI", "<CurrentURI>http://radio.example/live?a=1&amp;b=2</CurrentURI><CurrentURIMetaData>"
-              "&lt;DIDL-Lite&gt;&lt;item&gt;&lt;dc:title&gt;Jazz &amp;amp; More&lt;/dc:title&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;"
-              "</CurrentURIMetaData>", out) == 0);
-    CHECK(!strcmp(pb_stream_uri(), "http://radio.example/live?a=1&b=2"));
-    CHECK(act("SetAVTransportURI", "<CurrentURI>ftp://x/y</CurrentURI>", out) == 716);
+    /* the Radio app's station: name and URL in one frame (ui/radio_core.c rc_station_frame) */
     nsent = 0;
-    CHECK(act("Play", "<Speed>1</Speed>", out) == 0 && !strcmp(e_cur, "http://radio.example/live?a=1&b=2") && e_state == ENG_PLAY);
-    CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "<CurrentTransportState>PLAYING</CurrentTransportState>"));
+    CHECK(send_station(&c, "Jazz & More", "http://radio.example/live?a=1&b=2") == 0);
+    CHECK(!strcmp(pb_stream_uri(), "http://radio.example/live?a=1&b=2") && !strcmp(e_cur, "http://radio.example/live?a=1&b=2") && e_state == ENG_PLAY);
+    CHECK(send_station(&c, "Bad", "ftp://x/y") == -1 && e_state == ENG_PLAY);   /* not a stream: the station plays on */
     pb_engine_event();                                        /* MPD plays the stream: its track frame and the state */
     if(getenv("PB_DUMP")) for(int i = 0; i < nsent; i++) puts(sent[i]);
     CHECK(sent_count("Jazz & More") == 1 && sent_count("\"work_mode\":\"DLNA\"") == 1 && sent_count("a2020013{\"state\":0}") >= 1);
-    CHECK(act("GetMediaInfo", "", out) == 0 && strstr(out, "<CurrentURI>http://radio.example/live?a=1&amp;b=2</CurrentURI>"));
     /* the song the station names (MPD's Title, ICY "Artist - Title") goes to OPL_STREAM for ui/radio.c */
     {
         char b[2048] = "", u[256], ar[64], ti[64];
@@ -536,22 +519,22 @@ static void test_radio(void){
     /* the Play key pauses and plays on; skip and seek do nothing */
     CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PAUSE);
     pb_engine_event();
-    CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "PAUSED_PLAYBACK"));
-    CHECK(act("Play", "", out) == 0 && e_state == ENG_PLAY && !strcmp(e_cur, "http://radio.example/live?a=1&b=2"));
+    CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PLAY && !strcmp(e_cur, "http://radio.example/live?a=1&b=2"));
     pb_engine_event();
     CHECK(pb_transport(PL_T_NEXT, 0) == -1 && pb_transport(PL_T_SEEK, 1000) == -1);
-    CHECK(act("Stop", "", out) == 0 && e_state == ENG_STOP);
-    CHECK(act("GetTransportInfo", "", out) == 0 && strstr(out, "STOPPED"));
-    CHECK(act("Seek", "", out) == 401);
+    /* another station replaces it */
+    CHECK(send_station(&c, "Rock", "https://radio.example/rock") == 0 && !strcmp(e_cur, "https://radio.example/rock") && e_state == ENG_PLAY);
+    /* stop: a frame with no URL */
+    CHECK(pl_core_handle(&c, "0d10000C0000", 12) == 0 && e_state == ENG_STOP);
     CHECK(access(OPL_STREAM, F_OK) != 0);                     /* stopped: no song named */
     e_cert_stale = 1;                                         /* Radio Certificates changed: MPD restarts before the station */
-    CHECK(act("Play", "", out) == 0 && e_state == ENG_PLAY && e_restarts == 1 && !strcmp(e_cur, "http://radio.example/live?a=1&b=2"));
+    CHECK(send_station(&c, "Rock", "https://radio.example/rock") == 0 && e_state == ENG_PLAY && e_restarts == 1);
     /* 0657 08: the station stops, the local song comes back paused where it was */
     CHECK(pl_core_handle(&c, "0657000C0008", 12) == 0 && c.work_mode == PL_WORK_LOCAL);
     pb_stream_mode(0);
     if(getenv("PB_DUMP")) printf("back: %s armed %d ms %ld\n", e_cur, e_armed, e_ms);
     CHECK(!pb_stream_active() && !strcmp(e_cur, "/s/a1.flac") && e_armed && e_ms >= 42000 && e_ms < 42500);
-    CHECK(act("Play", "", out) == 701);
+    CHECK(send_station(&c, "Rock", "https://radio.example/rock") == -1);
     pb_close();
 }
 

@@ -2,9 +2,10 @@
 /* Web radio: the Radio app (SCR_RADIO) and its link to the player.
  *
  * HOW IT PLAYS
- *   mq_player plays internet streams itself through its DLNA renderer: diskOS switches the source to Web radio
- *   (ui_set_source_mode(6): 0657000C000C, docs/COMMAND_MAP.md) and, on a worker thread, finds the renderer (SSDP, then
- *   known ports on the Wi-Fi address and loopback) and sends it SetAVTransportURI + Play. Device-tested by hand with
+ *   diskOS switches the source to Web radio (ui_set_source_mode(6): 0657000C000C, docs/COMMAND_MAP.md). The own
+ *   player (docs/MPD_CORE.md) then gets the station as one command (0d10, send_direct). The stock mq_player plays
+ *   internet streams only through its DLNA renderer: a worker thread finds it (SSDP, then known ports on the Wi-Fi
+ *   address and loopback) and sends it SetAVTransportURI + Play. Device-tested by hand with
  *   the dlnatest tool on 2026-11-06: MP3, AAC, MP3 over HTTPS, Ogg Vorbis, Ogg Opus and FLAC streams all played.
  *   The existing Now Playing screens show the station (DIDL title) with the player's own time and controls.
  *   Any local play (Library, Folders, books, Up Next) returns the player to Playback first (main.c radio_yield_local).
@@ -382,7 +383,7 @@ static int own_stream_title(const char *url, char *title, size_t tn, char *artis
     char t[320];
     if(opl_stream_parse(b, u, sizeof u, artist, an, t, sizeof t) != 0 || strcmp(u, url)) return 0;
     if(!artist[0] && t[0]) rc_icy_split(t, artist, an, title, tn);   /* ICY: "Artist - Title" in one */
-    else snprintf(title, tn, "%s", t);
+    else { size_t l = strnlen(t, tn - 1); memcpy(title, t, l); title[l] = 0; }
     return 1;
 }
 static void *icy_thread(void *arg){
@@ -648,14 +649,33 @@ static void refuse(const char *why){
     ui_toast(why);
 }
 static void poll_start(void);
+/* The own player takes the station as one command (0d10, rc_station_frame) in the radio work mode; the stock player
+ * only through its DLNA renderer (job_play on the worker). g_direct: the station went the first way. Main thread. */
+static int g_direct;
+static int send_direct(const rc_station_t *s){
+    char f[16 + RC_NAME_LEN + RC_URL_LEN];
+    int n = rc_station_frame(s, f, sizeof f);
+    if(n < 0 || ipc_send_cmd(f) < 0){ fprintf(stderr, "radio: the player didn't take the station\n"); return -1; }
+    fprintf(stderr, "radio: %s%s%s (own player, direct)\n", s ? "playing \"" : "stop", s ? s->name : "", s ? "\"" : "");
+    return 0;
+}
+/* after a start was decided: direct (sent = send_direct's result; PLAYING at once, so the titles start) or through the
+ * worker. Caller holds g_mu; the command itself is sent before, outside the lock (ipc may wait for the player). */
+static void start_locked(int sent){
+    if(!g_direct){ post_job(J_PLAY); return; }
+    if(sent == 0){ g_rstate = RS_PLAYING; icy_kick(); }
+    else { g_rstate = RS_ERROR; snprintf(g_err, sizeof g_err, "%s", "The player didn't take the station"); }
+}
 int radio_play(const rc_station_t *s){
     if(!s || !s->name[0] || !rc_url_ok(s->url)){ refuse("That station address can't be played"); return -1; }
     char ip[32];
     if(!wlan_ip(ip, sizeof ip)){ refuse("Connect to Wi-Fi to play radio"); return -1; }
     if(!radio_active() && ui_set_source_mode(RADIO_SOURCE) != 0){ refuse("Couldn't switch to the radio"); return -1; }   /* the reason was toasted */
+    g_direct = opl_running();
+    int sent = g_direct ? send_direct(s) : 0;
     pthread_mutex_lock(&g_mu);
     g_play_gen++; g_now = *s; g_job_station = *s; g_rstate = RS_STARTING; g_err[0] = 0;
-    post_job(J_PLAY);
+    start_locked(sent);
     pthread_mutex_unlock(&g_mu);
     g_shown_state = RS_STARTING;
     ui_toast("Tuning in...");
@@ -690,15 +710,20 @@ static void forget_play(void){                          /* any stream ends; a ru
     pthread_mutex_lock(&g_mu);
     int had = g_rstate != RS_OFF;
     g_play_gen++; g_rstate = RS_OFF; g_err[0] = 0;
-    if(had && g_ctl[0]) post_job(J_STOP);                /* best effort: the work-mode switch stops it too */
+    if(had && !g_direct && g_ctl[0]) post_job(J_STOP);   /* best effort: the work-mode switch stops it too */
     pthread_mutex_unlock(&g_mu);
+    if(had && g_direct && radio_active()) send_direct(NULL);
     g_shown_state = RS_OFF;
 }
 void radio_mode_leaving(void){ forget_play(); }
 void radio_restart(void){
     pthread_mutex_lock(&g_mu);
     int on = g_rstate == RS_PLAYING || g_rstate == RS_STARTING;
-    if(on){ g_play_gen++; g_job_station = g_now; g_rstate = RS_STARTING; g_err[0] = 0; post_job(J_PLAY); }
+    rc_station_t now = g_now;
+    pthread_mutex_unlock(&g_mu);
+    int sent = on && g_direct ? send_direct(&now) : 0;
+    pthread_mutex_lock(&g_mu);
+    if(on){ g_play_gen++; g_job_station = g_now; g_rstate = RS_STARTING; g_err[0] = 0; start_locked(sent); }
     pthread_mutex_unlock(&g_mu);
     if(on){ g_shown_state = RS_STARTING; poll_start(); }
 }

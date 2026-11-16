@@ -85,6 +85,15 @@ static void test_json(void){
     CHECK(rc_parse_stations("[]", 2, s, 4) == 0);
     CHECK(rc_parse_stations(js, strlen(js), s, 1) == 1);
 }
+static void test_station_frame(void){                      /* 0d10 for the own player */
+    rc_station_t s; memset(&s, 0, sizeof s);
+    snprintf(s.name, sizeof s.name, "Jazz & More"); snprintf(s.url, sizeof s.url, "http://radio.example/live?a=1");
+    char f[1024];
+    int n = rc_station_frame(&s, f, sizeof f);
+    CHECK(n == 12 + 11 + 29 && !strcmp(f, "0d100034000BJazz & Morehttp://radio.example/live?a=1"));
+    CHECK(rc_station_frame(NULL, f, sizeof f) == 12 && !strcmp(f, "0d10000C0000"));
+    CHECK(rc_station_frame(&s, f, 20) == -1);
+}
 static void test_upnp(void){
     char host[64], path[256], out[2048]; int port;
     CHECK(rc_split_http("http://192.168.1.5:49494/desc.xml", host, sizeof host, &port, path, sizeof path) == 0);
@@ -180,7 +189,7 @@ static void test_ogg(void){
     CHECK(rc_ogg_tags(bad, sizeof bad - 1, a, sizeof a, t, sizeof t) == -1);
 }
 int main(void){
-    test_url(); test_encode(); test_detail(); test_fav(); test_json(); test_upnp(); test_icy(); test_ogg();
+    test_url(); test_encode(); test_detail(); test_fav(); test_json(); test_upnp(); test_station_frame(); test_icy(); test_ogg();
     if(fails){ fprintf(stderr, "%d radio core check(s) failed\n", fails); return 1; }
     puts("PASS radio core");
     return 0;

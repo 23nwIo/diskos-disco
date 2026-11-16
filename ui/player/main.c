@@ -40,7 +40,6 @@
 #include "engine.h"
 #include "mpdcli.h"
 #include "playback.h"
-#include "upnp.h"
 #include "queuedb.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
@@ -108,6 +107,14 @@ static void on_signal(int s){ (void)s; g_stop = 1; }
 /* ---- playback glue (playback.c) ---- */
 static int core_transport(void *ctx, int op, long arg){ (void)ctx; return pb_transport(op, arg); }
 static int core_play(void *ctx, int type, int pos, const char *name){ (void)ctx; return pb_play_list(type, pos, name); }
+/* 0d10 (the core checked the work mode): the radio mode may still be on its way from the main loop, so it is taken here */
+static int core_radio(void *ctx, const char *name, const char *url){
+    (void)ctx;
+    pb_stream_mode(1);
+    if(!url[0]) return pb_stream_stop();
+    if(pb_stream_start(name, url) != 0){ logmsg("radio: \"%s\" %s does not play", name, url); return -1; }
+    return 0;
+}
 
 /* ---- volume keys: click, double click and long press each change the volume or switch track, as stored by the stock
  * player in SYSCONFIG (set by 0820-0822, ui/controls.h): 1 = volume, anything else = track (up = next, down =
@@ -246,6 +253,7 @@ int main(int argc, char **argv){
     pl_core_init(&core, core_send, core_log, NULL);
     core.transport = core_transport;
     core.play = core_play;
+    core.radio = core_radio;
     pb_init(&core, QD_SONG_DB, QD_SYSCONFIG_DB, logmsg);
     /* the key actions are kept in SYSCONFIG like the stock player keeps them; the UI sends them only when changed.
      * Not stored: every press changes the volume. */
@@ -290,16 +298,13 @@ int main(int argc, char **argv){
     if(use_wd && bal < 0) logmsg("jack: open %s: %s - no 4.4 mm detection", BAL_DEV, strerror(errno));
     int bal_state = -1, bal_count = 0, bal_logged = 0;
 
-    int upnp = -1;                                     /* the Radio app's renderer, only in the DLNA work mode (upnp.h) */
     unsigned mode_seq = core.mode_seq;
     double t0 = now_s(), last_feed = t0, sleep_at = 0, power_at = 0, last_jack = 0;
     int stable = 0; unsigned sleep_seq = 0, usb_seq = 0;
     while(!g_stop){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
-        struct pollfd pf[5] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 },
-                                { upnp, POLLIN, 0 } };
-        int pr = poll(pf, 5, 250);
-        if(pr > 0 && upnp >= 0 && (pf[4].revents & POLLIN)) up_serve(upnp, pb_upnp_action, NULL, logmsg);
+        struct pollfd pf[4] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 } };
+        int pr = poll(pf, 4, 250);
         if(pr > 0 && pf[3].fd >= 0 && (pf[3].revents & (POLLIN | POLLHUP | POLLERR))){
             int ev = eng_idle_event();
             if(ev > 0) pb_engine_event();
@@ -397,12 +402,9 @@ int main(int argc, char **argv){
                 }
             }
         }
-        if(core.mode_seq != mode_seq){                   /* 0657: the Radio app's DLNA mode, or back to local playback */
+        if(core.mode_seq != mode_seq){                   /* 0657: the Radio app's mode (0C), or back to local playback */
             mode_seq = core.mode_seq;
-            int dlna = core.work_mode == PL_WORK_DLNA;
-            pb_stream_mode(dlna);
-            if(dlna && upnp < 0) upnp = up_listen(UP_PORT, logmsg);
-            if(!dlna && upnp >= 0){ close(upnp); upnp = -1; logmsg("upnp: renderer closed"); }
+            pb_stream_mode(core.work_mode == PL_WORK_DLNA);
         }
         eng_check();
         if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.vol_bt; }

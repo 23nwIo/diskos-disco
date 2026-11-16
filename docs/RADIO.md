@@ -43,13 +43,12 @@ Radio switches the player to that work mode (source mode 6, frame `0657000C000C`
 and hands it the station with the standard UPnP `SetAVTransportURI` and `Play` actions, on the Disc's own address. No
 audio passes through the UI and no decoder was added.
 
-**With the own player** ([MPD_CORE.md](MPD_CORE.md#web-radio)) the same requests reach the own player instead: in work
-mode 0C it answers them on `127.0.0.1:49494` (`ui/player/upnp.c`: the device description, `SetAVTransportURI`,
-`Play`, `Pause`, `Stop`, `GetTransportInfo`, `GetMediaInfo`, `GetPositionInfo`) and MPD plays the stream through its
-curl input (HTTP and HTTPS). The Radio app does not know which player runs. Leaving the radio stops the station and
+**With the own player** ([MPD_CORE.md](MPD_CORE.md#web-radio)) there is no DLNA: the Radio app sees that the own
+player runs (`opl_running()`), switches to the same work mode and sends the station as one command, `0d10` (name and
+URL), and MPD plays the stream through its curl input (HTTP and HTTPS). Leaving the radio stops the station and
 loads the local song again, paused where it was. HTTPS needs a CA bundle: the player gives MPD the first of
 `/usr/data/diskos-own/cacert.pem`, `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`,
-`/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem` that exists (not checked on a Disc yet).
+`/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem` that exists (the Disc has the second).
 
 Stations come from [radio-browser.info](https://www.radio-browser.info/) (`url_resolved`, broken stations hidden),
 fetched with `wget` over HTTPS. The favourites file (see [above](#where-the-favourites-are-kept)) holds one station per
