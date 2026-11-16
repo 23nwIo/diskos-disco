@@ -337,7 +337,8 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
             else if(ok && (!strcmp(k, "album") || !strcmp(k, "artist"))){
                 rt.cmd.item = k[1] == 'l' ? RMT_I_ALBUM : RMT_I_ARTIST;
                 ok = !param_str(r, "name", rt.cmd.name, sizeof rt.cmd.name) && rt.cmd.name[0];
-            } else ok = 0;
+            } else if(ok && !strcmp(k, "next")){ rt.cmd.item = -1; ok = !param(r, "b", &rt.cmd.id) && rt.cmd.id > 0; }
+            else ok = 0;
             if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
             rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_QUEUE; rt.cmd.sub = act; return rt;
         }

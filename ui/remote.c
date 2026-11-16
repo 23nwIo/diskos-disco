@@ -844,7 +844,28 @@ static char *queue_json(const qv_view_t *v, int limit){
     rmt_buf_printf(&b, "],\"more\":%d}", left + v->more);
     return rmt_buf_take(&b);
 }
+/* An Up next row (LIST_SONG_0.ID b) into the diskOS Queue, where it can be moved: the exact song, also a CUE/ISO track */
+static int queue_add_next(int b, const char **why, char **body){
+    rmt_state_t s; snapshot(&s);
+    const qv_view_t *v = qv_view(&s, 0); const qv_entry_t *e = NULL;
+    for(int i = 0; v && i < v->n && !e; i++) if(v->e[i].kind == QV_NEXT && v->e[i].base_id == b) e = &v->e[i];
+    if(!e){ *why = "The queue changed - here it is again"; return -1; }
+    int tr = 0, cue = 0, iso = 0, r;
+    if(mdb_song_subtrack(e->path, e->base_id, &tr, &cue, &iso) == 1){     /* one track of an image: find its SONG.ID */
+        int ids[400], n = mdb_queue_path_ids(e->path, ids, 400), id = 0; char p[512]; mdb_song_t so;
+        for(int i = 0; i < n && !id; i++) if(mdb_queue_song(ids[i], p, sizeof p, &so) && so.track == tr) id = ids[i];
+        if(n == -2 || (n < 0 && !id)){ *why = "The library is busy - try again"; return -1; }
+        r = id ? queue_add_ids(&id, 1) : 0;
+    } else r = queue_add_path(e->path);
+    if(r == -2){ *why = "The library is busy - try again"; return -1; }
+    if(r < 0){ *why = "The queue is full"; return -1; }
+    if(r == 0){ *why = "Already in the queue, or not in the library"; return -1; }
+    qv_invalidate();
+    *body = malloc(48); if(*body) snprintf(*body, 48, "{\"ok\":true,\"added\":%d}", r);
+    return 0;
+}
 static int queue_cmd(const rmt_cmd_t *c, const char **why, char **body){
+    if(c->sub == RMT_Q_ADD && c->item == -1) return queue_add_next((int)c->id, why, body);
     if(c->sub == RMT_Q_ADD){                               /* as the Disc's song / album / artist menu "Add to queue" */
         int id = (int)c->song_id, r = c->item == RMT_I_SONG ? queue_add_ids(&id, 1) : queue_add_group(c->item == RMT_I_ALBUM ? "ALBUM" : "ARTIST", c->name);
         if(r == -2){ *why = "The library is busy - try again"; return -1; }

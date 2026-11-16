@@ -61,7 +61,7 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'POST /api/queue action=add&kind=song&song_id=1', 'POST /api/queue action=add&kind=album&name=Caf%C3%A9+%3CNoir%3E',
         'GET /api/queue', 'POST /api/queue action=move&ver=1&i=2&to=0', 'POST /api/queue action=remove&ver=1&i=0', 'GET /api/queue',
         'POST /api/queue action=remove&ver=2&i=0', 'GET /api/queue', 'POST /api/queue action=clear&ver=3', 'GET /api/queue',
-        'POST /api/queue action=jump&ver=4&kind=queue&i=0', 'POST /api/queue action=clear&ver=4', 'POST /api/queue action=add&kind=artist&name=Nobody']
+        'POST /api/queue action=jump&ver=4&kind=queue&i=0', 'POST /api/queue action=clear&ver=4', 'POST /api/queue action=add&kind=artist&name=Nobody', 'POST /api/queue action=add&kind=next&b=1']
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
     (ui/'tests/host_build/diskos.conf').unlink(missing_ok=True)
@@ -157,4 +157,5 @@ assert res[69]['rc'] == 0 and [x['k'] for x in res[70]['body']['items']] == ['cu
 assert res[71]['rc'] == -1 and res[71]['why'] == 'The queue changed - here it is again', res[71]
 assert res[72]['rc'] == -1 and res[72]['why'] == 'Nothing is queued', res[72]
 assert res[73]['rc'] == -1 and res[73]['why'] == 'Nothing new to add', res[73]
+assert res[74]['rc'] == -1 and res[74]['why'] == 'The queue changed - here it is again', res[74]   # no Up next on a host
 print('PASS Remote Control queue: add (song, album), list, move, remove, clear, stale version refused')

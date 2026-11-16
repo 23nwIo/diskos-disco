@@ -52,7 +52,9 @@ The **Queue** tab shows what plays next, the same list MPD clients see: the song
 Disc (its Add to queue, from an MPD client or from this page), then **Up next**, the rest of the list the player plays
 (in shuffled order in Shuffle; the first 200, with a count of the rest). Tap a queued or upcoming song to play it now.
 The **⋯** on a queued song moves it (to the top, up, down, to the end) or removes it; **Clear queue** removes all
-queued songs (Up next stays). The song **⋯**, and the **⋯** of an album or artist, have **Add to the queue**.
+queued songs (Up next stays). Up next is the player's own list and cannot be reordered (the player has no command
+for it); its **⋯** has **Add to the queue**, which copies that exact song (also a CUE/ISO track) into the queue,
+where it can be moved. The song **⋯**, and the **⋯** of an album or artist, have **Add to the queue**.
 
 While the tab is open the page asks for the list's version every second and reads the list again when it changed (a
 song added on the Disc, the next song started, ...). Every change sends the version it was made on; when the list
@@ -153,7 +155,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/volume` with `value=0..120` or `step=-120..120` | Absolute or relative volume. |
 | `POST api/balance` with `value=-10..10` | Left/right balance (negative = left), applied and saved as Settings > Audio > Balance. |
 | `GET api/queue` (`limit=1..500` Up next rows, default 100) | `{"ok":true,"ver":N,"shuffle":…,"items":[{"k":"cur"\|"queue"\|"next"\|"other","i":queue index,"b":Up next row id,"t":"title","a":"artist","f":"file name","d":ms,"st":true for a station}],"more":N}` |
-| `POST api/queue` with `action=add` and `kind=song&song_id=N`, `kind=album&name=…` or `kind=artist&name=…` | Adds to the end of the queue (`{"ok":true,"added":N}`). |
+| `POST api/queue` with `action=add` and `kind=song&song_id=N`, `kind=album&name=…` or `kind=artist&name=…` or `kind=next&b=ID` (an Up next row) | Adds to the end of the queue (`{"ok":true,"added":N}`). |
 | `POST api/queue` with `ver` and `action=jump&kind=queue&i=N` \| `action=jump&kind=next&b=ID` \| `action=remove&i=N` \| `action=move&i=N&to=M` \| `action=clear` | Refused with "The queue changed" when `ver` is not the list's version any more. |
 | `POST api/outputs` with one of `aux=0/1`, `bt=0/1`, `vol_aux=0..120`, `vol_bt=0..120`, `auto=0..2`, `codec=0..4` (0 SBC, 1 AAC, 2 LDAC, 3 aptX, 4 aptX HD) | Settings > Audio > Outputs (own player only; refused with the reason otherwise). `api/state` reports `"outputs":{"aux","bt","vol_aux","vol_bt","bt_ready","auto","jack","bal","codec" (-1 none),"codecs":[ids offered],"switching"}`, or `null` with the stock player. |
 | `POST api/seek` with `position_ms=N` | Seek. |

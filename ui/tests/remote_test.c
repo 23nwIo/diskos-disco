@@ -131,6 +131,8 @@ static void test_core(void){
     r = req("POST", p("/api/queue"), "action=remove&ver=2&i=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_REMOVE && r.cmd.pos == 1);
     r = req("POST", p("/api/queue"), "action=clear&ver=2"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_CLEAR);
     r = req("POST", p("/api/queue"), "action=add&kind=song&song_id=9"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_ADD && r.cmd.item == RMT_I_SONG && r.cmd.song_id == 9);
+    r = req("POST", p("/api/queue"), "action=add&kind=next&b=812"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_Q_ADD && r.cmd.item == -1 && r.cmd.id == 812);
+    CHECK(req("POST", p("/api/queue"), "action=add&kind=next").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/queue"), "action=add&kind=album&name=Blue%20Album"); CHECK(r.kind == RMT_R_CMD && r.cmd.item == RMT_I_ALBUM && !strcmp(r.cmd.name, "Blue Album"));
     CHECK(req("POST", p("/api/queue"), "action=remove&i=1").kind == RMT_R_BAD_PARAM);             /* no ver */
     CHECK(req("POST", p("/api/queue"), "action=jump&ver=1&kind=next").kind == RMT_R_BAD_PARAM);
@@ -288,7 +290,7 @@ static rmt_cmd_t g_last; static int g_ncmd;
 /* stand-in queue: 4 queued songs, 30 Up Next rows; g_qver moves on every change */
 static char g_q[8][32] = { "Queued one", "Queued <two>", "Queued three", "Queued four" }; static int g_qn = 4; static unsigned g_qver = 1;
 static char *fake_queue(const rmt_cmd_t *c, const char **why){
-    if(c->sub == RMT_Q_ADD){ if(g_qn < 8){ snprintf(g_q[g_qn++], 32, "Added %ld", c->song_id); g_qver++; } return strdup("{\"ok\":true,\"added\":1}"); }
+    if(c->sub == RMT_Q_ADD){ if(g_qn < 8){ if(c->item == -1) snprintf(g_q[g_qn++], 32, "Next %ld", c->id - 5); else snprintf(g_q[g_qn++], 32, "Added %ld", c->song_id); g_qver++; } return strdup("{\"ok\":true,\"added\":1}"); }
     if(c->sub != RMT_Q_LIST && (unsigned)c->arg != g_qver){ *why = "The queue changed - here it is again"; return NULL; }
     if(c->sub == RMT_Q_REMOVE && c->pos < g_qn){ memmove(g_q[c->pos], g_q[c->pos + 1], (size_t)(g_qn - c->pos - 1) * 32); g_qn--; g_qver++; }
     if(c->sub == RMT_Q_MOVE && c->pos < g_qn && c->offset < g_qn){ char t[32]; memcpy(t, g_q[c->pos], 32);

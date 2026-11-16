@@ -71,8 +71,8 @@ typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, R
 typedef enum { RMT_OUT_AUX = 1, RMT_OUT_BT, RMT_OUT_VOL_AUX, RMT_OUT_VOL_BT, RMT_OUT_AUTO, RMT_OUT_CODEC } rmt_out_t;
 /* GET api/queue [limit=1..500 Up Next rows, default 100]: the list (JSON answer). POST api/queue with ver (the list's
  * "ver", refused when it changed since: the page reads the list again) and action=jump (kind=queue i=N | kind=next b=ID)
- * | remove (i) | move (i, to) | clear; action=add (no ver) kind=song song_id | kind=album name | kind=artist name adds
- * to the end of the queue. cmd: sub = action, item = 1 queue / 2 next, pos = i, id = b, offset = to,
+ * | remove (i) | move (i, to) | clear; action=add (no ver) kind=song song_id | kind=album name | kind=artist name | kind=next b=ID
+ * (an Up next row: item -1, id = b) adds to the end of the queue. cmd: sub = action, item = 1 queue / 2 next, pos = i, id = b, offset = to,
  * arg = ver (list: limit). GET api/state?q=1 also reports queue_ver (only asked for while a page shows the queue). */
 typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR, RMT_Q_ADD } rmt_queue_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
