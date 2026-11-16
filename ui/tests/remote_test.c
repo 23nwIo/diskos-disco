@@ -83,7 +83,7 @@ static void test_party(void){
                                                                || preq("POST", no[i], "value=1&preset=1&confirm=1&g=abcdefgh12").kind == RMT_R_BAD_PARAM);
     CHECK(preq("GET", "/Fest_1/api/status", NULL).kind == RMT_R_NOT_FOUND && preq("GET", "/Fest_1/api/screen", NULL).kind == RMT_R_NOT_FOUND);
     CHECK(preq("GET", "/Fest_1/api/library/playlists", NULL).kind == RMT_R_CMD && preq("GET", "/Fest_1/api/library/folder?path=Music", NULL).kind == RMT_R_CMD);
-    CHECK(preq("GET", "/Fest_1/api/library/radio", NULL).kind == RMT_R_NOT_FOUND);
+    CHECK(preq("GET", "/Fest_1/api/library/radio", NULL).kind == RMT_R_NOT_FOUND && preq("GET", "/Fest_1/api/library/favorites", NULL).kind == RMT_R_NOT_FOUND);
     CHECK(preq("POST", "/Fest_1/api/play_item", "kind=song&song_id=1").kind == RMT_R_NOT_FOUND);
     CHECK(preq("POST", "/Fest_1/api/play_item", "kind=radio_hit&pos=1&url=http%3A%2F%2Fx").kind == RMT_R_CMD);
     /* the host's settings */

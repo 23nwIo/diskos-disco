@@ -261,7 +261,9 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
         return *body ? 0 : -1;
     case RMT_CMD_BROWSE:
         if(c->sub == RMT_L_RADIO_HITS && !radio_ok()){ *why = "Radio is off at this party"; return -1; }
-        return remote_exec(&x, why, body);
+        if(remote_exec(&x, why, body)) return -1;
+        for(char *f = *body; f && (f = strstr(f, "\"fav\":true")); f += 10) memcpy(f, "\"fav\":0   ", 10);   /* the host's favourites stay theirs */
+        return 0;
     case RMT_CMD_RADIO_SEARCH:
         if(!radio_ok()){ *why = "Radio is off at this party"; return -1; }
         return remote_exec(&x, why, body);

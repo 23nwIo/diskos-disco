@@ -100,10 +100,12 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 **Guests** lists the guests the Disc has seen, with their names, how many songs each has queued and when they were last
 seen.
 
-Guests can browse the whole library (songs, albums, artists, playlists, favourites, folders) and add single songs,
+Guests can browse the whole library (songs, albums, artists, playlists, folders) and add single songs,
 one at a time; a file in Folders that holds several tracks (a CUE or ISO image) is added from Albums or Songs instead.
 They cannot pause, go back, seek, change the EQ, the outputs, Bluetooth, playlists or favourites, and the system page
-and every other command answer 404 on their link. Each guest's page may pick its own colour and heart or star.
+and every other command answer 404 on their link; the host's favourites are not shown. Instead each guest keeps
+favourites of their own in their browser (a song's menu: Add to your favourites; the Favourites tab). Each guest's page
+may pick its own colour and heart or star.
 
 A guest is told apart by a random id their browser keeps; a private window or another browser counts as a new guest.
 The ids, names and who queued what are kept in RAM only and start afresh after a restart. The settings are kept on

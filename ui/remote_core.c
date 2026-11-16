@@ -597,7 +597,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
         case RMT_CMD_QUEUE: ok = a.cmd.sub == RMT_Q_LIST || (a.cmd.sub == RMT_Q_ADD && (a.cmd.item == RMT_I_SONG || a.cmd.item == RMT_I_FILE)); break;
         case RMT_CMD_PLAY_ITEM: ok = a.cmd.sub == RMT_I_RADIO_HIT; break;
         case RMT_CMD_BROWSE:
-            ok = a.cmd.sub != RMT_L_RADIO;                         /* the whole library; not the host's radio favourites */
+            ok = a.cmd.sub != RMT_L_RADIO && a.cmd.sub != RMT_L_FAVORITES;   /* the whole library, not the host's favourites (guests keep their own) */
             break;
         default: break;
         }
