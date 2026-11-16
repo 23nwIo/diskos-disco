@@ -499,34 +499,54 @@ static struct {
     tf_item_t *items; int n;
 } S = { .mu = PTHREAD_MUTEX_INITIALIZER };
 static lv_timer_t *g_poll;
-/* ---- Auto-tag bookkeeping: files where nothing was found, retried at most once a day ---- */
+/* ---- Auto-tag bookkeeping: files where nothing was found, retried at most once a day ----
+ * About the card's files, so it lives on the card (<card>/.diskos/state/autotag.log, sdstate.c), not on the NAND
+ * (Jo, 2026-11-16). The old /usr/data/autotag.log is dropped at the first write: it only delays retries. */
 #ifndef TAGFIX_HOST_TEST
-#define AT_LOG "/usr/data/autotag.log"
+#include "sdstate.h"
+#define AT_OLD "/usr/data/autotag.log"
+static int at_open(char *p, size_t cap){
+    if(!sds_begin()) return 0;
+    if(sds_path(p, cap, "autotag.log") != 0){ sds_end(); return 0; }
+    return 1;
+}
+static void at_close(void){ sds_end(); }
+static void at_mkdir(void){ sds_mkdir(); unlink(AT_OLD); }
 #else
-#define AT_LOG TF_TMP "/autotag.log"
+static int at_open(char *p, size_t cap){ snprintf(p, cap, "%s", TF_TMP "/autotag.log"); return 1; }
+static void at_close(void){}
+static void at_mkdir(void){}
 #endif
 static int at_recently_tried(const char *path){
-    FILE *f = fopen(AT_LOG, "r"); if(!f) return 0;
+    char at_log[512];
+    if(!at_open(at_log, sizeof at_log)) return 1;            /* no card (or not now): nothing to tag anyway */
+    FILE *f = fopen(at_log, "r");
+    if(!f){ at_close(); return 0; }
     char line[700]; long now = (long)time(NULL); int hit = 0;
     while(fgets(line, sizeof line, f)){
         char *tab = strchr(line, '\t'); if(!tab) continue;
         line[strcspn(line, "\n")] = 0;
         if(!strcmp(tab + 1, path) && now - atol(line) < 86400) hit = 1;
     }
-    fclose(f); return hit;
+    fclose(f); at_close(); return hit;
 }
 static void at_log_attempt(const char *path){
+    char at_log[512], at_new[530];
+    if(!at_open(at_log, sizeof at_log)) return;
+    at_mkdir();
+    snprintf(at_new, sizeof at_new, "%s.new", at_log);
     struct stat st;
-    if(stat(AT_LOG, &st) == 0 && st.st_size > 64 * 1024){    /* keep it small: the newest ~200 entries */
+    if(stat(at_log, &st) == 0 && st.st_size > 64 * 1024){    /* keep it small: the newest ~200 entries */
         uint8_t *b; size_t n;
-        if(read_file(AT_LOG, &b, &n, 256 * 1024) == 0){
+        if(read_file(at_log, &b, &n, 256 * 1024) == 0){
             size_t keep = n / 3, i = n - keep; while(i < n && b[i - 1] != '\n') i++;
-            FILE *w = fopen(AT_LOG ".new", "w"); if(w){ fwrite(b + i, 1, n - i, w); fclose(w); rename(AT_LOG ".new", AT_LOG); }
+            FILE *w = fopen(at_new, "w"); if(w){ fwrite(b + i, 1, n - i, w); fclose(w); rename(at_new, at_log); }
             free(b);
         }
     }
-    FILE *f = fopen(AT_LOG, "a"); if(!f) return;
-    fprintf(f, "%ld\t%s\n", (long)time(NULL), path); fclose(f);
+    FILE *f = fopen(at_log, "a");
+    if(f){ fprintf(f, "%ld\t%s\n", (long)time(NULL), path); fclose(f); }
+    at_close();
 }
 static int net_online(void){                                 /* a default route over Wi-Fi (cheap /proc read) */
     FILE *f = fopen("/proc/net/route", "r"); if(!f) return 0;

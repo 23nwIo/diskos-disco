@@ -70,6 +70,11 @@
 #include "discshelf.h"
 int ds_fetch_entry(int argc,char **argv);
 #include "braun.h"
+/* mq_ui's stdout/stderr: RAM, never the NAND (Jo, 2026-11-16: logs go to /tmp); lost at a reboot */
+#ifndef BOOT_LOG_PATH
+#define BOOT_LOG_PATH "/tmp/diskos_boot.log"
+#endif
+#define CRASH_FLASH_LOG "/usr/data/diskos_crash.log"   /* fatal signals only (crashlog.c's file): rare, and they must survive */
 
 static lv_indev_t *g_touch = NULL;
 static _Atomic int g_net_up = 0;          /* Wi-Fi has a link/address (status poll, every 3 s) */
@@ -599,6 +604,7 @@ static int storage_media_local(void);
 static int storage_host_confirmed(void);
 static int sd_return_needs_mount(void);     /* the returned card is ext2/3/4, which the stock player cannot mount */
 static void ext_return_start(void);        /* starts the worker that mounts it (ext_return_thread) */
+#define COLDPLUG_LOG "/tmp/coldplug.log"
 static void coldplug_log(const char *msg);
 void settings_restart_now(void);           /* settings.c: the Restart path (drain, sync, reboot) */
 /* Return of an ext2/3/4 card from USB storage, shared with ext_return_thread. allow: the worker may mount (cleared,
@@ -1651,6 +1657,9 @@ static int      g_book_resume_done;      /* 1 once resume is applied (or not nee
 static int      g_book_confirmed;        /* 1 once the player reports THIS book as the current track */
 static uint32_t g_book_deadline;         /* give up waiting for the book to load by this tick */
 static uint32_t g_book_last_save;        /* last checkpoint tick (throttles SD writes) */
+#define BOOK_SAVE_MS 30000               /* a checkpoint every 30 s while playing, one at each pause (bookmarks.c, on the card) */
+static int      g_book_pause_save;       /* paused since the last checkpoint: write one */
+static uint32_t g_book_retry;            /* a failed checkpoint: not again before this tick (0 none) */
 static int      g_book_was_playing;      /* previous play state, to catch a pause->resume for smart rewind */
 static uint32_t g_book_pause_tick;       /* when the book was paused (0 = not paused) */
 static long     g_book_last_pos = -1;    /* last fresh position, to spot a loop/restart (big backward jump) */
@@ -1663,16 +1672,20 @@ static uint32_t g_sleep_seek_guard;      /* hold the sleep pause off until this 
 /* End the current book session (if any). Called on EVERY explicit playback change (new list play, next,
  * prev) so a queued resume can't seek a track the user switched away from, and checkpointing stops the
  * moment the book is no longer the deliberate context. Keeps whatever was last saved. */
-void ui_cancel_book_resume(void){
-    /* Final checkpoint before dropping the session: switching book/track/menu otherwise loses up to a
-     * full ~10s throttle window of progress. Only when the position is confirmed and belongs to THIS
-     * book (the player may already be loading the next track when this runs). */
+/* Checkpoint the book now (power off, the end of a session): only when the position is confirmed and belongs to
+ * THIS book (the player may already be loading the next track when this runs). */
+void ui_book_flush(void){
     if(g_book_sess[0] && g_book_ckpt_ok){
         track_state_t s; ipc_get_state(&s);
         if(s.have_track && strcmp(s.path, g_book_sess) == 0 && s.position_ms > 0
            && (int32_t)(s.pos_seq - s.path_seq) > 0)
             mdb_book_save(g_book_sess, g_book_sess, s.position_ms, 0);
     }
+}
+void ui_cancel_book_resume(void){
+    /* Final checkpoint before dropping the session: switching book/track/menu otherwise loses up to a
+     * full throttle window of progress. */
+    ui_book_flush();
     g_book_sess[0] = 0;
     g_book_resume_ms = -1;
     g_book_resume_done = 0;
@@ -1814,7 +1827,7 @@ static void book_tick(lv_timer_t *t){
             if(ui_seek_to(rt) != 0) return;                     /* send failed -> retry next tick, stay PENDING (never mark done without a successful seek, or checkpoint could save ~0 over the bookmark) */
         }
         g_book_resume_done = 1;
-        g_book_last_save = now;                             /* first checkpoint ~10s from now, after the seek settles */
+        g_book_last_save = now;                             /* first checkpoint a window from now, after the seek settles */
         g_book_was_playing = ui_is_playing();
         return;
     }
@@ -1823,7 +1836,7 @@ static void book_tick(lv_timer_t *t){
      * whether or not the freshness gate below passes). */
     {
         int np = ui_is_playing();
-        if(g_book_was_playing && !np){ g_book_pause_tick = now; }                 /* just paused */
+        if(g_book_was_playing && !np){ g_book_pause_tick = now; g_book_pause_save = 1; }   /* just paused */
         else if(!g_book_was_playing && np && g_book_pause_tick){                  /* just resumed */
             long rw = ui_smart_rewind_ms((long)(lv_tick_elaps(g_book_pause_tick) / 1000u));  /* unsigned divide: no negative on a very long pause */
             if(rw > 0){ long t = st.position_ms - rw; if(t < 0) t = 0; ui_seek_to(t); }
@@ -1870,13 +1883,18 @@ static void book_tick(lv_timer_t *t){
         if(labs(st.position_ms - g_book_resume_target) <= 3000) g_book_ckpt_ok = 1;
         else return;
     }
-    if(!ui_is_playing()) return;                            /* paused (not EOF - that's handled before the freshness gate): don't refresh the bookmark timestamp, keeps idle time accurate for the reopen rewind */
-    if((int32_t)(now - g_book_last_save) < 10000) return;   /* throttle SD writes to ~10s */
+    /* paused (not EOF - that's handled before the freshness gate): one checkpoint at the pause, then none, so the
+     * bookmark's time stays the pause time (the idle time for the reopen rewind) */
+    int paused = !ui_is_playing();
+    if(paused && !g_book_pause_save) return;
+    if(!paused && (int32_t)(now - g_book_last_save) < BOOK_SAVE_MS) return;   /* throttle SD writes */
+    if(g_book_retry && (int32_t)(now - g_book_retry) < 0) return;
     /* v1 does NOT auto-mark completion: its ~3s window races the track-advance that ends the session
      * and a UI stall can skip it, so a book simply resumes where it stopped (the user can seek back).
      * The COMPLETED column stays for a future explicit "mark finished" control - books.c already treats
      * completed as start-from-zero. */
-    if(mdb_book_save(g_book_sess, g_book_sess, st.position_ms, 0) == 0) return;   /* write failed -> retry next tick, don't advance the throttle (else the bookmark is silently dropped for ~10s) */
+    if(mdb_book_save(g_book_sess, g_book_sess, st.position_ms, 0) == 0){ g_book_retry = now + 2000; return; }   /* write failed -> retry in 2 s, don't advance the throttle (else the bookmark is silently dropped for a whole window) */
+    g_book_retry = 0; g_book_pause_save = 0;
     g_book_last_save = now;
 }
 
@@ -2162,7 +2180,7 @@ static void crash_hex(char *b, int *i, const char *tag, unsigned long v){
 volatile int g_crumb[8]; volatile int g_crumb_n;
 void crash_crumb(int screen){ g_crumb[g_crumb_n & 7] = screen; g_crumb_n++; }
 static void crash_log(int sig, siginfo_t *si, void *ucv){
-    int fd = open("/usr/data/diskos_boot.log", O_WRONLY|O_APPEND);
+    int fd = open(CRASH_FLASH_LOG, O_WRONLY|O_APPEND|O_CREAT, 0644);
     if(fd>=0){
         char b[256]; int i = 0;
         const char *m = "=== diskos CAUGHT FATAL SIGNAL "; while(*m) b[i++] = *m++;
@@ -2188,7 +2206,7 @@ static void crash_log(int sig, siginfo_t *si, void *ucv){
  * Async-signal-safe only: open/read/write/close. */
 static void term_log(int sig, siginfo_t *si, void *ucv){
     (void)ucv;
-    int fd = open("/usr/data/diskos_boot.log", O_WRONLY|O_APPEND);
+    int fd = open(BOOT_LOG_PATH, O_WRONLY|O_APPEND);
     if(fd >= 0){
         char b[400]; int i = 0;
         const char *m = "=== diskos TERMINATED by signal "; while(*m) b[i++] = *m++;
@@ -2587,12 +2605,12 @@ static void *log_maintenance(void *unused){
         /* Both streams share one append descriptor. Lock in a fixed order. */
         flockfile(stdout);flockfile(stderr);
         fflush(stdout);fflush(stderr);
-        diskos_log_rotate("/usr/data/diskos_boot.log",256*1024);
+        diskos_log_rotate(BOOT_LOG_PATH,256*1024);
         funlockfile(stderr);funlockfile(stdout);
-        diskos_log_rotate("/usr/data/coldplug.log",64*1024);
-        diskos_log_rotate("/usr/data/volup_boot.log",64*1024);
-        diskos_log_rotate("/usr/data/diskos_rmguard.log",64*1024);
-        diskos_log_rotate("/usr/data/sdformat.log",64*1024);
+        diskos_log_rotate(COLDPLUG_LOG,64*1024);
+        diskos_log_rotate("/usr/data/volup_boot.log",64*1024);      /* only with /usr/data/volup_dbg */
+        diskos_log_rotate("/usr/data/diskos_rmguard.log",64*1024);  /* written by the rootfs rm guard */
+        diskos_log_rotate(SDF_LOG,64*1024);
     }
     return NULL;
 }
@@ -2605,7 +2623,7 @@ static void log_maintenance_start(void){
     pthread_attr_destroy(&attr);
 }
 static void coldplug_log(const char *msg){
-    FILE *f = fopen("/usr/data/coldplug.log", "a");
+    FILE *f = fopen(COLDPLUG_LOG, "a");
     if(f){ fprintf(f, "%ld %s\n", (long)time(NULL), msg); fclose(f); }
 }
 /* Is the mass-storage gadget exporting the card to a USB host (so the host owns /dev/mmcblk0 and a
@@ -3083,9 +3101,6 @@ static int player_config_absent_without_card(void){
 #endif
 #ifndef PLAYER_COMM_NAME
 #define PLAYER_COMM_NAME "mq_player"   /* what the launcher becomes after exec; overridden by tests */
-#endif
-#ifndef BOOT_LOG_PATH
-#define BOOT_LOG_PATH "/usr/data/diskos_boot.log"
 #endif
 #ifndef LAUNCH_DEADLINE_S
 #define LAUNCH_DEADLINE_S  20      /* hard cap on the WHOLE preparation path before we exec stock */
@@ -3615,8 +3630,8 @@ int main(int argc, char **argv){
         (void)write(2,msg,sizeof msg-1);return 75;
     }
     /* Preserve recent evidence across boots; keep open append descriptors valid. */
-    diskos_log_rotate("/usr/data/diskos_boot.log",256*1024);
-    freopen("/usr/data/diskos_boot.log", "a", stderr);
+    diskos_log_rotate(BOOT_LOG_PATH,256*1024);
+    freopen(BOOT_LOG_PATH, "a", stderr);
     dup2(fileno(stderr), fileno(stdout));
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IOLBF, 0);
@@ -4101,7 +4116,7 @@ int main(int argc, char **argv){
                         if(rim_state==RIM_IDLE && screen_current()==SCR_ALBUMWALL && sy>=106 && !BACK_EDGE(sx))
                             albumwall_drag_begin(sx);   /* CENTRE press -> linear drag. Rim-band press is rim-only, and */
                     }                                   /* the left edge is reserved for the back-swipe (not armed as a drag) */
-                    fprintf(stderr,"TAP x=%d y=%d\n",sx,sy); fflush(stderr);
+                    if(g_dbg){ fprintf(stderr,"TAP x=%d y=%d\n",sx,sy); fflush(stderr); }   /* only with /usr/data/touch_dbg */
                     if(g_dbg && g_dbgdot){
                         lv_obj_set_pos(g_dbgdot, sx-13, sy-13);
                         lv_obj_clear_flag(g_dbgdot, LV_OBJ_FLAG_HIDDEN);
@@ -4324,7 +4339,7 @@ int main(int argc, char **argv){
                 if(!pk_down) pk_saved = 0;
                 else if(!pk_saved && lv_tick_elaps(pk_since) >= (uint32_t)(hold > 2500 ? hold - 2500 : hold / 2)){
                     pk_saved = 1;
-                    stats_flush(); usage_save();
+                    stats_flush(); ui_book_flush(); usage_save();
                     char *sync_argv[] = { "sync", NULL }; pid_t sp = 0;
                     if(pk_sync <= 0 && command_spawn(&sp, sync_argv) == 0 && sp > 0) pk_sync = sp;
                     fprintf(stderr, "power key held: saved and flushed before the player's power-off\n"); fflush(stderr);

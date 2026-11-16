@@ -7,7 +7,7 @@
  * Asked from Files > USB drive. The player is asked for its USB host port (0642 5, the gadget selector its USB Audio
  * output uses), every file system found on /dev/sd* is mounted READ-ONLY under /tmp/usbdrive/<dev> by a worker
  * thread, and Eject (or leaving Playback) unmounts and hands the port back (0642 0). An export remounts one volume
- * read-write for its run only (usbdrive_set_rw). Log: /usr/data/usbdrive.log. */
+ * read-write for its run only (usbdrive_set_rw). Log: /tmp/usbdrive.log. */
 
 #define UD_ROOT "/tmp/usbdrive"
 #define UD_MAX  8

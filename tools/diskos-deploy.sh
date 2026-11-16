@@ -43,7 +43,7 @@ REMOTE_MD5="$("${SSH[@]}" "root@$IP" \
 "${SSH[@]}" "root@$IP" 'sh -s' <<'REMOTE'
 mv -f /usr/data/mq_ui.new /usr/data/mq_ui || { echo "ERROR: could not swap in the new binary" >&2; exit 1; }
 killall -9 mq_ui 2>/dev/null
-setsid /usr/data/mq_ui </dev/null >>/usr/data/diskos_boot.log 2>&1 &
+setsid /usr/data/mq_ui </dev/null >>/tmp/diskos_boot.log 2>&1 &
 # poll up to ~10s. Sleep FIRST, then check, so a check is always the last action before we decide
 # (no trailing sleep that could miss a process which came up in the final second).
 ok=0

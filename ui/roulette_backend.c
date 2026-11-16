@@ -241,7 +241,7 @@ fail:
 /* ---- from the app's runtime.c: the memory check and a small log ---- */
 void runtime_log(const char *message){
     fprintf(stderr,"Album Roulette: %s\n",message);
-    const char *path="/usr/data/album-roulette.log";
+    const char *path="/tmp/album-roulette.log";   /* RAM: logs go to /tmp */
     struct stat st;const char *mode=(!stat(path,&st) && st.st_size>65536)?"w":"a";
     FILE *f=fopen(path,mode);if(!f)return;
     fprintf(f,"%ld %s\n",(long)time(NULL),message);fclose(f);

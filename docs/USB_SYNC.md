@@ -45,7 +45,7 @@ scanner ignores `synclog/` and `_changed<N>/` on the SD card root.
 ### Logs
 
 - Every run writes a log on the **target**: `<target root>/synclog/YYYY-MM-DD_HHMMSS-import.log` (or `-export`).
-- Drive detection and mounting logs to `/usr/data/usbdrive.log` (including the `/proc/mounts` lines for `/dev/sd*`).
+- Drive detection and mounting logs to `/tmp/usbdrive.log` (including the `/proc/mounts` lines for `/dev/sd*`).
 
 ## File systems
 
@@ -65,7 +65,7 @@ which that sweep does not match, and takes a FAT drive back if the player mounte
 diskOS requests the host port with the player IPC frame `0642000C0005` and releases it with `0642000C0000` (not while
 the USB audio output is selected). Device-verified 2026-11-14: `0642 5` alone takes the host port (card reader behind
 a hub enumerated as sdb, output route stayed on the headphones).
-If no drive appears, check `/usr/data/usbdrive.log` and `dmesg`.
+If no drive appears, check `/tmp/usbdrive.log` and `dmesg`.
 
 ## Not yet
 

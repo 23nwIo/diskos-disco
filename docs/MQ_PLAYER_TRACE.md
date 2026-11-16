@@ -20,10 +20,10 @@ reboot
 There is nothing in the UI. On every start with the switch file the launcher (inside mq_ui, `/usr/data/mq_player`)
 writes the library carried in mq_ui to `/usr/data/diskos-trace.so` and starts the stock player with
 `LD_PRELOAD=/usr/data/diskos-trace.so` (ui/trace_launch.h, called from `player_launch_prepare()` in ui/main.c). One
-line per start goes to `/usr/data/diskos_boot.log`:
+line per start goes to `/tmp/diskos_boot.log`:
 
 ```sh
-grep "player trace" /usr/data/diskos_boot.log | tail -3
+grep "player trace" /tmp/diskos_boot.log | tail -3
 ```
 
 `launcher: player trace on` is the normal case. If a traced start never got as far as loading the library (the glibc

@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 #include "sdio.h"
 #include "musicdb.h"
+#include "bookmarks.h"
 #include "fwcaps.h"
 #include "sqlite3.h"
 #define JSMN_HEADER      /* declarations only; the implementation lives in ipc.c */
@@ -1640,86 +1641,101 @@ int mdb_is_book_path(const char *path){
     return n > 4 && !strcasecmp(path + n - 4, ".m4b");
 }
 
-/* List audiobooks (one book per .m4b), each joined to its saved progress. Ordered so a book with the
+/* Book bookmarks live on the SD card (bookmarks.c). Those still in song.db's BOOK_PROGRESS (written there before
+ * 2026-11-16) move to the card the first time a card without a bookmark file is seen: copied, then deleted from
+ * song.db once the card has them, so the NAND is not written again. */
+static void books_import(void){
+    if(bm_state(NULL) != 0) return;                     /* no card, or the card has its file already */
+    sqlite3 *d = db_read(); if(!d) return;
+    sqlite3_stmt *st;
+    if(sqlite3_prepare_v2(d, "SELECT BOOK_KEY,MEMBER_PATH,POSITION_MS,COMPLETED,UPDATED_AT FROM BOOK_PROGRESS;", -1, &st, NULL) != SQLITE_OK)
+        return;                                         /* no such table: nothing to move */
+    int n = 0, cap = 0; char **bk = NULL, **mb = NULL; long *pos = NULL, *upd = NULL; int *done = NULL, ok = 1;
+    while(ok && sqlite3_step(st) == SQLITE_ROW){
+        if(n == cap){
+            cap = cap ? cap * 2 : 16;
+            char **a = realloc(bk, cap * sizeof *a); if(a) bk = a;
+            char **b = realloc(mb, cap * sizeof *b); if(b) mb = b;
+            long *c = realloc(pos, cap * sizeof *c); if(c) pos = c;
+            long *e = realloc(upd, cap * sizeof *e); if(e) upd = e;
+            int *f = realloc(done, cap * sizeof *f); if(f) done = f;
+            if(!a || !b || !c || !e || !f){ ok = 0; break; }
+        }
+        bk[n] = strdup(colt(st, 0)); mb[n] = strdup(colt(st, 1));
+        pos[n] = (long)sqlite3_column_int64(st, 2); done[n] = sqlite3_column_int(st, 3); upd[n] = (long)sqlite3_column_int64(st, 4);
+        n++;
+        if(!bk[n - 1] || !mb[n - 1]) ok = 0;
+    }
+    sqlite3_finalize(st);
+    if(ok && n > 0 && bm_put_many(n, (const char *const *)bk, (const char *const *)mb, pos, done, upd)){
+        sqlite3 *w = db();
+        if(w && sqlite3_exec(w, "DELETE FROM BOOK_PROGRESS;", 0, 0, 0) == SQLITE_OK)
+            fprintf(stderr, "books: %d bookmarks moved from song.db to the card\n", n);
+    }
+    for(int i = 0; i < n; i++){ free(bk[i]); free(mb[i]); }
+    free(bk); free(mb); free(pos); free(upd); free(done);
+}
+
+/* List audiobooks (one book per .m4b), each with its saved progress (bookmarks.c). Ordered so a book with the
  * most recent bookmark leads ("continue listening"), then by add time. */
 /* Returns the number of books (>=0), or -1 on a DB/read error (db unavailable, prepare failed, or a step
  * error). A caller must distinguish -1 (show a retry state) from 0 (genuinely no audiobooks), or a
  * transient DB failure looks like an empty library. */
 int mdb_books(book_t *out, int max){
     if(max <= 0) return 0;
+    books_import();
     sqlite3 *d = db_read(); if(!d) return -1;
     sqlite3_stmt *st;
     const char *sql =
-        "SELECT S.ID, IFNULL(S.TITLE,IFNULL(S.NAME,'Untitled')), IFNULL(S.ARTIST,''), S.PATH, "
-        "IFNULL(B.POSITION_MS,0), IFNULL(B.COMPLETED,0), IFNULL(S.DURATION,0) "
-        "FROM BOOKS S LEFT JOIN BOOK_PROGRESS B ON B.BOOK_KEY = S.PATH "
-        "ORDER BY IFNULL(B.UPDATED_AT,0) DESC, IFNULL(S.ADD_TIME,0) DESC, S.ID DESC;";
+        "SELECT S.ID, IFNULL(S.TITLE,IFNULL(S.NAME,'Untitled')), IFNULL(S.ARTIST,''), S.PATH, IFNULL(S.DURATION,0) "
+        "FROM BOOKS S ORDER BY IFNULL(S.ADD_TIME,0) DESC, S.ID DESC;";
     if(sqlite3_prepare_v2(d, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    long *upd = malloc((size_t)max * sizeof *upd);
+    if(!upd){ sqlite3_finalize(st); return -1; }
     int n = 0, rc;
     while(n < max && (rc = sqlite3_step(st)) == SQLITE_ROW){
-        book_t *b = &out[n++];
+        book_t *b = &out[n];
         b->id = sqlite3_column_int(st, 0);
         snprintf(b->title,  MDB_STR, "%s", colt(st, 1));
         snprintf(b->author, MDB_STR, "%s", colt(st, 2));
         snprintf(b->path, sizeof b->path, "%s", colt(st, 3));
-        b->position_ms = (long)sqlite3_column_int64(st, 4);
-        b->completed   = sqlite3_column_int(st, 5);
-        b->duration_ms = (long)sqlite3_column_int64(st, 6);
+        b->duration_ms = (long)sqlite3_column_int64(st, 4);
+        b->position_ms = 0; b->completed = 0; upd[n] = 0;
+        if(bm_get(b->path, NULL, 0, &b->position_ms, &b->completed, &upd[n]) != 1){ b->position_ms = 0; b->completed = 0; upd[n] = 0; }
         trim(b->title); trim(b->author);
+        n++;
     }
     int err = (n == 0 && rc != SQLITE_DONE && rc != SQLITE_ROW);   /* first step errored (not "no rows") -> report as error */
     sqlite3_finalize(st);
+    /* most recent bookmark first; stable, so the add-time order stays within equal times */
+    for(int i = 1; i < n; i++){
+        book_t t = out[i]; long u = upd[i]; int j = i;
+        while(j > 0 && upd[j - 1] < u){ out[j] = out[j - 1]; upd[j] = upd[j - 1]; j--; }
+        out[j] = t; upd[j] = u;
+    }
+    free(upd);
     return err ? -1 : n;
 }
 
 /* Saved resume position for a book. Returns 1 (fills member_out/position_ms) if a bookmark exists. */
-/* Returns 1 = bookmark found, 0 = no bookmark, -1 = read error (DB unavailable / prepare failed). A -1
+/* Returns 1 = bookmark found, 0 = no bookmark, -1 = read error (no card / unreadable). A -1
  * must NOT be treated as "start from zero": a caller that then checkpoints would erase a real bookmark
  * that was only temporarily unreadable. */
 int mdb_book_progress(const char *key, char *member_out, int member_cap, long *position_ms, int *completed_out, long *updated_out){
     if(completed_out) *completed_out = 0;
     if(updated_out) *updated_out = 0;
     if(!key) return -1;
-    sqlite3 *d = db_read(); if(!d) return -1;
-    sqlite3_stmt *st; int found = 0;
-    /* read POSITION, COMPLETED and UPDATED_AT together so a caller can decide resume-vs-restart from the
-     * LATEST saved state (the book may have finished since the list was built) and how long it's been idle. */
-    if(sqlite3_prepare_v2(d, "SELECT MEMBER_PATH,POSITION_MS,COMPLETED,UPDATED_AT FROM BOOK_PROGRESS WHERE BOOK_KEY=? LIMIT 1;", -1, &st, NULL) != SQLITE_OK)
-        return -1;
-    sqlite3_bind_text(st, 1, key, -1, SQLITE_STATIC);
-    int rc = sqlite3_step(st);
-    if(rc == SQLITE_ROW){
-        if(member_out && member_cap > 0) snprintf(member_out, (size_t)member_cap, "%s", colt(st, 0));
-        if(position_ms) *position_ms = (long)sqlite3_column_int64(st, 1);
-        if(completed_out) *completed_out = sqlite3_column_int(st, 2);
-        if(updated_out) *updated_out = (long)sqlite3_column_int64(st, 3);
-        found = 1;
-    } else if(rc != SQLITE_DONE){
-        found = -1;   /* BUSY / IOERR etc. -> a read error, not "no bookmark" */
-    }
-    sqlite3_finalize(st);
-    return found;
+    books_import();
+    return bm_get(key, member_out, member_cap, position_ms, completed_out, updated_out);
 }
 
-/* Checkpoint a book's position (upsert). Called periodically during playback and on pause/exit.
- * Returns 1 if the row was actually written, 0 on any failure (so the caller can retry rather than
+/* Checkpoint a book's position on the card. Called during playback and on pause/exit.
+ * Returns 1 if it was actually written, 0 on any failure (so the caller can retry rather than
  * advance its save-throttle timestamp and silently drop the bookmark). */
 int mdb_book_save(const char *key, const char *member_path, long position_ms, int completed){
     if(!key || !member_path) return 0;
-    sqlite3 *d = db(); if(!d) return 0;
-    sqlite3_stmt *st;
-    const char *sql =
-        "INSERT INTO BOOK_PROGRESS(BOOK_KEY,MEMBER_PATH,POSITION_MS,UPDATED_AT,COMPLETED) VALUES(?1,?2,?3,?4,?5) "
-        "ON CONFLICT(BOOK_KEY) DO UPDATE SET MEMBER_PATH=?2,POSITION_MS=?3,UPDATED_AT=?4,COMPLETED=?5;";
-    if(sqlite3_prepare_v2(d, sql, -1, &st, NULL) != SQLITE_OK) return 0;
-    sqlite3_bind_text(st, 1, key, -1, SQLITE_STATIC);
-    sqlite3_bind_text(st, 2, member_path, -1, SQLITE_STATIC);
-    sqlite3_bind_int64(st, 3, position_ms < 0 ? 0 : position_ms);
-    sqlite3_bind_int64(st, 4, (sqlite3_int64)time(NULL));
-    sqlite3_bind_int(st, 5, completed ? 1 : 0);
-    int ok = (sqlite3_step(st) == SQLITE_DONE);
-    sqlite3_finalize(st);
-    return ok;
+    books_import();
+    return bm_put(key, member_path, position_ms, completed, (long)time(NULL));
 }
 
 /* Audiobook isolation: the stock player builds the music queue as an unfiltered SELECT FROM SONG, so a
@@ -4054,6 +4070,7 @@ static int mdb_playlist_paths_moved_leased(const char *oldp, const char *newp){
       && moved_exec(d, "UPDATE OR REPLACE BOOK_PROGRESS SET " MOVED_SET("BOOK_KEY") MOVED_WHERE("BOOK_KEY") ";", oldp, newp, NULL)
       && moved_exec(d, "UPDATE BOOK_PROGRESS SET " MOVED_SET("MEMBER_PATH") MOVED_WHERE("MEMBER_PATH") ";", oldp, newp, NULL);
     if(!ok || sqlite3_exec(d, "COMMIT;", 0, 0, 0) != SQLITE_OK){ sqlite3_exec(d, "ROLLBACK;", 0, 0, 0); return 0; }
+    if(!bm_moved(oldp, newp)) fprintf(stderr, "books: bookmarks not moved along (%s -> %s)\n", oldp, newp);
     return pl;
 }
 int mdb_playlist_paths_moved(const char *oldp, const char *newp){

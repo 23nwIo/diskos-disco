@@ -6,20 +6,23 @@
  * The centre shows charge and an estimate; two pills show playback/screen-on totals.
  * All colours/fonts use theme roles. Pill backgrounds sit below the gauge.
  * The recorder runs inside the UI: one sample a minute (battery %, charging, screen on at any point in that
- * minute, playing at any point), kept in RAM for a little over a day (all the screen uses) and saved to
- * /usr/data/usage.bin every 10 minutes
- * (and before an auto power-off). Nothing is recorded while the clock isn't set.
+ * minute, playing at any point), kept in RAM for a little over a day (all the screen uses) and saved to the SD card,
+ * <card>/.diskos/state/usage.bin, every 10 minutes (and before a power off); no card, no save (RAM keeps it). Before
+ * 2026-11-16 it was /usr/data/usage.bin on the NAND: read once at start, deleted once the card has a copy (Jo: no
+ * recurring flash writes). Nothing is recorded while the clock isn't set.
  * Since the last full charge: two running totals (minutes playing, minutes with the screen on) and the time of that
  * charge, reset when the Disc is unplugged after reaching full (95% - the Disc rarely shows 100 - or 80% with Charging Limit on). A few bytes in
- * /usr/data/usage_charge.bin, saved with the rest. */
+ * usage_charge.bin next to it, saved with the rest. */
 #include "screens.h"
 #include "zune_dial.h"
 #include "config.h"
 #include "theme.h"
 #include "braun.h"
+#include "sdstate.h"
 #include <math.h>
 #include <stdint.h>
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,25 +54,80 @@ static void push(uint32_t t, int pct, uint8_t fl){
     if(g_n < US_CAP){ g_s[(g_head + g_n) % US_CAP] = s; g_n++; }
     else { g_s[g_head] = s; g_head = (g_head + 1) % US_CAP; }
 }
-void usage_save(void){
-    char tmp[128]; snprintf(tmp, sizeof tmp, "%s.tmp", USAGE_FILE);
-    FILE *f = fopen(tmp, "wb"); if(!f) return;
+#define USAGE_SD     "usage.bin"
+#define USAGE_CHG_SD "usage_charge.bin"
+static int g_sd_merged;                     /* the card's copy is in RAM (or the card had none) */
+static uint32_t g_add_play, g_add_scr;      /* minutes counted before that, to add to the card's totals */
+
+static size_t samples_out(char **out){
+    size_t n = 8 + (size_t)g_n * sizeof(usmp_t);
+    char *b = malloc(n); *out = b;
+    if(!b) return 0;
     uint32_t hdr[2] = { 0x31475355u /* "USG1" */, (uint32_t)g_n };
-    int ok = fwrite(hdr, sizeof hdr, 1, f) == 1;
-    for(int i = 0; ok && i < g_n; i++) ok = fwrite(at(i), sizeof(usmp_t), 1, f) == 1;
-    if(fflush(f) != 0) ok = 0;
-    fsync(fileno(f));
-    if(fclose(f) != 0) ok = 0;
-    if(ok) rename(tmp, USAGE_FILE); else unlink(tmp);
-    g_unsaved = 0;
-    snprintf(tmp, sizeof tmp, "%s.tmp", USAGE_CHG_FILE);       /* the since-full-charge totals */
-    f = fopen(tmp, "wb"); if(!f) return;
-    ok = fwrite(&g_cy, sizeof g_cy, 1, f) == 1;
-    if(fflush(f) != 0) ok = 0;
-    fsync(fileno(f));
-    if(fclose(f) != 0) ok = 0;
-    if(ok) rename(tmp, USAGE_CHG_FILE); else unlink(tmp);
+    memcpy(b, hdr, sizeof hdr);
+    for(int i = 0; i < g_n; i++) memcpy(b + 8 + (size_t)i * sizeof(usmp_t), at(i), sizeof(usmp_t));
+    return n;
 }
+/* samples from a file image; at most US_CAP of the newest; returns the count */
+static int samples_in(const char *b, size_t n, usmp_t *out){
+    uint32_t hdr[2];
+    if(n < sizeof hdr) return 0;
+    memcpy(hdr, b, sizeof hdr);
+    if(hdr[0] != 0x31475355u) return 0;
+    size_t have = (n - sizeof hdr) / sizeof(usmp_t);
+    if(have > hdr[1]) have = hdr[1];
+    size_t from = have > US_CAP ? have - US_CAP : 0;       /* more than we keep: its newest US_CAP */
+    int k = 0;
+    for(size_t i = from; i < have; i++){
+        usmp_t s; memcpy(&s, b + sizeof hdr + i * sizeof(usmp_t), sizeof s);
+        if(s.pct <= 100) out[k++] = s;
+    }
+    return k;
+}
+/* inside a lease: take the card's copy in. Its samples come first, then those recorded here since that are newer;
+ * its since-full totals stand, plus the minutes counted here - unless a full charge here started them again. */
+static void sd_merge(void){
+    char *b; size_t n; int r;
+    if((r = sds_read(USAGE_SD, &b, &n, 8 + (US_CAP + 64) * sizeof(usmp_t))) < 0) return;   /* unreadable: try again later */
+    if(r == 1){
+        usmp_t *f = malloc(US_CAP * sizeof *f), *m = malloc((size_t)g_n * sizeof *m + 1);
+        if(f && m){
+            int k = samples_in(b, n, f), mn = g_n;
+            for(int i = 0; i < mn; i++) m[i] = *at(i);
+            uint32_t last = k ? f[k - 1].t : 0;
+            g_head = g_n = 0;
+            for(int i = 0; i < k; i++) push(f[i].t, f[i].pct, f[i].fl);
+            for(int i = 0; i < mn; i++) if(m[i].t > last) push(m[i].t, m[i].pct, m[i].fl);
+        }
+        free(f); free(m); free(b);
+    }
+    if(sds_read(USAGE_CHG_SD, &b, &n, 256) == 1){
+        uschg_t t;
+        if(n >= sizeof t){
+            memcpy(&t, b, sizeof t);
+            if(t.magic == 0x31435355u && t.full_at >= g_cy.full_at){
+                t.play_min += g_add_play; t.scr_min += g_add_scr; t.full_seen |= g_cy.full_seen; g_cy = t;
+            }
+        }
+        free(b);
+    }
+    g_sd_merged = 1;
+}
+void usage_save(void){
+    if(!sds_begin()) return;                                 /* no card now: RAM keeps it, the next minute tries again */
+    if(!g_sd_merged) sd_merge();
+    char *b; size_t n = samples_out(&b);
+    int ok = g_sd_merged && n > 0 && sds_write(USAGE_SD, b, n) == 0;
+    free(b);
+    if(ok) ok = sds_write(USAGE_CHG_SD, &g_cy, sizeof g_cy) == 0;
+    sds_end();
+    if(!ok) return;
+    g_unsaved = 0;
+    /* the card has it all now: the old copies on the NAND go (once) */
+    if(unlink(USAGE_FILE) != 0 && errno != ENOENT) fprintf(stderr, "usage: remove %s: %s\n", USAGE_FILE, strerror(errno));
+    if(unlink(USAGE_CHG_FILE) != 0 && errno != ENOENT) fprintf(stderr, "usage: remove %s: %s\n", USAGE_CHG_FILE, strerror(errno));
+}
+/* at start: the old copy on the NAND, if there is one (the card's comes in later, sd_merge) */
 static void load(void){
     FILE *c = fopen(USAGE_CHG_FILE, "rb");
     if(c){ uschg_t t; if(fread(&t, sizeof t, 1, c) == 1 && t.magic == 0x31435355u) g_cy = t; fclose(c); }
@@ -228,10 +286,11 @@ void usage_tick(int screen_on, int playing){
         }
     }
     if(m != g_cur_min){
-        if(g_acc & FL_PLAY) g_cy.play_min++;
-        if(g_acc & FL_SCR)  g_cy.scr_min++;
+        if(g_acc & FL_PLAY){ g_cy.play_min++; if(!g_sd_merged) g_add_play++; }
+        if(g_acc & FL_SCR){  g_cy.scr_min++;  if(!g_sd_merged) g_add_scr++; }
         if(g_batt >= 0) push(g_cur_min * 60u, g_batt, g_acc);
         g_cur_min = m; g_acc = 0;
+        if(!g_sd_merged && sds_begin()){ sd_merge(); sds_end(); }   /* the card came: its copy first */
         if(++g_unsaved >= 10) usage_save();
     }
     g_acc |= (g_chg ? FL_CHG : 0) | (screen_on ? FL_SCR : 0) | (playing ? FL_PLAY : 0);

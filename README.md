@@ -101,7 +101,7 @@ See the [UI guide](docs/UI.md) and [build workflow](docs/DEV_WORKFLOW.md).
 - **Starts stock every time?** Hold **Volume Up** while powering on, then set **Settings › System › Controls › Default UI** to **diskOS**.
 - **Came from another diskOS build and something's off?** **Settings › System › Maintenance › Reset diskOS Settings** (music, Wi-Fi, Bluetooth and audio stay).
 - **Covers** are cached only while the SD card has 500 MB free.
-- **Suddenly see FiiO's interface?** Disco! stopped; restart. `/usr/data/diskos_boot.log` (Debug Mode SSH) says why.
+- **Suddenly see FiiO's interface?** Disco! stopped; restart. `/tmp/diskos_boot.log` (Debug Mode SSH; RAM, gone after a reboot) says why; crashes also go to `/usr/data/diskos_crash.log`.
 - **Languages:** Latin, Greek, Cyrillic, Thai, Korean, Japanese and common Chinese. No right-to-left or Indian scripts yet.
 - **Updates** come by signed SD update or a fresh install; no online updates.
 - **Bluetooth codecs and aptX are experimental.** After changing headphones, press Play again. aptX Adaptive/Lossless aren't supported. [More](docs/BLUETOOTH.md#known-limits)

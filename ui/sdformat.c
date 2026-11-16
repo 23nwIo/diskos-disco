@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 /* Format SD card, device side: the worker thread behind Settings > System > Maintenance > Format SD Card (system.c
- * draws the dialogs). Steps, each logged to /usr/data/sdformat.log (internal storage, so it survives the restart):
+ * draws the dialogs). Steps, each logged to /tmp/sdformat.log (RAM, so it survives the interface restart; not a reboot):
  *   1. ui_sd_format_unmount (main.c): our readers/writers drained, plain umount of /tmp/sdcard. Fails closed: if the
  *      card stays mounted nothing is written.
  *   2. open /dev/mmcblk0 O_RDWR|O_EXCL. The kernel refuses that while any filesystem on the card is mounted, and while
@@ -34,7 +34,6 @@
 #include <unistd.h>
 
 #define SDF_DEV "/dev/mmcblk0"
-#define SDF_LOG "/usr/data/sdformat.log"
 #define SDF_MKE2FS "/sbin/mke2fs"
 #define SDF_MKE2FS_TIMEOUT_S 900
 

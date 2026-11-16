@@ -306,6 +306,7 @@ int power_shutdown_request(void){
      * to the panel before saving usage or stopping card work. */
     ui_shutdown_screen();
     stats_flush();   /* the song playing now still counts */
+    ui_book_flush(); /* the audiobook's place (on the card, which is still mounted here) */
     usage_save();
     int result = power_shutdown_begin(&o);
     if(result != 0) ui_shutdown_hide();

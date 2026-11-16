@@ -3,6 +3,7 @@
 /* Format SD card, device worker (sdformat.c). The UI (system.c) starts it after ui_sd_format_begin() and polls it. */
 #ifndef DISKOS_SDFORMAT_H
 #define DISKOS_SDFORMAT_H
+#define SDF_LOG "/tmp/sdformat.log"   /* the format log: RAM (Jo, 2026-11-16: logs go to /tmp) */
 #include "sdformat_core.h"
 #include <stdint.h>
 

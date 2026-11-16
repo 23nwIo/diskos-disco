@@ -23,7 +23,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define UD_LOG     "/usr/data/usbdrive.log"
+#define UD_LOG     "/tmp/usbdrive.log"     /* RAM: logs go to /tmp (Jo, 2026-11-16) */
 #define UD_LOG_MAX (64 * 1024)
 #define UD_HOST_ON  "0642000C0005"
 #define UD_HOST_OFF "0642000C0000"

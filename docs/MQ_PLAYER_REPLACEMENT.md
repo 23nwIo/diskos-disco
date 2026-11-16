@@ -195,7 +195,7 @@ bottleneck, because almost every step touches hardware.
 `/usr/bin/cmd_watchdog` (ui/wd_override.h, called from ui/main.c next to the wifi_up.sh override). Any failed check
 leaves the stock tool in place; `/usr/data/diskos-no-wd-override` switches it off. The bind is RAM-only, so the Vol-Up
 stock boot always keeps the original. The log line `watchdog: ... over /usr/bin/cmd_watchdog: <result>` goes to
-`/usr/data/diskos_boot.log` (mq_ui's stderr, ui/main.c:3554). A manual check on a Disc (`mount --bind`, build `b34fb6c4…`) ran with the stock player feeding through
+`/tmp/diskos_boot.log` (mq_ui's stderr, ui/main.c:3554). A manual check on a Disc (`mount --bind`, build `b34fb6c4…`) ran with the stock player feeding through
 our tool without a reboot. Build dev-20261114-622b003 booted with the log line `... : applied` and
 `sha256sum /usr/bin/cmd_watchdog` = `b34fb6c4…` (device-checked 2026-11-14). An own player links `ui/watchdog/watchdog.c` directly instead. Replacing the file in the
 rootfs at a later flash is listed in todo.md.
@@ -214,7 +214,7 @@ on the stock player, without any UI change:
   (the player deletes `/usr/data/diskos-own-player.unstable` after 60 s; the count survives a reboot the player
   caused through the watchdog). When either runs out the switch file is renamed to `diskos-own-player.failed` and the
   stock player runs. A missing binary or a failed exec also means the stock player.
-- `/usr/data/diskos_boot.log` gets a line `launcher: own player ...` on every start.
+- `/tmp/diskos_boot.log` gets a line `launcher: own player ...` on every start.
 - The player logs every frame and decision to `/tmp/diskos-player.log` (RAM).
 
 Skeleton stage (what `diskos-player` does now): arms and feeds the hardware watchdog like the stock player (10000 ms,
