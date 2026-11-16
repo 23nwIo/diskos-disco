@@ -25,6 +25,7 @@ Targets below are proposals or verification work, not shipped features. Work bel
 
 ## Engineering validation
 
+- Device tests waiting for material Jo does not have yet (2026-11-16): the 4.4 mm balanced jack (no plug), CUE playback in the own player (no CUE files), audiobook bookmarks on the card (`.diskos/state/books.tsv`, no .m4b; docs/SD_STATE.md).
 - Measure screen-off current, large-library memory, scrolling frame pacing and Bluetooth reconnect behaviour on hardware before claiming gains.
 - Continue bounded/background database and artwork work where profiling identifies foreground stalls.
 - Reconcile legacy minute-based signing epochs with timestamp-floor installations before changing the bundled signing tool; preserve monotonicity and signature/trial protections.
