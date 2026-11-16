@@ -64,7 +64,7 @@ review: fileops_test apps_shortcut_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test
+run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -91,12 +91,15 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wif
 	./usbsync_core_test
 	@echo "--- audiobook bookmarks on the card ---"
 	./bookmarks_test
+	./playlog_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
 
+playlog_test: playlog_test.c ../playlog.c ../playlog.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. playlog_test.c ../playlog.c -o $@
 bookmarks_test: bookmarks_test.c ../bookmarks.c ../sdstate.c ../bookmarks.h ../sdstate.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -DSDS_NO_DEVICE -I.. bookmarks_test.c ../bookmarks.c ../sdstate.c -lpthread -o $@

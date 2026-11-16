@@ -68,6 +68,7 @@
 #include "remote.h"
 #include "mpd.h"
 #include "radio.h"
+#include "playlog.h"
 #include "ui_instance.h"
 #include "power.h"
 #include "discshelf.h"
@@ -2618,7 +2619,7 @@ static int coldplug_mounted(void){
  * 2 MB as <log>.1 and starts empty again (the writers append, so they go on at the start). /tmp is a small tmpfs. */
 static const char *const TMP_LOGS[] = { "/tmp/diskos-player.log", OPL_VOLUME_LOG, "/tmp/diskos-mpd/log",
                                         "/tmp/diskos-mpd/bt.log", "/tmp/bluealsa.log", "/tmp/btd.log",
-                                        "/tmp/patchram.log", "/tmp/boomshine.log" };
+                                        "/tmp/patchram.log", "/tmp/boomshine.log", PLAYLOG_PATH };
 #define TMP_LOG_LIMIT (2u * 1024 * 1024)
 #define TMP_LOG_EVERY 20                     /* rounds of 30 s */
 static void *log_maintenance(void *unused){
@@ -3964,6 +3965,12 @@ int main(int argc, char **argv){
         }
         if(playing) g_play_sent_gen = ipc_generation();   /* playback observed this generation (any start, incl. hardware keys): its one-shot is moot */
         queue_tick(&st, playing);
+        {   /* the songs played, in /tmp (playlog.h): the Radio app by its stream titles, else the track */
+            const char *rs = radio_state();
+            if(strcmp(rs, "off")){ if(!strcmp(rs, "playing")) playlog_radio(radio_station_name(), radio_stream_title()); }
+            else if(st.have_track && playing) playlog_song(st.path, st.pos_id, st.title, st.artist, st.album, mdb_is_stream_path(st.path));
+            else if(!st.have_track) playlog_reset();
+        }
         {   /* the own player's list ended (ad11): what follows (radio.c), unless something started meanwhile (the
              * queue going back to a list it interrupted, the user); 2.5 s lets `playing` settle */
             static unsigned seen; static uint32_t at;

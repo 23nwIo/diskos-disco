@@ -102,6 +102,7 @@ See the [UI guide](docs/UI.md) and [build workflow](docs/DEV_WORKFLOW.md).
 - **Came from another diskOS build and something's off?** **Settings › System › Maintenance › Reset diskOS Settings** (music, Wi-Fi, Bluetooth and audio stay).
 - **Covers** are cached only while the SD card has 500 MB free.
 - **Suddenly see FiiO's interface?** Disco! stopped; restart. `/tmp/diskos_boot.log` (Debug Mode SSH; RAM, gone after a reboot) says why; crashes also go to `/usr/data/diskos_crash.log`.
+- **What was that song a minute ago?** `/tmp/diskos-played.log` (Debug Mode SSH; RAM, gone after a reboot) lists what played, one line each with the time: songs as Artist - Title [Album], radio as the station and each song it names. Both players; kept to the last 2 MB.
 - **Languages:** Latin, Greek, Cyrillic, Thai, Korean, Japanese and common Chinese. No right-to-left or Indian scripts yet.
 - **Updates** come by signed SD update or a fresh install; no online updates.
 - **Bluetooth codecs and aptX are experimental.** After changing headphones, press Play again. aptX Adaptive/Lossless aren't supported. [More](docs/BLUETOOTH.md#known-limits)
