@@ -21,6 +21,7 @@
 #define _GNU_SOURCE
 #endif
 #include "screens.h"
+#include "musicdb.h"
 #include "radio.h"
 #include "theme.h"
 #include "theme_kit.h"
@@ -687,6 +688,8 @@ int radio_play(const rc_station_t *s){
 #define END_CFG_MODE "end_mode"
 #define END_CFG_NAME "end_st_name"
 #define END_CFG_URL  "end_st_url"
+#define END_CFG_PL   "end_pl_id"
+#define END_CFG_PLF  "end_pl_flags"
 int radio_end_get(rc_station_t *st){
     if(st){
         memset(st, 0, sizeof *st);
@@ -694,7 +697,19 @@ int radio_end_get(rc_station_t *st){
         snprintf(st->url, sizeof st->url, "%s", cfg_get_str(END_CFG_URL, ""));
     }
     int m = cfg_get_int(END_CFG_MODE, RADIO_END_STOP);
-    return m >= RADIO_END_STOP && m <= RADIO_END_STATION ? m : RADIO_END_STOP;
+    return m >= RADIO_END_STOP && m <= RADIO_END_PLAYLIST ? m : RADIO_END_STOP;
+}
+long radio_end_playlist(int *flags){
+    if(flags) *flags = cfg_get_int(END_CFG_PLF, 0) & (RADIO_END_PL_REPEAT | RADIO_END_PL_SHUFFLE);
+    long pid = atol(cfg_get_str(END_CFG_PL, "0"));
+    return pid > 0 ? pid : 0;
+}
+int radio_end_set_playlist(long pid, int flags){
+    if(pid <= 0 || (flags & ~(RADIO_END_PL_REPEAT | RADIO_END_PL_SHUFFLE))) return -1;
+    char v[24]; snprintf(v, sizeof v, "%ld", pid);
+    if(strcmp(cfg_get_str(END_CFG_PL, ""), v)) cfg_set_str(END_CFG_PL, v);          /* only when it changes: flash */
+    if(cfg_get_int(END_CFG_PLF, 0) != flags) cfg_set_int(END_CFG_PLF, flags);
+    return 0;                                                  /* the player hears nothing: the UI starts the playlist */
 }
 void radio_end_sync(void){
     if(!opl_running()) return;                           /* the stock player knows none of this */
@@ -702,11 +717,14 @@ void radio_end_sync(void){
     char f[16 + RC_NAME_LEN + RC_URL_LEN];
     if(rc_station_frame_tag("0d12", st.url[0] ? &st : NULL, f, sizeof f) < 0 || ipc_send_cmd(f) < 0)
         fprintf(stderr, "radio: the player didn't take the station after the list\n");
-    snprintf(f, sizeof f, "0d11000C%04X", (unsigned)m);
+    /* the player's own values: 0 stop, 1 ask the UI (ad11; Shuffle All and a playlist start from here, so the queue
+     * knows the list it returns to), 2 the station */
+    int pm = m == RADIO_END_STATION ? 2 : m == RADIO_END_STOP ? 0 : 1;
+    snprintf(f, sizeof f, "0d11000C%04X", (unsigned)pm);
     if(ipc_send_cmd(f) < 0) fprintf(stderr, "radio: the player didn't take \"after the list ends\" (%d)\n", m);
 }
 int radio_end_set(int mode, const rc_station_t *s){
-    if(mode != -1 && (mode < RADIO_END_STOP || mode > RADIO_END_STATION)) return -1;
+    if(mode != -1 && (mode < RADIO_END_STOP || mode > RADIO_END_PLAYLIST)) return -1;
     if(s && (!rc_url_ok(s->url))) return -1;
     int changed = 0;
     if(mode != -1 && cfg_get_int(END_CFG_MODE, RADIO_END_STOP) != mode){ cfg_set_int(END_CFG_MODE, mode); changed = 1; }
@@ -715,6 +733,35 @@ int radio_end_set(int mode, const rc_station_t *s){
     }
     if(changed) radio_end_sync();
     return 0;
+}
+/* The player stopped after the last song of a list (ad11, sent only when 0d11 said "ask the UI"); main.c calls this
+ * once nothing else has started meanwhile (the queue going back to a list it interrupted, the user). */
+void radio_end_list_ended(void){
+    int m = radio_end_get(NULL);
+    if(queue_count() > 0){                                     /* songs were queued: they come first, then the list end again */
+        if(queue_next() <= 0) fprintf(stderr, "list end: the queue didn't start\n");
+        return;
+    }
+    if(m == RADIO_END_SHUFFLE){
+        int n = mdb_song_count();
+        if(n <= 0){ fprintf(stderr, "list end: no songs to shuffle\n"); return; }
+        fprintf(stderr, "list end: every song, shuffled\n");
+        ui_set_workmode(1);
+        ui_play_list(1, "", 1 + rand() % n);
+        return;
+    }
+    if(m != RADIO_END_PLAYLIST) return;
+    int fl; long pid = radio_end_playlist(&fl);
+    if(pid <= 0){ fprintf(stderr, "list end: no playlist set\n"); return; }
+    int ctype; long cpid;
+    ui_play_context(&ctype, NULL, 0, &cpid);
+    if(!fl && ctype == 5 && cpid == pid){ fprintf(stderr, "list end: playlist %ld played once (no Repeat)\n", pid); return; }
+    int n = mdb_playlist_count(pid);
+    if(n <= 0){ fprintf(stderr, "list end: playlist %ld is empty or gone\n", pid); return; }
+    int mode = (fl & RADIO_END_PL_SHUFFLE) ? 1 : (fl & RADIO_END_PL_REPEAT) ? 3 : 0;   /* Shuffle, Repeat All, in order */
+    fprintf(stderr, "list end: playlist %ld (%d songs, play mode %d)\n", pid, n, mode);
+    ui_set_workmode(mode);
+    ui_play_playlist(pid, mode == 1 ? 1 + rand() % n : 1);
 }
 int radio_search(const char *query){
     char ip[32];

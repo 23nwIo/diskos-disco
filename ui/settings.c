@@ -994,10 +994,11 @@ static const char *const OPT_DFILTER[]= { "Fast LL","Slow LL","Slow PC","Fast PC
 static const char *const OPT_MEMORY[] = { "Off", "Position", "Song" };
 static const char *const OPT_ARTISTCLASS[] = { "By Artist", "By Album Artist" };
 static const char *const OPT_RADIOFAV[] = { "On Player", "On SD Card" };
-static const char *const OPT_ENDMODE[] = { "Stop", "Shuffle All", "Last Station" };
+static const char *const OPT_ENDMODE[] = { "Stop", "Shuffle All", "Last Station", "Playlist" };
 static const char *const OPT_ENDMODE_D[] = { "Playback stops, as always.",            /* short: Zune's dial */
                                              "Every song, shuffled, endlessly.",
-                                             "The radio station played last." };
+                                             "The radio station played last.",
+                                             "The playlist set on the Remote Control page." };
 static const char *const OPT_OUTAUTO[] = { "Off", "Newest", "All connected" };
 static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",          /* short: Zune's dial */
                                              "The newest device plays alone.",
@@ -1054,7 +1055,7 @@ static const setting_t TABLE[] = {
       "Disco has no verified DSD output selector. DSD handling remains with the stock player; this information row sends no command.", NULL },
     { "Playback", "Resume Playback", ST_CYCLER, "memory_play", 0,0,0, OPT_MEMORY, 3, NULL, apply_memory, 0,
       "On startup: Off starts fresh; Position resumes the spot; Song resumes the track. Stock player only for now.", NULL },
-    { "Playback", "After the List Ends", ST_CHOICE, "end_mode", 0,0,0, OPT_ENDMODE, 3, NULL, apply_end_mode, 0,
+    { "Playback", "After the List Ends", ST_CHOICE, "end_mode", 0,0,0, OPT_ENDMODE, 4, NULL, apply_end_mode, 0,
       "What plays when the last song of a list and of the queue has ended. Queued songs interrupt the station. Own player only.", OPT_ENDMODE_D },
     { "Playback", "Artists",     ST_CYCLER, "artist_class", 0,0,0, OPT_ARTISTCLASS, 2, NULL, apply_artist_class, 0,
       "Group Artists by song artist or album artist, matching the stock player.", NULL },

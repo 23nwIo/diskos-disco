@@ -317,6 +317,9 @@ static void parse_frame(const char*buf,int n){
         if(!all_hex(h,2)) return;    /* malformed -> keep last volume, don't reset to 0 */
         int v=(int)strtol(h,0,16);
         pthread_mutex_lock(&g_mu); g_state.volume=v; g_state.volume_seq++; pthread_mutex_unlock(&g_mu);
+    } else if(buf[0]=='a'&&buf[1]=='d'&&buf[2]=='1'&&buf[3]=='1'){
+        /* "ad11000C0000" - diskOS, own player only: the list ended and 0d11 said the UI picks what follows */
+        pthread_mutex_lock(&g_mu); g_state.list_end_seq++; pthread_mutex_unlock(&g_mu);
     } else if(buf[0]=='a'&&buf[1]=='6'&&buf[2]=='0'&&buf[3]=='7' && n>=12){
         /* "a607000C<MODE>" - the player's external/input mode, announced to /ui after a 0657 mode CHANGE.
          * (A 0607 query's reply goes to the /player queue, NOT here, so we do NOT rely on soliciting it - see

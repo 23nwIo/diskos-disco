@@ -581,18 +581,13 @@ static void test_list_end(void){
     CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
     e_song_ends();
     CHECK(!pb_tail_active() && e_state == ENG_STOP);
-    /* Shuffle: every song of the library, in the Shuffle play mode */
-    c.end_mode = PL_END_SHUFFLE; c.play_mode = PQ_IN_ORDER;
+    /* the UI picks (Shuffle All, a playlist): the player stops and tells the UI (ad11) */
+    c.end_mode = PL_END_UI;
     CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
     nsent = 0;
     e_song_ends();
-    CHECK(c.play_mode == PQ_SHUFFLE && e_state == ENG_PLAY && e_cur[0] == '/');
-    pb_engine_event();
-    CHECK(sent_count("a102000C0001") == 1);                     /* the UI hears the play mode */
-    sqlite3 *d; sqlite3_open(dbp, &d);
-    CHECK(count(d, "SELECT COUNT(*) FROM LIST_SONG_0;") == count(d, "SELECT COUNT(*) FROM SONG;"));
-    sqlite3_close(d);
-    c.play_mode = PQ_IN_ORDER; pb_mode_changed();
+    CHECK(!pb_tail_active() && e_state == ENG_STOP && sent_count("ad11000C0000") == 1);
+    CHECK(pl_core_handle(&c, "0d11000C0000", 12) == 0 && c.end_mode == PL_END_STOP);
 }
 int main(void){
     make_db();

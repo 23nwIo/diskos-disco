@@ -163,18 +163,23 @@ title file.
 
 Since 2026-11-16 (Jo, for the party mode of Remote Control): Settings > Playback > After the List Ends (cfg
 `end_mode`, own player only) says what plays when the last song of a list has ended and the UI queue is empty:
-**Stop** (as before), **Shuffle All** or **Last Station** (the radio station played last; cfg `end_st_name`,
-`end_st_url`, kept by `radio_play`). ui/radio.c `radio_end_sync` sends both to the player as `0d12` (the station) and
-`0d11` (the mode) at its start and after each change (PLAYER_PROTOCOL.md). In the player (`playback.c`
-`list_ended`, called when MPD stops after the last song with nothing next):
-- Shuffle All: play mode shuffle and a new list of all songs from a random one (`pb_play_list(QD_ALL,
-  PB_POS_RANDOM)`); the UI hears the play mode change (`a102`) and the new list as usual.
-- Last Station: MPD plays the URL in local work mode (`g_tail`), and the UI gets a local track frame: title = the
+**Stop** (as before), **Shuffle All**, **Last Station** (the radio station played last; cfg `end_st_name`,
+`end_st_url`, kept by `radio_play`) or **Playlist** (cfg `end_pl_id`, `end_pl_flags` Repeat 1 / Shuffle 2; set from
+Remote Control). ui/radio.c `radio_end_sync` tells the player `0d12` (the station) and `0d11` at its start and after
+each change: 0 stop, 1 the UI picks, 2 the station (PLAYER_PROTOCOL.md). When MPD stops after the last song with
+nothing next, the player (`playback.c` `list_ended`):
+- 1 (Shuffle All, Playlist): stops as usual and sends `ad11`. 2.5 s later, if nothing has started meanwhile (the queue
+  going back to a list it interrupted, the user), the UI (`radio_end_list_ended`) plays queued songs first, else
+  Shuffle All (play mode Shuffle, all songs from a random one) or the playlist: play mode Shuffle with the Shuffle
+  flag (it goes on endlessly, as that play mode always does), else Repeat All with Repeat, else in order, once (when
+  that same playlist ends, nothing follows). The UI starts these lists itself so that its queue knows which list it
+  plays: songs queued meanwhile play after the current song, and the list goes on after them.
+- 2 (Last Station): MPD plays the URL in local work mode (`g_tail`), and the UI gets a local track frame: title = the
   stream's title (ICY), else the station; artist = the station; album "Web radio". A new stream title sends a new
   frame. Play/pause work, seek is refused, Next/Prev start the list again from its first song; any new list ends the
-  station. The UI does not count it in history, statistics or Last.fm (`mdb_is_stream_path`).
-- Songs added to the UI queue (ui/queue.c) while the station plays interrupt it: the queue plays them, and when they
-  have ended the list ends again and the station comes back. This is what Remote Control's party mode relies on.
+  station. Songs added to the UI queue interrupt the station (ui/queue.c; it would never end), and when they have
+  ended the list ends again and the station comes back.
+- Streams are not counted in history, statistics or Last.fm (`mdb_is_stream_path`).
 - Host-tested (playback_test `test_list_end`); not checked on a Disc.
 
 ## Next

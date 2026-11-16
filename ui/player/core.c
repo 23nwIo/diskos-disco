@@ -328,7 +328,7 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
     }
     case 0x0d11:
         if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }
-        if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_SHUFFLE ? "shuffle all songs" : "station");
+        if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_UI ? "the UI picks" : "station");
         c->end_mode = v;
         return 0;
     case 0x0d05:

@@ -19,7 +19,8 @@
 #define PL_AUTO_ALL    2           /* every connected device plays: a plug in AUX, connected headphones Bluetooth */
 /* 0d11: what plays when the list ends (the last song of a list that doesn't repeat, the UI's queue included) */
 #define PL_END_STOP    0           /* nothing (the stock behaviour) */
-#define PL_END_SHUFFLE 1           /* every song in the library, shuffled */
+#define PL_END_UI      1           /* the UI picks what plays next (Shuffle All, a playlist): the player stops and
+                                     * sends ad11 (ui/radio.c radio_end_list_ended) */
 #define PL_END_STATION 2           /* the station of 0d12, until something else is played */
 #define PL_NOTICE_AUX  1           /* notice: a plug went in, AUX is off (auto off) */
 #define PL_NOTICE_BT   2           /* notice: headphones connected, Bluetooth is off (auto off) */

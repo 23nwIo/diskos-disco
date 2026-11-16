@@ -37,15 +37,22 @@ int  radio_fav_nocard(void);                            /* 1 = the list is kept 
 int  radio_fav_move(int sd, const char **why);
 
 /* After the list ends (own player only; docs/MPD_CORE.md "After the list ends"): what plays when the last song of a
- * list - the queue included - has ended. mode: RADIO_END_STOP, RADIO_END_SHUFFLE (every song, shuffled) or
- * RADIO_END_STATION (the station named here; by default the last one played). Kept in diskos.conf (end_mode,
- * end_st_name, end_st_url); the player gets 0d11 and 0d12. */
-#define RADIO_END_STOP    0
-#define RADIO_END_SHUFFLE 1
-#define RADIO_END_STATION 2
+ * list - the queue included - has ended. mode: RADIO_END_STOP, RADIO_END_SHUFFLE (every song, shuffled),
+ * RADIO_END_STATION (the station named here; by default the last one played) or RADIO_END_PLAYLIST (the playlist of
+ * radio_end_set_playlist). Kept in diskos.conf (end_mode, end_st_name, end_st_url, end_pl_id, end_pl_flags); the
+ * player gets 0d11 and 0d12. All main thread only. */
+#define RADIO_END_STOP     0
+#define RADIO_END_SHUFFLE  1
+#define RADIO_END_STATION  2
+#define RADIO_END_PLAYLIST 3
+#define RADIO_END_PL_REPEAT  1    /* radio_end_set_playlist flags: play it again and again (Repeat All) */
+#define RADIO_END_PL_SHUFFLE 2    /* in the Shuffle play mode (which goes on endlessly, Repeat or not) */
 int  radio_end_set(int mode, const rc_station_t *station);   /* mode -1 / station NULL: keep it; 0, -1 bad value */
 int  radio_end_get(rc_station_t *station);                    /* the mode; the station into *station (may be NULL) */
+int  radio_end_set_playlist(long pid, int flags);             /* the playlist (its id, > 0) for RADIO_END_PLAYLIST; 0, -1 bad */
+long radio_end_playlist(int *flags);                          /* its id (0 none); the flags into *flags (may be NULL) */
 void radio_end_sync(void);                                    /* tell the own player (at its start, after a change) */
+void radio_end_list_ended(void);                              /* main.c: the player said the list ended (ad11) */
 void radio_restart(void);                   /* main.c: the output was re-initialised (Bluetooth -> headphones): start the station again */
 void radio_mode_leaving(void);              /* main.c ui_set_source_mode: another source takes over (no mode switch here) */
 #endif

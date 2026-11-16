@@ -304,7 +304,6 @@ static void stream_file(int on);
 static void stream_frame(int state, const char *uri, const char *title, const char *artist, const char *album,
                          const char *work_mode);
 /* ---- after the list (0d11 PL_END_*, 0d12 the station) ---- */
-#define PB_POS_RANDOM (-2)                  /* pb_play_list: start at a random song */
 static void tail_frame(int force){
     const char *t = g_es_valid && !strcmp(g_es.file, g_tl_url) && g_es.title[0] ? g_es.title : g_tl_name;
     if(!force && !strcmp(t, g_tl_sent)) return;
@@ -320,10 +319,12 @@ static void tail_event(void){
 static void tail_end(void){ g_tail = 0; g_tl_sent[0] = 0; }
 /* The last song of the list ended (no next one by the play mode). 0 when something plays on. */
 static int list_ended(void){
-    if(C->end_mode == PL_END_SHUFFLE){
-        L("list end: every song, shuffled");
-        if(C->play_mode != PQ_SHUFFLE){ C->play_mode = PQ_SHUFFLE; }   /* the UI hears it with the track (a102) */
-        return pb_play_list(QD_ALL, PB_POS_RANDOM, "");
+    if(C->end_mode == PL_END_UI){
+        /* the UI starts the next list itself (ui/radio.c radio_end_list_ended), so its queue knows the list it plays
+         * and returns to it after queued songs; this player stops as usual */
+        L("list end: the UI picks what follows (ad11)");
+        send_lit("ad11000C0000");
+        return -1;
     }
     if(C->end_mode == PL_END_STATION){
         if(!C->end_url[0]){ L("list end: no station set (0d12)"); return -1; }
@@ -439,7 +440,6 @@ int pb_play_list(int type, int pos, const char *name){
     L("play list: type %d \"%s\": %d songs in %.0f ms", type, name, n, (now_s() - t0) * 1000.0);
     int *ids = NULL, m = qd_ids(d, &ids);
     if(m <= 0){ free(ids); pq_free(&Q); L("play list: the list is empty"); goto out; }
-    if(pos == PB_POS_RANDOM) pos = (int)rnd((unsigned)m);
     if(pq_set(&Q, ids, m, pos) != 0){ L("play list: out of memory"); goto out; }
     if(C->play_mode == PQ_SHUFFLE){
         if(pq_shuffle(&Q, 1, rnd) != 0 || qd_shuffle_write(d, Q.order, Q.n) != 0) L("play list: shuffle order not written");

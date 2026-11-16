@@ -55,7 +55,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
 | 0d05 | `0d05000C000v` | diskOS, own player only: Auto Outputs, what connecting does: 0 off (nothing, a notice), 1 newest (the new device alone), 2 all connected | main.c (re-sent on start), settings.c (Outputs) | do |
 | 0d10 | `0d10<len 4h><name len 4h><name><url>` | diskOS, own player only, in work mode 12: play the Radio app's station (`http://` / `https://`); a new one replaces it; no name and no URL (`0d10000C0000`) = stop | radio.c (`rc_station_frame`) | do (MPD) |
-| 0d11 | `0d11000C000v` | diskOS, own player only: after the list ends (the last song of the list played and nothing follows): 0 stop, 1 shuffle all songs, 2 the station of `0d12` (none: stop) | radio.c (`radio_end_sync`: at the player start and after a change) | do |
+| 0d11 | `0d11000C000v` | diskOS, own player only: after the list ends (the last song of the list played and nothing follows): 0 stop, 1 the UI picks (the player stops and sends `ad11`; Shuffle All and a playlist), 2 the station of `0d12` (none: stop) | radio.c (`radio_end_sync`: at the player start and after a change) | do |
 | 0d12 | `0d12<len 4h><name len 4h><name><url>` | diskOS, own player only: the station for `0d11` 2, as `0d10`; no URL = none | radio.c (`radio_end_sync`, `rc_station_frame_tag`) | do (stored) |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
@@ -80,6 +80,7 @@ example `BT_STATUS`, `MAX_VOL`).
 | `a1030010<ms 8h>` | Playback position in ms (`LEN` = total length, payload up to 15 hex chars) | ipc.c `parse_frame` |
 | `a2` LEN `<json>` | State JSON: `state` (number), `playing_num`, `work_mode`, `love` (bool), `song` = a JSON object **as a string** with `song_name`, `song_artist_name`, `song_album_name`, `song_file_path` (required for a track to count), `song_duration_time` (ms), `song_sample_rate`, `is_dsd`, `pos_id`. `song` as an empty string = no current track. Partial frames (only `state`) are allowed | ipc.c `parse_a2_frame` |
 | `a714000C00<VV 2h>...` | Volume level 0..120 (hex chars 10-11) | ipc.c |
+| `ad11000C0000` | diskOS, own player only: the list ended and `0d11` was 1; the UI starts what follows (ui/radio.c `radio_end_list_ended`) | ipc.c, main.c |
 | `a607000C<mode 4h>` | Work mode, announced after a `0657` change (8 = local playback) | ipc.c |
 
 ### Measured on a live stream (protocol capture, stock player, 2026-11-15)

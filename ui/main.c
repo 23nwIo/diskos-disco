@@ -3961,6 +3961,16 @@ int main(int argc, char **argv){
         }
         if(playing) g_play_sent_gen = ipc_generation();   /* playback observed this generation (any start, incl. hardware keys): its one-shot is moot */
         queue_tick(&st, playing);
+        {   /* the own player's list ended (ad11): what follows (radio.c), unless something started meanwhile (the
+             * queue going back to a list it interrupted, the user); 2.5 s lets `playing` settle */
+            static unsigned seen; static uint32_t at;
+            if(st.list_end_seq != seen){ seen = st.list_end_seq; at = lv_tick_get() | 1; }
+            if(at && lv_tick_elaps(at) >= 2500){
+                at = 0;
+                if(!playing && !g_play_pending) radio_end_list_ended();
+                else fprintf(stderr, "list end: something plays already\n");
+            }
+        }
         { void ui_shufhist_tick(const track_state_t *); ui_shufhist_tick(&st); }   /* Previous on shuffle: what played */
         {void zthumb_tick(void);zthumb_tick();} if(th_zune()){void zune_ui_tick(void);zune_ui_tick();}
         discshelf_tick();
