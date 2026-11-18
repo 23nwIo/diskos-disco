@@ -146,8 +146,8 @@ and year points and the list of songs played.
 |---|---|---|
 | Songs | whole library | Or a folder with its subfolders (**Choose…** lists the card's folders: tap one to go in, **Use this folder** takes the one shown), or a playlist. |
 | Choosing a song | with 3 suggestions | The player chooses any song (search), chooses with 3 random suggestions (new suggestions once per turn; any other song of the pool is still allowed), or only chance (Random). |
-| The player sees a song chance chose | off | Off: a random song stays hidden from A too. |
-| Otherwise the player guesses along | on | A guesses (and gets points) when A does not know the song. |
+| A random song is shown to the player whose turn it is | off | Off: when A presses **Random**, A does not see the song either. |
+| If not, that player guesses too | on | A guesses (and can score) when A does not know the song. |
 | A song may come up again | off | Off: the game ends when the pool is used up. |
 | Guess the year too | on | Songs with a date say "year counts". |
 | Year off by up to 2 years: 1 point | on | Exact year: 2 points. |
