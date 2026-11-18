@@ -27,7 +27,7 @@ enum { HG_S_POOL,      /* 0 the whole library, 1 a folder (and its subfolders), 
        HG_S_RNDKNOWN,  /* 1: a song chance picked is shown to the player whose turn it is */
        HG_S_ALONG,     /* 1: that player guesses along when they don't know the song */
        HG_S_YEAR,      /* 1: the year counts (songs with a date) */
-       HG_S_STAGGER,   /* 1: exact year 2 points, off by 1..2 years 1 point; 0: exact year only */
+       HG_S_STAGGER,   /* 1: almost right is half a point (artist, title similar; year off by 1..2); 0: right only */
        HG_S_FORM,      /* 1: players type their guesses (matched for the ticks); 0: they say them aloud */
        HG_S_COUNTDOWN, /* 1: guessing ends when the song (or its part) has played plus HG_S_CDEXTRA seconds */
        HG_S_CDEXTRA,   /* seconds */
@@ -49,11 +49,15 @@ enum { HG_LOBBY = 0, HG_PICK, HG_PLAY, HG_REVEAL, HG_END };
 #define HG_M_TITLE  2
 #define HG_M_YEAR   4              /* the exact year */
 #define HG_M_NEAR   8              /* off by 1..2 years (HG_S_STAGGER) */
+#define HG_M_ANEAR  16             /* the artist almost right (HG_S_STAGGER) */
+#define HG_M_TNEAR  32             /* the title almost right (HG_S_STAGGER) */
+/* Points (Jo, 2026-11-18): right 1 each (artist, title, year), almost right half a point. Kept in HALF points
+ * (hg_points, hg_total, pa/pt/py); hg_pts_str writes them for people ("3", "3.5"). */
 
 typedef struct {
     char gid[HG_GID_MAX + 1], name[HG_NAME_MAX + 1];
     int  in;                       /* 1 plays, 0 left or removed */
-    int  pa, pt, py;               /* points by artist, title, year */
+    int  pa, pt, py;               /* half points by artist, title, year */
     int  joined;                   /* the number of songs played before they joined */
     char tip_a[HG_TIP_MAX], tip_t[HG_TIP_MAX]; int tip_y, tipped;   /* this turn's typed guess */
 } hg_player_t;
@@ -107,8 +111,10 @@ int  hg_all_tipped(const hg_game_t *g);
 void hg_reveal(hg_game_t *g);
 /* the ticks for player i (HG_M_*, only what the turn allows) */
 void hg_mark(hg_game_t *g, int i, int marks);
-/* the points one mark set is worth */
+/* the half points one mark set is worth */
 int  hg_points(int marks);
+/* half points as text: "3", "3.5" */
+const char *hg_pts_str(int halves, char *buf, int cap);
 /* A confirms: the points count, then the next turn (PICK) or the END. pool_left: songs that can still come up
  * (-1 unknown). Returns the new phase. */
 int  hg_confirm(hg_game_t *g, int pool_left);
@@ -122,7 +128,7 @@ int  hg_may_stop(const hg_game_t *g, int i);
  * returns the count. place[k] = the shared place (1-based) of rank k. */
 int  hg_rank(const hg_game_t *g, int *idx, int *place);
 int  hg_total(const hg_player_t *p);
-/* two texts the same for a guess: case, accents of Latin letters, "the", brackets, punctuation and one typo per five
- * letters don't matter */
+/* a typed guess against the truth: 2 right (case, accents of Latin letters, "the", brackets and punctuation don't
+ * matter), 1 almost (one typo per five letters, or a good part of it: "Take on" for "Take On Me"), 0 wrong */
 int  hg_match(const char *guess, const char *truth);
 #endif

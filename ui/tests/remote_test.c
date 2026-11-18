@@ -59,7 +59,7 @@ static void test_game(void){
     CHECK(preq("POST", "/Fest_1/api/game", "action=pick&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
     r = preq("POST", "/Fest_1/api/game", "action=mark&p=2&m=5&g=AnnaAnnaAnna1234");
     CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_MARK && r.cmd.pos == 2 && r.cmd.arg == 5);
-    CHECK(preq("POST", "/Fest_1/api/game", "action=mark&p=2&m=16&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
+    CHECK(preq("POST", "/Fest_1/api/game", "action=mark&p=2&m=64&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
     CHECK(preq("POST", "/Fest_1/api/game", "action=mark&p=32&m=1&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
     r = preq("POST", "/Fest_1/api/game", "action=tip&a=Queen&t=Bohemian+Rhapsody&y=1975&g=AnnaAnnaAnna1234");
     CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_TIP && !strcmp(r.cmd.q, "Queen") && !strcmp(r.cmd.text, "Bohemian Rhapsody") && r.cmd.arg == 1975);

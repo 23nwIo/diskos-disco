@@ -1933,6 +1933,16 @@ static int on_search_play(int id){
     if(pos < 1){ ui_toast("Couldn't find that song"); return 0; }
     return ui_play_list(1, "", pos);
 }
+/* A play mode for a while, NOT saved (Hit&Guess loops the song: Repeat One, mode 2); ui_play_mode_restore() goes back
+ * to the saved one. Kept out of cfg so a crash or restart in between leaves the user's mode as it was. */
+void ui_play_mode_temp(int mode){
+    int rc = send_play_mode(mode);
+    fprintf(stderr, "workmode %d for now (not saved, rc=%d)\n", mode, rc); fflush(stderr);
+}
+void ui_play_mode_restore(void){
+    int m = simple_cfg_get_int("work_mode", 0), rc = send_play_mode(m);
+    fprintf(stderr, "workmode %d again (rc=%d)\n", m, rc); fflush(stderr);
+}
 void ui_set_workmode(int mode){
     /* LOCAL play-mode setter = command 0102 (class 1): 0102 000C <mode 4hex>.
      * GROUND TRUTH captured 2026-06-25 by strace'ing the stock UI's mq_timedsend

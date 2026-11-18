@@ -181,6 +181,10 @@ static int one(void *ud, const mdb_row_t *r){
 static int song_get(int id, song_t *s){ memset(s, 0, sizeof *s); return mdb_rows(MDB_ROWS_ID, NULL, id, one, s) > 0 && s->id == id; }
 
 /* ---------------------------------------------------------------- playing */
+static int g_loop;                                       /* Repeat One is on for the game */
+static void loop_check(void){                            /* the game is over or off: the user's play mode again */
+    if(g_loop && (party_mode() != 2 || G.phase == HG_LOBBY || G.phase == HG_END)){ ui_play_mode_restore(); g_loop = 0; }
+}
 static struct { int on, seen, seeks, done; uint32_t at, deadline; char before[160], title[160]; long start, end, dur; } P;
 static void send(rmt_cmd_kind_t k, long arg){
     rmt_cmd_t c; memset(&c, 0, sizeof c); c.kind = k; c.arg = arg;
@@ -194,6 +198,10 @@ static int play_song(int id, const char **why){
     char *body = NULL;
     int r = remote_exec(&c, why, &body); free(body);
     if(r) return -1;
+    /* Repeat One until the next song starts (Jo, 2026-11-18): the song never runs out into the next one of the list
+     * (a song that ended before the next player had chosen once came with a player crash and reboot on the Disc).
+     * Not saved; the user's mode comes back when the game ends (hitguess_tick). */
+    if(!g_loop){ ui_play_mode_temp(2); g_loop = 1; }
     memset(&P, 0, sizeof P);
     P.on = 1; P.at = lv_tick_get() | 1; snprintf(P.before, sizeof P.before, "%s", s.has_track ? s.title : "");
     return 0;
@@ -212,6 +220,7 @@ void hitguess_tick(void){
     last = lv_tick_get() | 1;
     if(g_ready || party_mode() == 2){ ready(); screen_update(); }
     if(P.on && party_mode() == 2) play_tick();
+    loop_check();
 }
 static void play_tick(void){
     rmt_state_t s; remote_state(&s);
@@ -225,7 +234,7 @@ static void play_tick(void){
             P.start = room > lo ? lo + rand() % (room - lo + 1) : room > 0 ? room / 2 : 0;
             P.end = P.start + sn;
             if(P.start > 1500){ send(RMT_CMD_SEEK, P.start); P.seeks = 1; }
-        } else { P.start = 0; P.end = dur > 2000 ? dur - 900 : 0; }
+        } else { P.start = 0; P.end = 0; }               /* the whole song, again and again (Repeat One) */
         long len = (P.end ? P.end : dur) - P.start;
         if(G.set[HG_S_COUNTDOWN] && !P.deadline) P.deadline = (lv_tick_get() + (uint32_t)(len > 0 ? len : 0) + (uint32_t)G.set[HG_S_CDEXTRA] * 1000u) | 1;
         hlog("playing \"%s\" (%ld s), %s %ld..%ld ms", s.title, dur / 1000, G.set[HG_S_START] ? "part" : "whole", P.start, P.end);
@@ -260,7 +269,8 @@ static void rank_line(char *out, size_t cap){
     for(int k = 0; k < n && o < cap; k++){
         const hg_player_t *p = &G.p[idx[k]];
         if(!p->in) continue;
-        int w = snprintf(out + o, cap - o, "%s%d. %s (%d)", o ? "  \xC2\xB7  " : "", place[k], p->name, hg_total(p));
+        char ps[16];
+        int w = snprintf(out + o, cap - o, "%s%d. %s (%s)", o ? "  \xC2\xB7  " : "", place[k], p->name, hg_pts_str(hg_total(p), ps, sizeof ps));
         if(w < 0 || (size_t)w >= cap - o){ out[o] = 0; break; }   /* never a cut name */
         o += (size_t)w;
     }
@@ -293,7 +303,8 @@ static void screen_update(void){
     default: {
         int idx[HG_PLAYERS], place[HG_PLAYERS], n = hg_rank(&G, idx, place);
         big[0] = 0; snprintf(a, sizeof a, "Game over");
-        if(n) snprintf(b, sizeof b, "%s wins", G.p[idx[0]].name), snprintf(c, sizeof c, "%d points", hg_total(&G.p[idx[0]]));
+        char ps[16];
+        if(n) snprintf(b, sizeof b, "%s wins", G.p[idx[0]].name), snprintf(c, sizeof c, "%s point%s", hg_pts_str(hg_total(&G.p[idx[0]]), ps, sizeof ps), hg_total(&G.p[idx[0]]) == 2 ? "" : "s");
         break; }
     }
     char sig[sizeof g_scr_sig];
@@ -348,6 +359,7 @@ static void screen_update(void){
 }
 
 /* ---------------------------------------------------------------- choosing */
+#define HG_REROLLS 3                                     /* new suggestions per turn (Jo, 2026-11-18: three times) */
 static int g_sugg[3], g_nsugg, g_sugg_for = -1, g_sugg_nt = -1, g_rerolled;
 static int chooser(void){                                /* who may choose a song now: A in PICK, B while A's song is revealed */
     if(G.phase == HG_PICK) return G.cur;
@@ -383,7 +395,9 @@ static void after_turn(const char *what){
         int idx[HG_PLAYERS], place[HG_PLAYERS], n = hg_rank(&G, idx, place);
         hlog("game over (%s) after %d songs, %d rounds", G.ended_why == 1 ? "no song left" : G.ended_why == 2 ? "ended by the host" : "goal reached", G.nt, G.rounds);
         for(int k = 0; k < n; k++){ const hg_player_t *p = &G.p[idx[k]];
-            hlog("  %d. %s: %d point%s (artist %d, title %d, year %d)%s", place[k], p->name, hg_total(p), hg_total(p) == 1 ? "" : "s", p->pa, p->pt, p->py, p->in ? "" : " (left)"); }
+            char t0[16], t1[16], t2[16], t3[16];
+            hlog("  %d. %s: %s point%s (artist %s, title %s, year %s)%s", place[k], p->name, hg_pts_str(hg_total(p), t0, 16), hg_total(p) == 2 ? "" : "s",
+                 hg_pts_str(p->pa, t1, 16), hg_pts_str(p->pt, t2, 16), hg_pts_str(p->py, t3, 16), p->in ? "" : " (left)"); }
         return;
     }
     if(G.phase == HG_PICK && G.next_song){
@@ -407,7 +421,7 @@ static void sugg_json(rmt_buf_t *b){
         rmt_buf_printf(b, "%s{\"id\":%d,\"title\":", k ? "," : "", s.id); rmt_buf_str(b, s.title);
         rmt_buf_put(b, ",\"artist\":"); rmt_buf_str(b, s.artist); rmt_buf_put(b, "}");
     }
-    rmt_buf_printf(b, "],\"rerolled\":%d", g_rerolled);
+    rmt_buf_printf(b, "],\"rerolls_left\":%d", HG_REROLLS - g_rerolled);
 }
 static char *view_json(int me, int admin){
     suggest(0);
@@ -422,8 +436,10 @@ static char *view_json(int me, int admin){
     for(int i = 0; i < G.np; i++){
         const hg_player_t *p = &G.p[i];
         rmt_buf_printf(&b, "%s{\"name\":", i ? "," : ""); rmt_buf_str(&b, p->name);
-        rmt_buf_printf(&b, ",\"in\":%d,\"pa\":%d,\"pt\":%d,\"py\":%d,\"pts\":%d,\"joined\":%d,\"tipped\":%d,\"guesses\":%d", p->in, p->pa, p->pt, p->py,
-                       hg_total(p), p->joined, p->tipped, G.phase == HG_PLAY && hg_guesses(&G, i));
+        char t0[16], t1[16], t2[16], t3[16];                /* JSON numbers: 3 or 3.5 */
+        rmt_buf_printf(&b, ",\"in\":%d,\"pa\":%s,\"pt\":%s,\"py\":%s,\"pts\":%s,\"joined\":%d,\"tipped\":%d,\"guesses\":%d", p->in,
+                       hg_pts_str(p->pa, t1, 16), hg_pts_str(p->pt, t2, 16), hg_pts_str(p->py, t3, 16),
+                       hg_pts_str(hg_total(p), t0, 16), p->joined, p->tipped, G.phase == HG_PLAY && hg_guesses(&G, i));
         if(t && (G.phase == HG_REVEAL || admin)){
             rmt_buf_printf(&b, ",\"mark\":%d", t->mark[i]);
             if(G.set[HG_S_FORM] && p->tipped){ rmt_buf_put(&b, ",\"tip\":{\"a\":"); rmt_buf_str(&b, p->tip_a); rmt_buf_put(&b, ",\"t\":"); rmt_buf_str(&b, p->tip_t); rmt_buf_printf(&b, ",\"y\":%d}", p->tip_y); }
@@ -509,8 +525,8 @@ static int player(const rmt_cmd_t *c, const char **why, char **body){
             break;
         case RMT_G_REROLL:
             if(me != chooser() || G.set[HG_S_PICK] != 1){ *why = "Not now"; return -1; }
-            if(g_rerolled){ *why = "Only once a turn"; return -1; }
-            suggest(1); g_rerolled = 1; break;
+            if(g_rerolled >= HG_REROLLS){ *why = "No new suggestions left this turn"; return -1; }
+            suggest(1); g_rerolled++; break;
         case RMT_G_TIP:
             if(countdown_left() == 0){ *why = "Time is up"; return -1; }
             if(!G.set[HG_S_FORM]){ *why = "Say your guess aloud in this game"; return -1; }
@@ -527,9 +543,10 @@ static int player(const rmt_cmd_t *c, const char **why, char **body){
         case RMT_G_CONFIRM: {
             if(G.phase != HG_REVEAL || me != G.cur){ *why = "Only the player whose turn it is confirms"; return -1; }
             const hg_turn_t *t = &G.t[G.nt - 1];
-            for(int i = 0; i < G.np; i++) if(t->mark[i])
-                hlog("  %s: %s%s%s%s= %d", G.p[i].name, t->mark[i] & HG_M_ARTIST ? "artist " : "", t->mark[i] & HG_M_TITLE ? "title " : "",
-                     t->mark[i] & HG_M_YEAR ? "year " : "", t->mark[i] & HG_M_NEAR ? "near year " : "", hg_points(t->mark[i]));
+            for(int i = 0; i < G.np; i++) if(t->mark[i]){ int m = t->mark[i]; char ps[16];
+                hlog("  %s: %s%s%s%s%s%s= %s", G.p[i].name, m & HG_M_ARTIST ? "artist " : "", m & HG_M_ANEAR ? "near artist " : "",
+                     m & HG_M_TITLE ? "title " : "", m & HG_M_TNEAR ? "near title " : "", m & HG_M_YEAR ? "year " : "", m & HG_M_NEAR ? "near year " : "",
+                     hg_pts_str(hg_points(m), ps, sizeof ps)); }
             hg_confirm(&G, pool_left()); after_turn("confirmed");
             break; }
         case RMT_G_REPLAY:
@@ -624,7 +641,10 @@ static int host(const rmt_cmd_t *c, const char **why, char **body){
 int hitguess_dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL;
     ready();
-    if(c->kind == RMT_CMD_GAME_ADMIN) return host(c, why, body);
-    if(party_mode() != 2){ *why = "No game is on"; return -1; }
-    return player(c, why, body);
+    int r;
+    if(c->kind == RMT_CMD_GAME_ADMIN) r = host(c, why, body);
+    else if(party_mode() != 2){ *why = "No game is on"; r = -1; }
+    else r = player(c, why, body);
+    loop_check();
+    return r;
 }

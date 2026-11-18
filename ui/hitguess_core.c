@@ -135,8 +135,9 @@ void hg_reveal(hg_game_t *g){
         for(int i = 0; i < g->np; i++){
             const hg_player_t *p = &g->p[i];
             if(!p->tipped) continue;
-            int m = (hg_match(p->tip_a, t->artist) ? HG_M_ARTIST : 0) | (hg_match(p->tip_t, t->title) ? HG_M_TITLE : 0)
-                  | year_marks(p->tip_y, t->year, g->set[HG_S_STAGGER]);
+            int st = g->set[HG_S_STAGGER], ma = hg_match(p->tip_a, t->artist), mt = hg_match(p->tip_t, t->title);
+            int m = (ma == 2 ? HG_M_ARTIST : ma && st ? HG_M_ANEAR : 0) | (mt == 2 ? HG_M_TITLE : mt && st ? HG_M_TNEAR : 0)
+                  | year_marks(p->tip_y, t->year, st);
             t->mark[i] = (unsigned char)m;
         }
     g->phase = HG_REVEAL;
@@ -144,19 +145,25 @@ void hg_reveal(hg_game_t *g){
 void hg_mark(hg_game_t *g, int i, int marks){
     hg_turn_t *t = turn(g);
     if(!t || g->phase != HG_REVEAL || i < 0 || i >= g->np) return;
-    marks &= HG_M_ARTIST | HG_M_TITLE | HG_M_YEAR | HG_M_NEAR;
+    marks &= HG_M_ARTIST | HG_M_TITLE | HG_M_YEAR | HG_M_NEAR | HG_M_ANEAR | HG_M_TNEAR;
     if(!t->year) marks &= ~(HG_M_YEAR | HG_M_NEAR);
-    if(!g->set[HG_S_STAGGER]) marks &= ~HG_M_NEAR;
-    if(marks & HG_M_YEAR) marks &= ~HG_M_NEAR;
+    if(!g->set[HG_S_STAGGER]) marks &= ~(HG_M_NEAR | HG_M_ANEAR | HG_M_TNEAR);
+    if(marks & HG_M_YEAR) marks &= ~HG_M_NEAR;           /* right wins over almost */
+    if(marks & HG_M_ARTIST) marks &= ~HG_M_ANEAR;
+    if(marks & HG_M_TITLE) marks &= ~HG_M_TNEAR;
     t->mark[i] = (unsigned char)marks;
 }
-int hg_points(int m){ return !!(m & HG_M_ARTIST) + !!(m & HG_M_TITLE) + (m & HG_M_YEAR ? 2 : m & HG_M_NEAR ? 1 : 0); }
+static int half_a(int m){ return m & HG_M_ARTIST ? 2 : m & HG_M_ANEAR ? 1 : 0; }
+static int half_t(int m){ return m & HG_M_TITLE ? 2 : m & HG_M_TNEAR ? 1 : 0; }
+static int half_y(int m){ return m & HG_M_YEAR ? 2 : m & HG_M_NEAR ? 1 : 0; }
+int hg_points(int m){ return half_a(m) + half_t(m) + half_y(m); }
+const char *hg_pts_str(int h, char *buf, int cap){ snprintf(buf, (size_t)cap, h % 2 ? "%d.5" : "%d", h / 2); return buf; }
 int hg_total(const hg_player_t *p){ return p->pa + p->pt + p->py; }
 static int over(const hg_game_t *g){                   /* the setup's goal reached? */
     int n = g->set[HG_S_WIN_N];
     if(g->set[HG_S_WIN] == 0) return g->nt >= n;
     if(g->set[HG_S_WIN] == 1) return g->rounds >= n;
-    for(int i = 0; i < g->np; i++) if(hg_total(&g->p[i]) >= n) return 1;
+    for(int i = 0; i < g->np; i++) if(hg_total(&g->p[i]) >= 2 * n) return 1;   /* half points */
     return 0;
 }
 /* the turn passes on; a round is complete when it comes back to (or past) who began it */
@@ -179,8 +186,7 @@ int hg_confirm(hg_game_t *g, int pool_left){
     if(!t || g->phase != HG_REVEAL) return g->phase;
     for(int i = 0; i < g->np; i++){
         int m = t->mark[i];
-        g->p[i].pa += !!(m & HG_M_ARTIST); g->p[i].pt += !!(m & HG_M_TITLE);
-        g->p[i].py += m & HG_M_YEAR ? 2 : m & HG_M_NEAR ? 1 : 0;
+        g->p[i].pa += half_a(m); g->p[i].pt += half_t(m); g->p[i].py += half_y(m);
     }
     return next_turn(g, pool_left);
 }
@@ -236,7 +242,7 @@ static const char *fold(unsigned cp){
 }
 /* lower-case letters and digits only; "the " at the start, "(...)" / "[...]" and " - ..." (remix, live) dropped;
  * "&" = "and" */
-static void norm(const char *s, char *out, size_t cap){
+static void norm(const char *s, char *out, size_t cap, int plain){   /* plain: ä ö ü -> a o u (else ae oe ue) */
     size_t o = 0; int depth = 0;
     char tmp[HG_TXT_MAX * 2]; size_t to = 0;
     for(const unsigned char *p = (const unsigned char *)(s ? s : ""); *p && to + 4 < sizeof tmp; p++){
@@ -246,7 +252,7 @@ static void norm(const char *s, char *out, size_t cap){
         if(p[0] == ' ' && p[1] == '-' && p[2] == ' ' && to) break;   /* "Song - 2011 Remaster" */
         if(*p == 0xC3 && p[1] >= 0x80 && p[1] <= 0xBF){
             const char *f = fold(0xC0u + (p[1] - 0x80u)); p++;
-            if(f) for(; *f && to + 1 < sizeof tmp; f++) tmp[to++] = *f;
+            if(f) for(int k = 0; f[k] && to + 1 < sizeof tmp && !(plain && k == 1 && f[1] == 'e'); k++) tmp[to++] = f[k];
             continue;
         }
         if(*p == '&'){ memcpy(tmp + to, " and ", 5); to += 5; continue; }
@@ -275,11 +281,18 @@ static int lev(const char *a, const char *b){              /* edit distance, bot
     }
     return row[m];
 }
-int hg_match(const char *guess, const char *truth){
-    char a[HG_TXT_MAX * 2], b[HG_TXT_MAX * 2];
-    norm(guess, a, sizeof a); norm(truth, b, sizeof b);
+static int match1(const char *a, const char *b){
     if(!a[0] || !b[0]) return 0;
-    if(!strcmp(a, b)) return 1;
-    int n = (int)strlen(b);
-    return lev(a, b) <= (n < 5 ? 0 : n / 5 < 1 ? 1 : n / 5);
+    if(!strcmp(a, b)) return 2;
+    int n = (int)strlen(b), na = (int)strlen(a);
+    if(lev(a, b) <= (n < 5 ? 0 : n / 5)) return 1;
+    /* a good part: at least 4 letters and half of the truth, at its start or end ("Take on" / "Take On Me") */
+    if(na >= 4 && 2 * na >= n && na < n && (!strncmp(b, a, (size_t)na) || !strcmp(b + n - na, a))) return 1;
+    return 0;
+}
+int hg_match(const char *guess, const char *truth){     /* the best of: umlauts as ae/oe/ue, or as a/o/u */
+    char a[2][HG_TXT_MAX * 2], b[2][HG_TXT_MAX * 2]; int best = 0;
+    for(int k = 0; k < 2; k++){ norm(guess, a[k], sizeof a[k], k); norm(truth, b[k], sizeof b[k], k); }
+    for(int i = 0; i < 2; i++) for(int j = 0; j < 2; j++){ int m = match1(a[i], b[j]); if(m > best) best = m; }
+    return best;
 }

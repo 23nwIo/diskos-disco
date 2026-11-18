@@ -124,12 +124,12 @@ assert b['players'][1]['tip'] == {'a': 'A-Ha', 't': 'Take on me', 'y': 1984} and
 ok(25); assert not res[25]['plays'] and res[25]['body']['next_ready']
 ok(26); no(27, 'may not stop')
 b = ok(28); assert len(res[28]['plays']) == 1 and res[28]['plays'] != res[15]['plays'] and b['phase'] == 'play' and b['cur'] == 1, (res[28]['plays'], b)   # Africa
-assert [p['pts'] for p in b['players']] == [0, 3, 1] and b['players'][1]['py'] == 1
+assert [p['pts'] for p in b['players']] == [0, 2.5, 1] and b['players'][1]['py'] == 0.5   # the year off by 1: half a point
 b = ok(29); assert b['turn']['song'] is None and b['turn']['chance'] == 0
 assert b['rank'] == [[1, 1], [2, 2], [3, 0]] and 'tracks' not in b, b['rank']   # the ranking for the phones while the game runs, not the songs
 ok(30); ok(31); b = ok(32); assert b['phase'] == 'end' and b['ended'] == 0
 b = ok(33)
-assert b['rank'] == [[1, 0], [2, 1], [3, 2]] and [p['pts'] for p in b['players']] == [4, 3, 1], b   # Anna: artist, title, exact 1982
+assert b['rank'] == [[1, 0], [2, 1], [3, 2]] and [p['pts'] for p in b['players']] == [3, 2.5, 1], b   # Anna: artist, title, exact 1982
 assert [x['s']['title'] for x in b['tracks']] == ['Take On Me', 'Africa'] and [x['by'] for x in b['tracks']] == [0, 1]
 b = ok(34); assert b['songs'] == 2 and len(b['tracks']) == 2
 b = ok(35); assert b['phase'] == 'lobby' and names(b) == ['Anna', 'Ben', 'Cleo'] and all(p['pts'] == 0 for p in b['players'])
@@ -141,14 +141,15 @@ b = ok(41); assert not b['players'][1]['in']
 b = ok(42); assert b['cur'] == 2 and b['phase'] == 'pick'                     # Ben's out: Cleo's turn
 b = ok(43); assert b['phase'] == 'end' and b['ended'] == 2 and b['tracks'][0]['skipped'] == 1
 ok(44); no(45, 'No game'); ok(46)
+assert 'workmode 2 for now (not saved' in r.stderr and 'again (rc=' in r.stderr, r.stderr[-3000:]   # Repeat One while the game plays, the saved mode after
 assert [x['name'] for x in ok(47)['items'] if x['dir']][:1] == ['80s'], res[47]
 assert ok(48)['dir'] == '' and 'dir=\n' in (sd/'.diskos/state/hitguess.conf').read_text()
 logs = sorted(Path('/tmp/hitguess').glob('game-*.log')); assert logs, 'no log'
 assert len(logs) == 2, logs
 text = '\n'.join(l.read_text() for l in logs)
 for want in ['game starts: 3 songs (folder Music/80s)', 'Cleo joined the running game', 'song 1 by Anna (chosen): "Take On Me"',
-             'Ben guesses: artist "A-Ha"', 'Anna revealed the song', 'Ben chose the next song early', '  Ben: artist title near year = 3',
-             'game over (goal reached) after 2 songs', '1. Anna: 4 points (artist 1, title 1, year 2)', '2. Ben: 3 points (artist 1, title 1, year 1)', 'the host removed Ben',
+             'Ben guesses: artist "A-Ha"', 'Anna revealed the song', 'Ben chose the next song early', '  Ben: artist title near year = 2.5',
+             'game over (goal reached) after 2 songs', '1. Anna: 3 points (artist 1, title 1, year 1)', '2. Ben: 2.5 points (artist 1, title 1, year 0.5)', 'the host removed Ben',
              'the host skipped the turn', 'game over (ended by the host)', 'Cleo: 1 point (artist 1']:
     assert want in text, (want, text)
 subprocess.run(['umount', str(sd)], capture_output=True)

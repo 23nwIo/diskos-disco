@@ -5,7 +5,7 @@
 .big{font-size:5em;text-align:center;font-weight:800;color:var(--acc);line-height:1.1}.ctr{text-align:center}.tr button.sm{font-size:1em}
 .pl{display:flex;gap:.5em;align-items:center;padding:.5em 1em;border-bottom:1px solid var(--line)}.pl span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pl.me span{font-weight:700}
 .pl i{font-style:normal;color:var(--mut);font-size:.85em}.mk{display:flex;gap:.3em}.mk button{border:1px solid var(--line);background:none;color:var(--fg);border-radius:8px;padding:.35em .5em;font-size:.85em}
-.mk button.on{background:var(--acc);border-color:var(--acc);color:#fff}.yr{background:var(--acc);color:#fff;border-radius:10px;padding:.5em;text-align:center;font-weight:600;margin-bottom:.8em}
+.mk button.on{background:var(--acc);border-color:var(--acc);color:#fff}.mk button.hf{opacity:.6}.yr{background:var(--acc);color:#fff;border-radius:10px;padding:.5em;text-align:center;font-weight:600;margin-bottom:.8em}
 #rk{padding:.5em 1em;font-size:.9em;line-height:1.6}#rk>span{white-space:nowrap;margin-right:1.1em}#rk b{color:var(--acc)}#cd{font-size:2em;text-align:center;font-weight:700}.tip{font-size:.8em;color:var(--mut);padding:0 1em .4em}
 </style><main><div class=top><h1>Hit&amp;Guess</h1><small id=info class=hint></small></div>
 <div id=rk class='card hide' aria-label=Ranking></div>
@@ -34,9 +34,10 @@ function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null
 function nm(i){return G.players[i]?G.players[i].name:'?'}
 function songbox(s,card){var d=el('div',card?'card ctr':'ctr');if(s.id){var im=el('img');im.id='cv';im.alt='';im.src='api/cover?v=s'+s.id+'&'+who();im.onerror=function(){im.remove()};d.appendChild(im)}
 d.appendChild(el('div','',s.title)).id='t';d.appendChild(el('div','',s.artist)).id='a';var al=el('div','',s.album+(s.date?' · '+s.date:''));al.id='al';d.appendChild(al);return d}
-var ML=[[1,'Artist'],[2,'Title'],[4,'Year'],[8,'±2']];
-function marks(m,yr,st){return ML.filter(function(x){return m&x[0]&&(x[0]<4||yr)}).map(function(x){return x[1]}).join(' + ')||'–'}
-function pts(m){return(m&1?1:0)+(m&2?1:0)+(m&4?2:m&8?1:0)}
+/* the ticks: [right, almost, label]; a tap goes nothing -> right -> almost (half a point) -> nothing */
+var ML=[[1,16,'Artist'],[2,32,'Title'],[4,8,'Year']];
+function marks(m,yr){return ML.filter(function(x){return(m&(x[0]|x[1]))&&(x[0]<4||yr)}).map(function(x){return x[2]+(m&x[0]?'':' ½')}).join(' + ')||'–'}
+function pts(m){var h=ML.reduce(function(a,x){return a+(m&x[0]?2:m&x[1]?1:0)},0);return h/2}
 function draw(j){G=j;var me=j.you,P=j.players,ph=j.phase,t=j.turn,s=G.set,cur=j.cur,inn=me>=0&&P[me].in;
 $('join').classList.toggle('hide',inn);if(!inn&&ph==='end')$('join').classList.add('hide');
 $('info').textContent=ph==='lobby'||ph==='end'?'':'Round '+j.round+' · song '+(j.songs+(ph==='pick'?1:0))+(s.win==0?' of '+s.win_n:'')+(j.left>0?' · '+j.left+' left':'');
@@ -61,7 +62,7 @@ c.appendChild(el('p','hint',j.ended==1?'Every song has played.':j.ended==2?'The 
 var ch=j.can.choose;$('pick').classList.toggle('hide',!ch);
 if(ch){$('pkh').textContent=ph==='reveal'?(j.next_ready?'Your song is chosen - it plays once '+nm(cur)+' confirms.':'Your turn is next - choose your song now'):'Your turn: choose a song';
 var sg=$('sug');sg.textContent='';(j.sugg||[]).forEach(function(x){var b=el('button','r');b.appendChild(el('b','',x.title));b.appendChild(el('small','',x.artist));b.onclick=function(){act('pick','song_id='+x.id)};sg.appendChild(b)});
-$('rer').classList.toggle('hide',!j.sugg||!!j.rerolled);$('fw').classList.toggle('hide',!j.can.pick);$('rnd').disabled=!!j.next_ready;
+$('rer').classList.toggle('hide',!j.sugg||!(j.rerolls_left>0));if(j.sugg)$('rer').textContent='New suggestions ('+j.rerolls_left+' left)';$('fw').classList.toggle('hide',!j.can.pick);$('rnd').disabled=!!j.next_ready;
 $('rnd').textContent=s.rndknown?'🎲 Random':'🎲 Random (a surprise for you too)';if(j.can.pick&&!$('list').children.length&&!$('q').value)find(0)}
 else{$('list').textContent='';$('q').value=''}
 /* typed guesses */
@@ -75,8 +76,8 @@ var l=$('pls');l.textContent='';var ord=ph==='end'&&j.rank?j.rank.map(function(r
 ord.forEach(function(i,k){var p=P[i];if(!p.in&&ph!=='end'&&!p.pts)return;var r=el('div','pl'+(i===me?' me':''));
 var lab=(ph==='end'&&j.rank?j.rank[k][0]+'. ':'')+(i===cur&&ph!=='end'&&ph!=='lobby'?'▶ ':'')+p.name+(p.in?'':' (left)');r.appendChild(el('span','',lab));
 if(ph==='play'&&s.form&&p.guesses)r.appendChild(el('i','',p.tipped?'✓ guessed':'…'));
-if(ph==='reveal'&&p.mark!=null){if(me===cur&&(i!==cur||t.chance)){var mk=el('div','mk');ML.forEach(function(x){if(x[0]>2&&!(t.year_counts&&s.year))return;if(x[0]==8&&!s.stagger)return;
-var b=el('button',p.mark&x[0]?'on':'',x[1]);b.onclick=function(){var m=p.mark^x[0];if(x[0]==4&&m&4)m&=~8;if(x[0]==8&&m&8)m&=~4;act('mark','p='+i+'&m='+m)};mk.appendChild(b)});r.appendChild(mk)}
+if(ph==='reveal'&&p.mark!=null){if(me===cur&&(i!==cur||t.chance)){var mk=el('div','mk');ML.forEach(function(x){if(x[0]>2&&!(t.year_counts&&s.year))return;var on=p.mark&x[0],half=p.mark&x[1];
+var b=el('button',on?'on':half?'on hf':'',x[2]+(half?' ½':''));b.onclick=function(){var m=p.mark&~(x[0]|x[1]);if(!on&&!half)m|=x[0];else if(on&&s.stagger)m|=x[1];act('mark','p='+i+'&m='+m)};mk.appendChild(b)});r.appendChild(mk)}
 else if(i!==cur||t.chance)r.appendChild(el('i','',marks(p.mark,t.year_counts&&s.year)+(p.mark?' (+'+pts(p.mark)+')':'')))}
 var sc=el('b','',p.pts+(ph==='end'?' (A '+p.pa+' · T '+p.pt+' · Y '+p.py+')':''));sc.style.flex='none';r.appendChild(sc);l.appendChild(r);
 if(ph==='reveal'&&p.tip)l.appendChild(el('div','tip','Guessed: '+[p.tip.a,p.tip.t,p.tip.y||''].filter(Boolean).join(' · ')));
@@ -85,7 +86,7 @@ if(!l.children.length)l.appendChild(el('div','pl','Nobody yet'));
 /* the end: every song that played */
 $('fin').classList.toggle('hide',ph!=='end');if(ph==='end'){var tk=$('trk');tk.textContent='';(j.tracks||[]).forEach(function(x,n){var r=el('div','r');r.appendChild(el('b','',(n+1)+'. '+x.s.title));
 r.appendChild(el('small','',x.s.artist+(x.s.date?' · '+x.s.date:'')+' · '+nm(x.by)+(x.chance?' (random)':'')+(x.skipped?' · skipped':'')));tk.appendChild(r)})}
-var ru=['Points: artist 1, title 1'+(s.year?', year 2'+(s.stagger?' (1 if off by up to 2 years)':''):'')+'.'];ru.push(s.win==0?'The game ends after '+s.win_n+' songs.':s.win==1?'The game ends after '+s.win_n+(s.win_n>1?' rounds.':' round.'):'The first to '+s.win_n+' points wins.');
+var ru=['Points: artist 1, title 1'+(s.year?', year 1':'')+(s.stagger?'; almost right ½'+(s.year?' (the year off by up to 2)':''):'')+'.'+(s.stagger&&me===cur?' Tap a tick twice for ½.':'')];ru.push(s.win==0?'The game ends after '+s.win_n+' songs.':s.win==1?'The game ends after '+s.win_n+(s.win_n>1?' rounds.':' round.'):'The first to '+s.win_n+' points wins.');
 if(!s.form)ru.push('Say your guesses aloud; the player whose turn it is ticks them.');$('rules').textContent=ru.join(' ')}
 function find(o){off=o;var q=$('q').value.trim();fetch('api/game_search?'+who()+'&q='+encodeURIComponent(q)+'&offset='+o+'&limit=40',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
 if(!j.ok){say(j.message);return}var l=$('list');if(!o)l.textContent='';j.items.forEach(function(x){var b=el('button','r');b.appendChild(el('b','',x.title));b.appendChild(el('small','',x.artist+(x.album?' · '+x.album:'')));

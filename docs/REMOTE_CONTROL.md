@@ -137,21 +137,23 @@ phones and give a name. The host presses **Start**; players take turns in the or
 One turn: the player whose turn it is (A) chooses a song (or **Random**), it plays, everybody guesses artist, title and
 (for songs with a date) the year, aloud by default. A presses **Reveal**: all phones and the Disc show title, artist,
 album, cover and date. A ticks per player what was right and confirms; the next player (B) takes over and may already
-choose their song while A's song still plays. Points: artist 1, title 1, year 2 (with the staggered setting 1 point
-when off by up to 2 years). The game shows only the year; the library keeps the full date (the scanner stores
+choose their song while A's song still plays. Points: artist 1, title 1, year 1; almost right is half a point (a
+similar artist or title, the year off by up to 2; A taps a tick twice for ½). The song plays on Repeat One until the
+next one starts, so it never runs into the next song of the list; the saved play mode comes back when the game ends
+(it is not changed in the settings). The game shows only the year; the library keeps the full date (the scanner stores
 `YYYY-MM-DD` where the tags have it; songs scanned before need a rescan). The end shows the ranking with artist, title
 and year points and the list of songs played.
 
 | Setting | Default | What it does |
 |---|---|---|
 | Songs | whole library | Or a folder with its subfolders (**Choose…** lists the card's folders: tap one to go in, **Use this folder** takes the one shown), or a playlist. |
-| Choosing a song | with 3 suggestions | The player chooses any song (search), chooses with 3 random suggestions (new suggestions once per turn; any other song of the pool is still allowed), or only chance (Random). |
+| Choosing a song | with 3 suggestions | The player chooses any song (search), chooses with 3 random suggestions (new suggestions up to 3 times per turn; any other song of the pool is still allowed), or only chance (Random). |
 | A random song is shown to the player whose turn it is | off | Off: when A presses **Random**, A does not see the song either. |
 | If not, that player guesses too | on | A guesses (and can score) when A does not know the song. |
 | A song may come up again | off | Off: the game ends when the pool is used up. |
 | Guess the year too | on | Songs with a date say "year counts". |
-| Year off by up to 2 years: 1 point | on | Exact year: 2 points. |
-| Players type their guesses | off | Each phone gets a form; the Disc pre-ticks matching guesses on Reveal (case, accents, "The", brackets and small typos ignored), A can still change the ticks. |
+| Almost right: half a point | on | Off: only right counts (no ½ ticks, typed guesses that are only close get nothing). |
+| Players type their guesses | off | Each phone gets a form; the Disc pre-ticks matching guesses on Reveal (case, accents, "The" and brackets ignored; a small typo or a good part of it, e.g. "Take on", is almost right), A can still change the ticks. |
 | Countdown | off | The song's length (or the part's) plus N seconds (default 0), shown on the phones and the Disc; then "Time is up" and typed guesses are closed. A still reveals. |
 | Playing | from the start | Or a part (default 10 s) from a random place; **Play the part again** when allowed (default on). |
 | Once revealed, who may stop the song | the player whose turn it was | Nobody, A, A or B, everybody. |

@@ -749,7 +749,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
                 if(!a.cmd.sub) a.kind = RMT_R_BAD_PARAM;
                 if(a.cmd.sub == RMT_G_PICK){ if(param(r, "song_id", &v) || v < 1) a.kind = RMT_R_BAD_PARAM; else a.cmd.song_id = v; }
                 if(a.cmd.sub == RMT_G_MARK){
-                    long m; if(param(r, "p", &v) || v < 0 || v >= HG_PLAYERS || param(r, "m", &m) || m < 0 || m > 15) a.kind = RMT_R_BAD_PARAM;
+                    long m; if(param(r, "p", &v) || v < 0 || v >= HG_PLAYERS || param(r, "m", &m) || m < 0 || m > 63) a.kind = RMT_R_BAD_PARAM;
                     else { a.cmd.pos = v; a.cmd.arg = m; }
                 }
                 if(a.cmd.sub == RMT_G_TIP){

@@ -386,6 +386,8 @@ void ui_book_flush(void);                              /* checkpoint the playing
 void ui_book_user_seeked(long target_ms);              /* manual seek in a book: drop pending resume, persist target_ms to the bookmark now, keep session */
 int  ui_set_volume(int vol);   /* set absolute volume 0..VOL_MAX; returns 0=queued, -1=failed */
 void ui_set_workmode(int mode);
+void ui_play_mode_temp(int mode);     /* not saved; ui_play_mode_restore() sends the saved mode again */
+void ui_play_mode_restore(void);
 void ui_np_set_playmode(int wm);   /* fork (Zune): set the play mode and repaint (its play-mode list) */
 int ui_apply_eq(int preset);
 int ui_eq_select(int preset);    /* central EQ apply+persist (eq_preset + eq_last); 0 ok, -1 send failed */

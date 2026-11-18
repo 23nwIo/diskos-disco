@@ -39,7 +39,8 @@ int main(void){
     hg_mark(&g, 1, HG_M_ARTIST | HG_M_YEAR | HG_M_NEAR);             /* exact wins over near */
     hg_mark(&g, 2, HG_M_TITLE | HG_M_NEAR);
     OK(hg_confirm(&g, -1) == HG_PICK && g.cur == 1 && g.rounds == 0);
-    OK(g.p[1].pa == 1 && g.p[1].py == 2 && g.p[2].pt == 1 && g.p[2].py == 1 && hg_total(&g.p[1]) == 3);
+    OK(g.p[1].pa == 2 && g.p[1].py == 2 && g.p[2].pt == 2 && g.p[2].py == 1 && hg_total(&g.p[1]) == 4);   /* half points: 2 + 2, 2 + 1 */
+    hg_mark(&g, 0, 0); { char b[16]; OK(!strcmp(hg_pts_str(3, b, 16), "1.5") && !strcmp(hg_pts_str(4, b, 16), "2") && hg_points(HG_M_ANEAR | HG_M_TITLE | HG_M_NEAR) == 4); }
     /* a song without a date: the year can't be ticked */
     hg_song(&g, 8, 1, "Song", "Band", "", "");
     OK(g.t[1].year == 0 && !hg_knows(&g, 1) && hg_guesses(&g, 1));     /* chance: Ben doesn't know it and guesses along */
@@ -76,11 +77,20 @@ int main(void){
     OK(hg_tip(&g, 1, "queen", "dont stop me now", 1979, &why) == 0 && !hg_all_tipped(&g));
     OK(hg_tip(&g, 2, "The Queen", "Dont stop me know", 1990, &why) == 0 && hg_all_tipped(&g));
     hg_reveal(&g);
-    OK(g.t[0].mark[1] == (HG_M_ARTIST | HG_M_TITLE | HG_M_NEAR) && g.t[0].mark[2] == (HG_M_ARTIST | HG_M_TITLE));
+    OK(g.t[0].mark[1] == (HG_M_ARTIST | HG_M_TITLE | HG_M_NEAR) && g.t[0].mark[2] == (HG_M_ARTIST | HG_M_TNEAR));   /* "know": almost */
+    hg_mark(&g, 2, HG_M_TITLE | HG_M_TNEAR | HG_M_ANEAR); OK(g.t[0].mark[2] == (HG_M_TITLE | HG_M_ANEAR));   /* right wins over almost */
     OK(hg_tip(&g, 1, "a", "b", 1978, &why) == -1);                   /* too late */
-    OK(hg_match("Beyonce", "Beyonc\xc3\xa9") && hg_match("Motorhead", "Mot\xc3\xb6rhead") && hg_match("Simon & Garfunkel", "Simon and Garfunkel")
-       && !hg_match("ABBA", "Queen") && !hg_match("", "Queen") && hg_match("Sweet Child of Mine", "Sweet Child O' Mine")
-       && hg_match("Bohemian Rapsody", "Bohemian Rhapsody") && hg_match("Smells like teen spirit", "Smells Like Teen Spirit - Live"));
+    OK(hg_match("Beyonce", "Beyonc\xc3\xa9") == 2 && hg_match("Motorhead", "Mot\xc3\xb6rhead") == 2 && hg_match("Simon & Garfunkel", "Simon and Garfunkel") == 2
+       && !hg_match("ABBA", "Queen") && !hg_match("", "Queen") && hg_match("Sweet Child of Mine", "Sweet Child O' Mine") == 1
+       && hg_match("Bohemian Rapsody", "Bohemian Rhapsody") == 1 && hg_match("Smells like teen spirit", "Smells Like Teen Spirit - Live") == 2
+       && hg_match("Take on", "Take On Me") == 1 && hg_match("Me", "Take On Me") == 0 && hg_match("Bohemian", "Bohemian Rhapsody") == 1);
+    /* almost right off: only right counts */
+    set[HG_S_STAGGER] = 0; hg_reset(&g, set);
+    hg_join(&g, "aaaaaaaa", "A", &why); hg_join(&g, "bbbbbbbb", "B", &why); hg_start(&g, &why);
+    hg_song(&g, 1, 0, "Africa", "Toto", "Toto IV", "1982");
+    hg_tip(&g, 1, "Totto", "Africa", 1983, &why); hg_reveal(&g);
+    OK(g.t[0].mark[1] == HG_M_TITLE);
+    hg_mark(&g, 1, HG_M_ANEAR | HG_M_TITLE | HG_M_NEAR); OK(g.t[0].mark[1] == HG_M_TITLE);
     OK(hg_year_of("1985-06-01") == 1985 && hg_year_of("") == 0 && hg_year_of("85") == 0);
     puts("hitguess_test: ok");
     return 0;
