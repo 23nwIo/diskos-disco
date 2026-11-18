@@ -196,7 +196,7 @@ $(HOST_DIR)/host_render.o: $(APP)/tests/host_render.c | $(HOST_DIR)
 HOST_OBJS := $(filter-out $(APP)/main.o $(APP)/theme_kit.o $(APP)/config.o $(APP)/art.o $(APP)/queue.o,$(OBJS)) \
              $(HOST_DIR)/main.o $(HOST_DIR)/theme_kit.o $(HOST_DIR)/config.o $(HOST_DIR)/art.o $(HOST_DIR)/queue.o $(HOST_DIR)/host_render.o
 host-render: $(HOST_OBJS)
-	$(CC) $(LDFLAGS) -o $(HOST_DIR)/host-render $(HOST_OBJS) $(LDLIBS) -lcrypt -Wl,--wrap=lv_obj_set_local_style_prop,--wrap=ssdb_open,--wrap=ui_play_list,--wrap=mdb_song_count,--wrap=ui_seek_to,--wrap=ui_set_volume,--wrap=ui_display_is_off,--wrap=ipc_get_state,--wrap=ui_is_playing,--wrap=ui_transport_command,--wrap=ipc_send_cmd,--wrap=fw_custom_peq_writable,--wrap=fw_custom_peq_curve_writable,--wrap=mdb_get_peq_ex,--wrap=mdb_get_peq_readonly,--wrap=mdb_song_accent,--wrap=art_make_all_ex_gen,--wrap=wifi_radio_live,--wrap=bt_state,--wrap=wifi_toggle,--wrap=bt_toggle,--wrap=artcache_get_thumb,--wrap=artcache_get_cover,--wrap=ui_local_playback_allowed,--wrap=mdb_song_rates
+	$(CC) $(LDFLAGS) -o $(HOST_DIR)/host-render $(HOST_OBJS) $(LDLIBS) -lcrypt -Wl,--wrap=lv_obj_set_local_style_prop,--wrap=ssdb_open,--wrap=ui_play_list,--wrap=mdb_song_count,--wrap=ui_seek_to,--wrap=ui_set_volume,--wrap=ui_display_is_off,--wrap=ipc_get_state,--wrap=ui_is_playing,--wrap=ui_transport_command,--wrap=ipc_send_cmd,--wrap=fw_custom_peq_writable,--wrap=fw_custom_peq_curve_writable,--wrap=mdb_get_peq_ex,--wrap=mdb_get_peq_readonly,--wrap=mdb_song_accent,--wrap=art_make_all_ex_gen,--wrap=wifi_radio_live,--wrap=bt_state,--wrap=wifi_toggle,--wrap=bt_toggle,--wrap=artcache_get_thumb,--wrap=artcache_get_cover,--wrap=ui_local_playback_allowed,--wrap=mdb_song_rates,--wrap=remote_guests_url
 .PHONY: host-render
 -include $(HOST_DIR)/*.d
 

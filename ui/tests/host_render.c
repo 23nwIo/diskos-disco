@@ -95,6 +95,9 @@ int __wrap_ui_seek_to(long ms){if(getenv("REVIEW_SCRUB")||getenv("REVIEW_BRAUN2"
 int __wrap_ui_set_volume(int v){if(getenv("REVIEW_SCRUB")||getenv("REVIEW_ZUNE_VOLUME")){scrub_volume_calls++;scrub_last_volume=v;return scrub_send_fail?-1:0;}return __real_ui_set_volume(v);}
 int __real_ui_is_playing(void);
 int __wrap_ui_is_playing(void){const char*p=getenv("NP_PLAYING");return p?atoi(p):__real_ui_is_playing();}
+/* the guests' link as the Disc would show it on Wi-Fi (HG_GUESTS_URL; the host renderer has no Wi-Fi address) */
+int __real_remote_guests_url(char*out,size_t cap);
+int __wrap_remote_guests_url(char*out,size_t cap){const char*u=getenv("HG_GUESTS_URL");if(u)return snprintf(out,cap,"%s",u)<(int)cap?0:-1;return __real_remote_guests_url(out,cap);}
 
 /* Radio fixtures are host-only: tests never toggle the computer's real radios. */
 static int qs_wifi=-1,qs_bt=-1,qs_wifi_taps,qs_bt_taps;

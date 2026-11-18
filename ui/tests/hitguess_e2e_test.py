@@ -124,6 +124,7 @@ ok(26); no(27, 'may not stop')
 b = ok(28); assert len(res[28]['plays']) == 1 and res[28]['plays'] != res[15]['plays'] and b['phase'] == 'play' and b['cur'] == 1, (res[28]['plays'], b)   # Africa
 assert [p['pts'] for p in b['players']] == [0, 3, 1] and b['players'][1]['py'] == 1
 b = ok(29); assert b['turn']['song'] is None and b['turn']['chance'] == 0
+assert b['rank'] == [[1, 1], [2, 2], [3, 0]] and 'tracks' not in b, b['rank']   # the ranking for the phones while the game runs, not the songs
 ok(30); ok(31); b = ok(32); assert b['phase'] == 'end' and b['ended'] == 0
 b = ok(33)
 assert b['rank'] == [[1, 0], [2, 1], [3, 2]] and [p['pts'] for p in b['players']] == [4, 3, 1], b   # Anna: artist, title, exact 1982

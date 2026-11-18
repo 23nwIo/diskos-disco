@@ -163,9 +163,11 @@ The setup is kept on the SD card in `.diskos/state/hitguess.conf` and can change
 ends. Every game is logged to `/tmp/hitguess/game-<date>-<time>.log` (RAM; the newest 20 are kept): players, songs,
 guesses, ticks, points and the result.
 
-**On the Disc's screen** (while the game is on): the lobby shows a QR code of the players' link; while a song plays a
-big "?" with whose song it is (and "Guess the year too"; the countdown when on); after Reveal the title, artist and
-year; at the end the winner. A tap hides the screen until the next step. Not yet tested on a Disc.
+**On the Disc's screen** (while the game is on): the lobby shows a QR code of the players' link with the address
+below it (without `http://`); while a song plays a big "?" with whose song it is (and "Guess the year too"; the
+countdown when on); after Reveal the title, artist and year; at the end the winner. Once the game runs, a line at the
+bottom shows the ranking with each player's points (no breakdown), scrolling sideways when it is too long. The phones
+show the same ranking at the top while the game runs; the breakdown comes at the end. A tap hides the screen until the next step. Not yet tested on a Disc.
 
 ### Page look
 

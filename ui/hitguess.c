@@ -240,7 +240,7 @@ static void play_tick(void){
  * While the guests' link is in game mode the Disc shows the game over everything: in the lobby the link as a QR code,
  * then a big "?" while a song is chosen and guessed, the song once it is revealed, the winner at the end. A tap hides
  * it until the game moves on (the next phase or song), so the host can still use the Disc. */
-static lv_obj_t *g_scr; static char g_scr_sig[1100], g_hide_sig[64];
+static lv_obj_t *g_scr, *g_cd; static char g_scr_sig[2600], g_hide_sig[64], g_cd_txt[200];
 static lv_obj_t *scr_label(const char *t, const lv_font_t *f, lv_color_t c, int y, int w, int lines){
     lv_obj_t *l = lv_label_create(g_scr);
     lv_label_set_text(l, t);
@@ -253,7 +253,18 @@ static lv_obj_t *scr_label(const char *t, const lv_font_t *f, lv_color_t c, int 
     lv_obj_align(l, LV_ALIGN_CENTER, 0, y);
     return l;
 }
-static void scr_close(void){ if(g_scr){ lv_obj_delete(g_scr); g_scr = NULL; } g_scr_sig[0] = 0; }
+static void scr_close(void){ if(g_scr){ lv_obj_delete(g_scr); g_scr = NULL; } g_cd = NULL; g_scr_sig[0] = 0; }
+/* the ranking as one line, "1. Anna (4)  ·  2. Ben (3)" (no breakdown; Jo, 2026-11-18); players who left are out */
+static void rank_line(char *out, size_t cap){
+    int idx[HG_PLAYERS], place[HG_PLAYERS], n = hg_rank(&G, idx, place); size_t o = 0; out[0] = 0;
+    for(int k = 0; k < n && o < cap; k++){
+        const hg_player_t *p = &G.p[idx[k]];
+        if(!p->in) continue;
+        int w = snprintf(out + o, cap - o, "%s%d. %s (%d)", o ? "  \xC2\xB7  " : "", place[k], p->name, hg_total(p));
+        if(w < 0 || (size_t)w >= cap - o){ out[o] = 0; break; }   /* never a cut name */
+        o += (size_t)w;
+    }
+}
 static void phase_sig(char *out, size_t cap){ snprintf(out, cap, "%d/%d/%d", G.phase, G.nt, G.cur); }
 static void scr_tap(lv_event_t *e){ (void)e; phase_sig(g_hide_sig, sizeof g_hide_sig); scr_close(); }
 static void screen_update(void){
@@ -261,7 +272,8 @@ static void screen_update(void){
     char ps[64]; phase_sig(ps, sizeof ps);
     if(g_hide_sig[0]){ if(!strcmp(ps, g_hide_sig)) return; g_hide_sig[0] = 0; }
     const hg_turn_t *t = G.nt && G.phase >= HG_PLAY ? &G.t[G.nt - 1] : NULL;
-    char url[96] = "", a[200] = "", b[200] = "", c[200] = "", big[8] = "?";
+    char url[96] = "", a[200] = "", b[200] = "", c[200] = "", big[8] = "?", rk[1400] = "";
+    if(G.phase != HG_LOBBY) rank_line(rk, sizeof rk);
     int players = 0; for(int i = 0; i < G.np; i++) players += G.p[i].in;
     switch(G.phase){
     case HG_LOBBY:
@@ -285,8 +297,12 @@ static void screen_update(void){
         break; }
     }
     char sig[sizeof g_scr_sig];
-    snprintf(sig, sizeof sig, "%s|%s|%s|%s|%s|%s", ps, url, a, b, c, big);
-    if(g_scr && !strcmp(sig, g_scr_sig)) return;
+    int cd_live = G.phase == HG_PLAY && countdown_left() >= 0;   /* the countdown changes in place, so the ranking keeps scrolling */
+    snprintf(sig, sizeof sig, "%s|%s|%s|%s|%s|%s|%s", ps, url, a, b, cd_live ? "cd" : c, big, rk);
+    if(g_scr && !strcmp(sig, g_scr_sig)){
+        if(g_cd && strcmp(c, g_cd_txt)){ snprintf(g_cd_txt, sizeof g_cd_txt, "%s", c); lv_label_set_text(g_cd, c); ui_request_wake(); }
+        return;
+    }
     scr_close(); snprintf(g_scr_sig, sizeof g_scr_sig, "%s", sig);
     g_scr = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(g_scr);
@@ -305,9 +321,12 @@ static void screen_update(void){
             lv_qrcode_update(qr, url, (uint32_t)strlen(url));
             lv_obj_set_style_border_width(qr, 5, 0); lv_obj_set_style_border_color(qr, TC(FIXED_QR_LIGHT), 0);
             lv_obj_align(qr, LV_ALIGN_CENTER, 0, -35);
-            scr_label(url, TF(UI_14), TC(TEXT_SECONDARY), 70, 290, 1);
+            const char *addr = strncmp(url, "http://", 7) ? url : url + 7;   /* the address to type, without http:// */
+            const lv_font_t *af = TH_F_DETAIL;
+            if(lv_text_get_width(addr, (uint32_t)strlen(addr), af, 0) > 300) af = TF(UI_14);
+            scr_label(addr, af, TC(TEXT_PRIMARY), 68, 310, 1);
         } else scr_label(a, TH_F_DETAIL, TC(TEXT_PRIMARY), -20, 260, 2);
-        scr_label(b, TF(UI_14), TC(TEXT_MUTED), 100, 240, 2);
+        scr_label(b, TF(UI_14), TC(TEXT_MUTED), 108, 240, 2);
     } else if(big[0]){
         lv_obj_t *q = scr_label(big, TF(UI_48), TC(ACCENT_PRIMARY), -50, 120, 1);
         lv_obj_update_layout(q);
@@ -315,11 +334,15 @@ static void screen_update(void){
         lv_obj_set_style_transform_scale(q, 640, 0);              /* 2.5 x: the big question mark */
         scr_label(a, TH_F_DETAIL, TC(TEXT_PRIMARY), 20, 280, 1);
         if(b[0]) scr_label(b, TF(UI_14), TC(ACCENT_EMPHASIS), 55, 260, 1);
-        if(c[0]) scr_label(c, TF(UI_24), TC(TEXT_PRIMARY), 100, 200, 1);
+        if(c[0]){ g_cd = scr_label(c, TF(UI_24), TC(TEXT_PRIMARY), 92, 200, 1); snprintf(g_cd_txt, sizeof g_cd_txt, "%s", c); }
     } else {
         scr_label(a, TF(MUSIC_TITLE), TC(TEXT_PRIMARY), -30, 290, 2);
         scr_label(b, TF(MUSIC_ARTIST), TC(TEXT_SECONDARY), 35, 270, 1);
         if(c[0]) scr_label(c, TF(UI_24), TC(ACCENT_PRIMARY), 85, 220, 1);
+    }
+    if(rk[0]){                                           /* the ranking at the bottom, scrolling sideways when long */
+        lv_obj_t *r = scr_label(rk, TF(UI_14), TC(TEXT_SECONDARY), 122, 240, 1);
+        lv_label_set_long_mode(r, LV_LABEL_LONG_SCROLL_CIRCULAR);
     }
     ui_request_wake();
 }
@@ -422,11 +445,14 @@ static char *view_json(int me, int admin){
                    G.phase == HG_PLAY && me == G.cur, G.phase == HG_REVEAL && me == G.cur,
                    G.phase == HG_PLAY && me == G.cur && G.set[HG_S_REPLAY] && P.seen,
                    hg_may_stop(&G, me) && P.on);
-    if(G.phase == HG_END || admin){
+    {                                                    /* the ranking, for everybody (Jo, 2026-11-18: the phones show it too) */
         int idx[HG_PLAYERS], place[HG_PLAYERS], n = hg_rank(&G, idx, place);
         rmt_buf_put(&b, ",\"rank\":[");
         for(int k = 0; k < n; k++) rmt_buf_printf(&b, "%s[%d,%d]", k ? "," : "", place[k], idx[k]);
-        rmt_buf_put(&b, "],\"tracks\":[");
+        rmt_buf_put(&b, "]");
+    }
+    if(G.phase == HG_END || admin){
+        rmt_buf_put(&b, ",\"tracks\":[");
         int upto = G.phase == HG_END ? G.nt : G.nt - (G.phase == HG_PLAY);   /* the song still being guessed stays out */
         for(int k = 0; k < upto; k++){
             rmt_buf_printf(&b, "%s{\"by\":%d,\"chance\":%d,\"skipped\":%d,\"s\":", k ? "," : "", G.t[k].player, G.t[k].chance, G.t[k].skipped);
