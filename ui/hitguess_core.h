@@ -109,7 +109,7 @@ int  hg_tip(hg_game_t *g, int i, const char *artist, const char *title, int year
 int  hg_all_tipped(const hg_game_t *g);
 /* PLAY -> REVEAL; with typed guesses the ticks start as the matches */
 void hg_reveal(hg_game_t *g);
-/* the ticks for player i (HG_M_*, only what the turn allows) */
+/* the ticks for player i (HG_M_*, only what the turn allows); in PLAY too (A ticks early; the caller checks who) */
 void hg_mark(hg_game_t *g, int i, int marks);
 /* the half points one mark set is worth */
 int  hg_points(int marks);

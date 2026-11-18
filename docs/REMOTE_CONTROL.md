@@ -135,7 +135,8 @@ A game for the guests' link: set **Party mode** to **Game: Hit&Guess** and open 
 phones and give a name. The host presses **Start**; players take turns in the order they joined.
 
 One turn: the player whose turn it is (A) chooses a song (or **Random**), it plays, everybody guesses artist, title and
-(for songs with a date) the year, aloud by default. A presses **Reveal**: all phones and the Disc show title, artist,
+(for songs with a date) the year, aloud by default. A can tick right guesses already while the song plays (when A knows the song; the others see the ticks only after
+the reveal). A presses **Reveal**: all phones and the Disc show title, artist,
 album, cover and date. A ticks per player what was right and confirms; the next player (B) takes over and may already
 choose their song while A's song still plays. Points: artist 1, title 1, year 1; almost right is half a point (a
 similar artist or title, the year off by up to 2; A taps a tick twice for ½). The song plays on Repeat One until the

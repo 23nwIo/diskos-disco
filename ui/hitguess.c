@@ -358,6 +358,10 @@ static void screen_update(void){
     ui_request_wake();
 }
 
+/* A ticks right guesses while the song still plays (Jo, 2026-11-18), when A knows the song; the others see the ticks
+ * only once it is revealed */
+static int early_marks(int me){ return G.phase == HG_PLAY && me >= 0 && me == G.cur && hg_knows(&G, me); }
+
 /* ---------------------------------------------------------------- choosing */
 #define HG_REROLLS 3                                     /* new suggestions per turn (Jo, 2026-11-18: three times) */
 static int g_sugg[3], g_nsugg, g_sugg_for = -1, g_sugg_nt = -1, g_rerolled;
@@ -440,7 +444,7 @@ static char *view_json(int me, int admin){
         rmt_buf_printf(&b, ",\"in\":%d,\"pa\":%s,\"pt\":%s,\"py\":%s,\"pts\":%s,\"joined\":%d,\"tipped\":%d,\"guesses\":%d", p->in,
                        hg_pts_str(p->pa, t1, 16), hg_pts_str(p->pt, t2, 16), hg_pts_str(p->py, t3, 16),
                        hg_pts_str(hg_total(p), t0, 16), p->joined, p->tipped, G.phase == HG_PLAY && hg_guesses(&G, i));
-        if(t && (G.phase == HG_REVEAL || admin)){
+        if(t && (G.phase == HG_REVEAL || admin || early_marks(me))){
             rmt_buf_printf(&b, ",\"mark\":%d", t->mark[i]);
             if(G.set[HG_S_FORM] && p->tipped){ rmt_buf_put(&b, ",\"tip\":{\"a\":"); rmt_buf_str(&b, p->tip_a); rmt_buf_put(&b, ",\"t\":"); rmt_buf_str(&b, p->tip_t); rmt_buf_printf(&b, ",\"y\":%d}", p->tip_y); }
         } else if(i == me && p->tipped){ rmt_buf_put(&b, ",\"tip\":{\"a\":"); rmt_buf_str(&b, p->tip_a); rmt_buf_put(&b, ",\"t\":"); rmt_buf_str(&b, p->tip_t); rmt_buf_printf(&b, ",\"y\":%d}", p->tip_y); }
@@ -458,7 +462,7 @@ static char *view_json(int me, int admin){
     rmt_buf_printf(&b, ",\"can\":{\"choose\":%d,\"pick\":%d,\"tip\":%d,\"reveal\":%d,\"mark\":%d,\"replay\":%d,\"stop\":%d}",
                    me >= 0 && me == ch, me >= 0 && me == ch && G.set[HG_S_PICK] != 2,
                    G.phase == HG_PLAY && G.set[HG_S_FORM] && hg_guesses(&G, me) && countdown_left() != 0,
-                   G.phase == HG_PLAY && me == G.cur, G.phase == HG_REVEAL && me == G.cur,
+                   G.phase == HG_PLAY && me == G.cur, (G.phase == HG_REVEAL && me == G.cur) || early_marks(me),
                    G.phase == HG_PLAY && me == G.cur && G.set[HG_S_REPLAY] && P.seen,
                    hg_may_stop(&G, me) && P.on);
     {                                                    /* the ranking, for everybody (Jo, 2026-11-18: the phones show it too) */
@@ -538,7 +542,7 @@ static int player(const rmt_cmd_t *c, const char **why, char **body){
             if(G.phase != HG_PLAY || me != G.cur){ *why = "Only the player whose turn it is reveals the song"; return -1; }
             hg_reveal(&G); hlog("%s revealed the song", G.p[me].name); break;
         case RMT_G_MARK:
-            if(G.phase != HG_REVEAL || me != G.cur){ *why = "Only the player whose turn it is ticks"; return -1; }
+            if(!(G.phase == HG_REVEAL && me == G.cur) && !early_marks(me)){ *why = "Only the player whose turn it is ticks (before the reveal: when they know the song)"; return -1; }
             if(c->pos >= G.np){ *why = "No such player"; return -1; }
             hg_mark(&G, (int)c->pos, (int)c->arg); break;
         case RMT_G_CONFIRM: {

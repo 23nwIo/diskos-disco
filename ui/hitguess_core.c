@@ -134,7 +134,7 @@ void hg_reveal(hg_game_t *g){
     if(g->set[HG_S_FORM])
         for(int i = 0; i < g->np; i++){
             const hg_player_t *p = &g->p[i];
-            if(!p->tipped) continue;
+            if(!p->tipped || t->mark[i]) continue;         /* A's own ticks made before the reveal stay */
             int st = g->set[HG_S_STAGGER], ma = hg_match(p->tip_a, t->artist), mt = hg_match(p->tip_t, t->title);
             int m = (ma == 2 ? HG_M_ARTIST : ma && st ? HG_M_ANEAR : 0) | (mt == 2 ? HG_M_TITLE : mt && st ? HG_M_TNEAR : 0)
                   | year_marks(p->tip_y, t->year, st);
@@ -144,7 +144,7 @@ void hg_reveal(hg_game_t *g){
 }
 void hg_mark(hg_game_t *g, int i, int marks){
     hg_turn_t *t = turn(g);
-    if(!t || g->phase != HG_REVEAL || i < 0 || i >= g->np) return;
+    if(!t || (g->phase != HG_REVEAL && g->phase != HG_PLAY) || i < 0 || i >= g->np) return;
     marks &= HG_M_ARTIST | HG_M_TITLE | HG_M_YEAR | HG_M_NEAR | HG_M_ANEAR | HG_M_TNEAR;
     if(!t->year) marks &= ~(HG_M_YEAR | HG_M_NEAR);
     if(!g->set[HG_S_STAGGER]) marks &= ~(HG_M_NEAR | HG_M_ANEAR | HG_M_TNEAR);

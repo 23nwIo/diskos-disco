@@ -49,6 +49,7 @@ if(ph==='play'){var c=el('div','card');if(t.year_counts&&s.year)c.appendChild(el
 if(t.song){c.appendChild(songbox(t.song));c.appendChild(el('p','hint ctr',me===cur?'Only you see this - the others guess.':''))}
 else{c.appendChild(el('div','big','?'));c.appendChild(el('p','ctr',me===cur?(t.chance?'Chance chose - guess along!':'Your song plays'):nm(cur)+'’s song plays - who is it?'))}
 if(t.countdown>=0){var d=el('div','',t.countdown?t.countdown+' s':'Time is up');d.id='cd';c.appendChild(d)}
+if(j.can.mark)c.appendChild(el('p','hint ctr','You can tick right guesses below already.'));
 if(s.form){var n=0,k=0;P.forEach(function(p){if(p.guesses){n++;if(p.tipped)k++}});c.appendChild(el('p','hint ctr',k+' of '+n+' guessed'))}
 if(j.can.reveal||j.can.replay){var tr=el('div','tr');if(j.can.replay){var b=el('button','sm','↻ Play again');b.onclick=function(){act('replay')};tr.appendChild(b)}
 if(j.can.reveal){var b=el('button','pp sm','Reveal');b.onclick=function(){if(!s.form||t.all_tipped||t.countdown===0||confirm('Not everybody has guessed yet. Reveal anyway?'))act('reveal')};tr.appendChild(b)}c.appendChild(tr)}g.appendChild(c)}
@@ -79,11 +80,11 @@ var l=$('pls');l.textContent='';var ord=ph==='end'&&j.rank?j.rank.map(function(r
 ord.forEach(function(i,k){var p=P[i];if(!p.in&&ph!=='end'&&!p.pts)return;var r=el('div','pl'+(i===me?' me':''));
 var lab=(ph==='end'&&j.rank?j.rank[k][0]+'. ':'')+(i===cur&&ph!=='end'&&ph!=='lobby'?'▶ ':'')+p.name+(p.in?'':' (left)');r.appendChild(el('span','',lab));
 if(ph==='play'&&s.form&&p.guesses)r.appendChild(el('i','',p.tipped?'✓ guessed':'…'));
-if(ph==='reveal'&&p.mark!=null){if(me===cur&&(i!==cur||t.chance)){var mk=el('div','mk');ML.forEach(function(x){if(x[0]>2&&!(t.year_counts&&s.year))return;var on=p.mark&x[0],half=p.mark&x[1];
+if((ph==='reveal'||(ph==='play'&&j.can.mark))&&p.mark!=null){if(me===cur&&(i!==cur||t.chance)){var mk=el('div','mk');ML.forEach(function(x){if(x[0]>2&&!(t.year_counts&&s.year))return;var on=p.mark&x[0],half=p.mark&x[1];
 var b=el('button',on?'on':half?'on hf':'',x[2]+(half?' ½':''));b.onclick=function(){var m=p.mark&~(x[0]|x[1]);if(!on&&!half)m|=x[0];else if(on&&s.stagger)m|=x[1];act('mark','p='+i+'&m='+m)};mk.appendChild(b)});r.appendChild(mk)}
 else if(i!==cur||t.chance)r.appendChild(el('i','',marks(p.mark,t.year_counts&&s.year)+(p.mark?' (+'+pts(p.mark)+')':'')))}
 var sc=el('b','',p.pts+(ph==='end'?' (A '+p.pa+' · T '+p.pt+' · Y '+p.py+')':''));sc.style.flex='none';r.appendChild(sc);l.appendChild(r);
-if(ph==='reveal'&&p.tip)l.appendChild(el('div','tip','Guessed: '+[p.tip.a,p.tip.t,p.tip.y||''].filter(Boolean).join(' · ')));
+if((ph==='reveal'||(ph==='play'&&j.can.mark))&&p.tip)l.appendChild(el('div','tip','Guessed: '+[p.tip.a,p.tip.t,p.tip.y||''].filter(Boolean).join(' · ')));
 if(ph==='end'&&p.joined)l.appendChild(el('div','tip','joined after '+p.joined+(p.joined>1?' songs':' song')))});
 if(!l.children.length)l.appendChild(el('div','pl','Nobody yet'));
 /* the end: every song that played */

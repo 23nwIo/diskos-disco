@@ -76,6 +76,7 @@ int main(void){
     OK(hg_tip(&g, 0, "x", "y", 1, &why) == -1);                      /* A knows it */
     OK(hg_tip(&g, 1, "queen", "dont stop me now", 1979, &why) == 0 && !hg_all_tipped(&g));
     OK(hg_tip(&g, 2, "The Queen", "Dont stop me know", 1990, &why) == 0 && hg_all_tipped(&g));
+    hg_mark(&g, 0, HG_M_ARTIST); OK(g.t[0].mark[0] == HG_M_ARTIST); hg_mark(&g, 0, 0);   /* ticks before the reveal (the Disc checks who) */
     hg_reveal(&g);
     OK(g.t[0].mark[1] == (HG_M_ARTIST | HG_M_TITLE | HG_M_NEAR) && g.t[0].mark[2] == (HG_M_ARTIST | HG_M_TNEAR));   /* "know": almost */
     hg_mark(&g, 2, HG_M_TITLE | HG_M_TNEAR | HG_M_ANEAR); OK(g.t[0].mark[2] == (HG_M_TITLE | HG_M_ANEAR));   /* right wins over almost */

@@ -89,6 +89,14 @@ reqs = [
     'POST /api/party vol=0',                                                   # 52 the host keeps the volume
     'POST ~/api/volume value=40&' + A,                                         # 53
     'GET ~/api/game?' + A,                                                     # 54
+    'POST /api/game_admin action=again',                                       # 55
+    'POST /api/game_admin rndknown=1',                                         # 56 Anna sees what chance chose
+    'POST /api/game_admin action=start',                                       # 57
+    'POST ~/api/game action=random&' + A,                                      # 58
+    'POST ~/api/game action=mark&p=1&m=1&' + A,                                # 59 Anna ticks Cleo's guess before the reveal
+    'POST ~/api/game action=mark&p=0&m=1&' + C,                                # 60 Cleo may not
+    'GET ~/api/game?' + C,                                                     # 61 Cleo doesn't see the tick yet
+    'POST ~/api/game action=reveal&' + A,                                      # 62
 ]
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -151,9 +159,13 @@ assert 'workmode 2 for now (not saved' in r.stderr and 'again (rc=' in r.stderr,
 assert [x['name'] for x in ok(47)['items'] if x['dir']][:1] == ['80s'], res[47]
 ok(49); ok(50); assert 'volume' in ok(51), res[51]
 ok(52); no(53, "host's"); assert 'volume' not in ok(54)
+ok(55); ok(56); b = ok(57); assert b['cur'] == 0, b
+ok(58); b = ok(59); assert b['can']['mark'] and b['players'][1]['mark'] == 1, b
+no(60, 'Only the player'); assert 'mark' not in ok(61)['players'][1]
+assert ok(62)['players'][1]['mark'] == 1
 assert ok(48)['dir'] == '' and 'dir=\n' in (sd/'.diskos/state/hitguess.conf').read_text()
 logs = sorted(Path('/tmp/hitguess').glob('game-*.log')); assert logs, 'no log'
-assert len(logs) == 2, logs
+assert len(logs) == 3, logs   # one per game started
 text = '\n'.join(l.read_text() for l in logs)
 for want in ['game starts: 3 songs (folder Music/80s)', 'Cleo joined the running game', 'song 1 by Anna (chosen): "Take On Me"',
              'Ben guesses: artist "A-Ha"', 'Anna revealed the song', 'Ben chose the next song early', '  Ben: artist title near year = 2.5',
