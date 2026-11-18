@@ -346,6 +346,11 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
             static const char *const A[] = { "start", "skip", "remove", "end", "again", "reset" };
             rt.kind = RMT_R_BAD_PARAM;
             for(int i = 0; i < 6; i++) if(!strcmp(act, A[i])) rt.cmd.sub = RMT_G_START + i;
+            if(!strcmp(act, "fixyear")){                     /* y = the right year, k = the turn (0 = the first song; default the current) */
+                long y, k = -1; int pk = param(r, "k", &k);
+                if(param(r, "y", &y) || y < 1000 || y > 2999 || pk == -2 || (pk == 0 && (k < 0 || k >= HG_TURNS))){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
+                rt.cmd.sub = RMT_G_FIXYEAR; rt.cmd.arg = y; rt.cmd.pos = k; rt.kind = RMT_R_CMD; return rt;
+            }
             if(!rt.cmd.sub){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
             long p = -1;
             if(rt.cmd.sub == RMT_G_REMOVE && (param(r, "p", &p) || p < 0 || p >= HG_PLAYERS)){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
@@ -746,6 +751,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
             else if(param_str(r, "action", act, sizeof act)) a.kind = RMT_R_BAD_PARAM;
             else {
                 for(int i = 0; i < 11; i++) if(!strcmp(act, A[i])) a.cmd.sub = RMT_G_JOIN + i;
+                if(!strcmp(act, "fixyear")){ a.cmd.sub = RMT_G_FIXYEAR; if(param(r, "y", &v) || v < 1000 || v > 2999) a.kind = RMT_R_BAD_PARAM; else a.cmd.arg = v; }
                 if(!a.cmd.sub) a.kind = RMT_R_BAD_PARAM;
                 if(a.cmd.sub == RMT_G_PICK){ if(param(r, "song_id", &v) || v < 1) a.kind = RMT_R_BAD_PARAM; else a.cmd.song_id = v; }
                 if(a.cmd.sub == RMT_G_MARK){

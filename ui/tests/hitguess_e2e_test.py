@@ -97,6 +97,16 @@ reqs = [
     'POST ~/api/game action=mark&p=0&m=1&' + C,                                # 60 Cleo may not
     'GET ~/api/game?' + C,                                                     # 61 Cleo doesn't see the tick yet
     'POST ~/api/game action=reveal&' + A,                                      # 62
+    'POST ~/api/game action=fixyear&y=1999&' + C,                              # 63 only Anna corrects the year
+    'POST ~/api/game action=fixyear&y=1999&' + A,                              # 64
+    'POST /api/game_admin action=fixyear&y=1998&k=0',                          # 65 the host, the first song of this game
+    'POST /api/game_admin action=fixyear&y=3500',                              # 66
+    'POST /api/game_admin action=end',                                         # 67
+    'POST /api/game_admin action=again',                                       # 68
+    'POST /api/game_admin pick=0',                                             # 69
+    'POST /api/game_admin action=start',                                       # 70
+    'POST ~/api/game action=pick&song_id=5&' + A,                              # 71 Zombie: the correction counts when it was the fixed song
+    'GET ~/api/game?' + A,                                                     # 72
 ]
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -163,9 +173,16 @@ ok(55); ok(56); b = ok(57); assert b['cur'] == 0, b
 ok(58); b = ok(59); assert b['can']['mark'] and b['players'][1]['mark'] == 1, b
 no(60, 'Only the player'); assert 'mark' not in ok(61)['players'][1]
 assert ok(62)['players'][1]['mark'] == 1
+no(63, 'whose turn'); t = ok(64)['turn']['song']; assert t['year'] == 1999 and t['date'] == '1999', t
+assert ok(65)['tracks'][0]['s']['date'] == '1998'; assert res[66]['rc'] <= -100, res[66]
+fx = (sd/'.diskos/state/year-fixes.tsv').read_text().splitlines()
+for k in (67, 68, 69, 70, 71): ok(k)
+t = ok(72)['turn']['song']; fixed = res[64]['body']['turn']['song']['title'] == 'Zombie'
+assert t['title'] == 'Zombie' and (t['date'], t['year']) == (('1998', 1998) if fixed else ('1994', 1994)), (t, fixed)
+assert fx[0].startswith('# diskOS Hit&Guess') and len(fx) == 2 and fx[1].split('\t')[0].startswith('Music/') and fx[1].split('\t')[4] == '1998' and fx[1].split('\t')[5] == 'the host', fx
 assert ok(48)['dir'] == '' and 'dir=\n' in (sd/'.diskos/state/hitguess.conf').read_text()
 logs = sorted(Path('/tmp/hitguess').glob('game-*.log')); assert logs, 'no log'
-assert len(logs) == 3, logs   # one per game started
+assert len(logs) == 4, logs   # one per game started
 text = '\n'.join(l.read_text() for l in logs)
 for want in ['game starts: 3 songs (folder Music/80s)', 'Cleo joined the running game', 'song 1 by Anna (chosen): "Take On Me"',
              'Ben guesses: artist "A-Ha"', 'Anna revealed the song', 'Ben chose the next song early', '  Ben: artist title near year = 2.5',

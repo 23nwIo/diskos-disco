@@ -161,6 +161,12 @@ and year points and the list of songs played.
 | The game ends after | 3 rounds | N songs, N rounds or N points (the first to reach them wins). |
 | Players may join a running game | on | Late players start with 0 points and are marked "joined after N songs". |
 
+**Wrong years.** After the reveal the player whose turn it is has **Wrong year?** (or **Add the year**), and the host
+has it on every song in **Songs played**. The right year counts in this game at once and is kept on the SD card in
+`.diskos/state/year-fixes.tsv` (tab-separated: path on the card, title, artist, the library's date, the right year,
+who, when; one line per song, a newer fix replaces the older), to be written into the tags later. Until then every
+game uses the fixed year for that song. The tags and the library are not changed.
+
 Every phone gets a volume slider, as the Party tab's **Change the volume** and **Up to N %** allow (the only party
 settings the game uses besides the link's name).
 

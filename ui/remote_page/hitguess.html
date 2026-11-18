@@ -55,7 +55,7 @@ if(j.can.reveal||j.can.replay){var tr=el('div','tr');if(j.can.replay){var b=el('
 if(j.can.reveal){var b=el('button','pp sm','Reveal');b.onclick=function(){if(!s.form||t.all_tipped||t.countdown===0||confirm('Not everybody has guessed yet. Reveal anyway?'))act('reveal')};tr.appendChild(b)}c.appendChild(tr)}g.appendChild(c)}
 if(ph==='reveal'&&t.song){var c=el('div','card');c.appendChild(songbox(t.song));
 if(t.song.year&&s.year)c.appendChild(el('p','hint ctr','Year: '+t.song.year));
-if(me===cur){c.appendChild(el('p','hint','Tick what each player got right, then confirm.'))}
+if(me===cur){c.appendChild(el('p','hint','Tick what each player got right, then confirm.'));var fy=el('button','sm',t.song.year?'Wrong year?':'Add the year');fy.onclick=fixyear;c.appendChild(fy)}
 var tr=el('div','tr');if(j.can.stop){var b=el('button','sm','■ Stop the song');b.onclick=function(){act('stop')};tr.appendChild(b)}
 if(me===cur){var b=el('button','pp sm','Confirm');b.onclick=function(){act('confirm')};tr.appendChild(b)}if(tr.children.length)c.appendChild(tr);g.appendChild(c)}
 if(ph==='end'){var c=el('div','card ctr');c.appendChild(el('div','big','🏆'));var w=j.rank&&j.rank[0];c.appendChild(el('p','',w?nm(w[1])+' wins with '+P[w[1]].pts+' points!':'Game over'));
@@ -97,6 +97,8 @@ if(!j.ok){say(j.message);return}var l=$('list');if(!o)l.textContent='';j.items.f
 b.onclick=function(){act('pick','song_id='+x.id).then(function(r){if(r.ok){$('q').value='';l.textContent=''}})};l.appendChild(b)});if(!l.children.length)l.appendChild(el('div','pl','No song found'));$('mo').classList.toggle('hide',!j.more)}).catch(function(){say('Disc not reachable')})}
 $('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){find(0)},350)};$('mo').onclick=function(){find(off+40)};
 var vdrag=0;$('vol').oninput=function(){vdrag=1;$('vv').textContent=this.value};$('vol').onchange=function(){vdrag=0;cmdj('volume',who()+'&value='+this.value)};
+/* a wrong year: the right one goes to the corrections on the SD card (and counts in this game) */
+function fixyear(){var y=prompt('The right year of this song','');if(y==null)return;y=parseInt(y,10);if(!(y>=1000&&y<=2999)){say('A year from 1000 to 2999');return}act('fixyear','y='+y).then(function(j){if(j.ok)say('Year saved for the correction',1)})}
 $('rnd').onclick=function(){act('random')};$('rer').onclick=function(){act('reroll')};
 $('jb').onclick=function(){NM=$('nm').value.trim();if(!NM){say('Enter your name first');return}try{localStorage.setItem('hn',NM)}catch(e){}act('join').then(function(j){if(j.ok)say('Welcome, '+NM+'!',1)})};
 $('gs').onclick=function(){act('tip',enc({a:$('ga').value.trim(),t:$('gt').value.trim(),y:$('gy').value||0})).then(function(j){if(j.ok)say('Guess sent',1)})};

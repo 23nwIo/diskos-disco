@@ -97,6 +97,9 @@ int  hg_start(hg_game_t *g, const char **why);
 int  hg_after(const hg_game_t *g, int i);
 /* A song starts for player cur: a new turn (PLAY); title etc. as the library has them */
 void hg_song(hg_game_t *g, int song, int chance, const char *title, const char *artist, const char *album, const char *date);
+/* the right year for turn k (a correction; Jo, 2026-11-18): the game shows and counts it; 0 or -1 (no such turn, year
+ * out of 1000..2999) */
+int  hg_fix_year(hg_game_t *g, int k, int year);
 /* does the turn count a year (the setup's year on and the song has a date)? the year, else 0 */
 int  hg_year_of(const char *date);
 /* may player i see the song before it is revealed? */

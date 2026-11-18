@@ -170,12 +170,13 @@ static int pool_random(const int *not, int nnot){
     }
     return 0;
 }
-typedef struct { int id, dur; char title[HG_TXT_MAX], artist[HG_TXT_MAX], album[HG_TXT_MAX], date[11]; } song_t;
+typedef struct { int id, dur; char title[HG_TXT_MAX], artist[HG_TXT_MAX], album[HG_TXT_MAX], date[11], path[PATH_MAX]; } song_t;
 static int one(void *ud, const mdb_row_t *r){
     song_t *s = ud; s->id = r->id; s->dur = r->dur_ms;
     snprintf(s->title, sizeof s->title, "%s", r->title && r->title[0] ? r->title : r->name ? r->name : "");
     snprintf(s->artist, sizeof s->artist, "%s", r->artist ? r->artist : ""); snprintf(s->album, sizeof s->album, "%s", r->album ? r->album : "");
     snprintf(s->date, sizeof s->date, "%s", r->date ? r->date : "");
+    snprintf(s->path, sizeof s->path, "%s", r->path ? r->path : "");
     return 1;
 }
 static int song_get(int id, song_t *s){ memset(s, 0, sizeof *s); return mdb_rows(MDB_ROWS_ID, NULL, id, one, s) > 0 && s->id == id; }
@@ -380,6 +381,76 @@ static void suggest(int force){
     int not[4] = { cur };
     for(int k = 0; k < 3; k++){ int id = pool_random(not, 1 + g_nsugg); if(!id) break; g_sugg[g_nsugg++] = id; not[g_nsugg] = id; }
 }
+/* ---------------------------------------------------------------- year corrections (Jo, 2026-11-18)
+ * Many songs carry a wrong year. The player whose turn it is (or the host) gives the right one; it goes to
+ * <card>/.diskos/state/year-fixes.tsv, one line per song (a newer fix replaces the older), to be written into the
+ * tags later. Until then the game uses it: a song with a fix counts the fixed year. Columns (tab-separated):
+ * path on the card, title, artist, the library's date, the right year, who, when (local time). */
+#define HG_FIXES "year-fixes.tsv"
+#define HG_FIXES_MAX (2 * 1024 * 1024)
+static const char HG_FIXES_HEAD[] = "# diskOS Hit&Guess: right years for the tags (path on the SD card, title, artist, date in the library, right year, by, when)\n";
+static const char *card_rel(const char *p){              /* /tmp/sdcard/Music/x.flac -> Music/x.flac */
+    size_t n = strlen(FOLDERBROWSER_ROOT);
+    return !strncmp(p, FOLDERBROWSER_ROOT, n) && p[n] == '/' ? p + n + 1 : p;
+}
+static void tsv_field(char *out, size_t cap, const char *s){   /* no tabs or line breaks inside a field */
+    size_t o = 0;
+    for(; s && *s && o + 1 < cap; s++) out[o++] = *s == '\t' || *s == '\n' || *s == '\r' ? ' ' : *s;
+    out[o] = 0;
+}
+/* the line for path + title in text: its start, or NULL; *end its end (after the line break) */
+static char *fix_line(char *text, const char *path, const char *title, char **end){
+    char key[PATH_MAX + HG_TXT_MAX + 2]; char p[PATH_MAX], t[HG_TXT_MAX];
+    tsv_field(p, sizeof p, path); tsv_field(t, sizeof t, title);
+    int kn = snprintf(key, sizeof key, "%s\t%s\t", p, t);
+    if(kn <= 0 || kn >= (int)sizeof key) return NULL;
+    for(char *l = text; l && *l; ){
+        char *nl = strchr(l, '\n'); char *e = nl ? nl + 1 : l + strlen(l);
+        if(!strncmp(l, key, (size_t)kn)){ *end = e; return l; }
+        l = e;
+    }
+    return NULL;
+}
+static int fix_year_of(const char *path, const char *title){   /* the fixed year, 0 none */
+    char *t = NULL; size_t n = 0; int r = 0, y = 0;
+    if(!sds_begin()) return 0;
+    r = sds_read(HG_FIXES, &t, &n, HG_FIXES_MAX);
+    sds_end();
+    if(r == 1){ char *e, *l = fix_line(t, card_rel(path), title, &e);
+        if(l){ const char *c = l; for(int k = 0; k < 4 && c; k++){ c = memchr(c, '\t', (size_t)(e - c)); if(c) c++; } if(c) y = atoi(c); } }
+    free(t);
+    return y >= 1000 && y <= 2999 ? y : 0;
+}
+static int fix_save(const song_t *s, int year, const char *who, const char **why){
+    char *t = NULL; size_t n = 0; int r;
+    if(!sds_begin()){ *why = "No SD card for the correction"; return -1; }
+    r = sds_read(HG_FIXES, &t, &n, HG_FIXES_MAX);
+    if(r < 0){ sds_end(); *why = "Couldn't read the corrections on the SD card"; return -1; }
+    if(r == 0 || !t){ free(t); t = strdup(HG_FIXES_HEAD); n = t ? strlen(t) : 0; }
+    char *e, *l = t ? fix_line(t, card_rel(s->path), s->title, &e) : NULL;
+    if(l){ memmove(l, e, strlen(e) + 1); n = strlen(t); }          /* the newer fix replaces the older */
+    char p[PATH_MAX], ti[HG_TXT_MAX], ar[HG_TXT_MAX], wh[HG_NAME_MAX + 8], line[PATH_MAX + 3 * HG_TXT_MAX + 96], when[32];
+    tsv_field(p, sizeof p, card_rel(s->path)); tsv_field(ti, sizeof ti, s->title); tsv_field(ar, sizeof ar, s->artist); tsv_field(wh, sizeof wh, who);
+    time_t now = time(NULL); struct tm tm; localtime_r(&now, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm);
+    int ln = snprintf(line, sizeof line, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", p, ti, ar, s->date, year, wh, when);
+    char *nt = t && ln > 0 && ln < (int)sizeof line ? realloc(t, n + (size_t)ln + 1) : NULL;
+    if(!nt){ free(t); sds_end(); *why = "Out of memory"; return -1; }
+    memcpy(nt + n, line, (size_t)ln + 1);
+    r = sds_mkdir() == 0 ? sds_write(HG_FIXES, nt, n + (size_t)ln) : -1;
+    sds_end(); free(nt);
+    if(r){ *why = "Couldn't save the correction on the SD card"; return -1; }
+    return 0;
+}
+/* turn k gets the right year: the game uses it now, the file keeps it for the tags */
+static int fix_turn_year(int k, int year, const char *who, const char **why){
+    if(k < 0 || k >= G.nt){ *why = "No such song in this game"; return -1; }
+    song_t s;
+    if(!song_get(G.t[k].song, &s)){ *why = "That song is no longer in the library"; return -1; }
+    if(fix_save(&s, year, who, why)) return -1;
+    hlog("%s: the right year of \"%s\" is %d (library: %s)", who, s.title, year, s.date[0] ? s.date : "none");
+    hg_fix_year(&G, k, year);
+    return 0;
+}
 static int start_turn_song(int id, int chance, const char **why){
     song_t s;
     if(!song_get(id, &s)){ *why = "That song is no longer in the library"; return -1; }
@@ -387,7 +458,9 @@ static int start_turn_song(int id, int chance, const char **why){
     P.dur = s.dur;
     int pi = pool_at(id);
     if(pi >= 0 && !g_used[pi]){ g_used[pi] = 1; g_nused++; }
+    int fy = fix_year_of(s.path, s.title);
     hg_song(&G, id, chance, s.title, s.artist, s.album, s.date);
+    if(fy){ hlog("a correction says %d for \"%s\" (library: %s)", fy, s.title, s.date[0] ? s.date : "none"); hg_fix_year(&G, G.nt - 1, fy); }
     hlog("song %d by %s (%s): \"%s\" - %s, album \"%s\", date %s%s", G.nt, G.p[G.cur].name, chance ? "chance" : "chosen",
          s.title, s.artist, s.album, s.date[0] ? s.date : "none", G.t[G.nt - 1].year ? "" : " (no year to guess)");
     return 0;
@@ -562,6 +635,10 @@ static int player(const rmt_cmd_t *c, const char **why, char **body){
         case RMT_G_STOP:
             if(!hg_may_stop(&G, me)){ *why = "You may not stop the song"; return -1; }
             stop_song(G.p[me].name); break;
+        case RMT_G_FIXYEAR:
+            if(G.phase != HG_REVEAL || me != G.cur){ *why = "The player whose turn it is corrects the year, once it is revealed"; return -1; }
+            if(fix_turn_year(G.nt - 1, (int)c->arg, G.p[me].name, why)) return -1;
+            break;
         default: *why = "Not in this game"; return -1;
         }
     }
@@ -635,6 +712,10 @@ static int host(const rmt_cmd_t *c, const char **why, char **body){
     case RMT_G_END:
         if(G.phase == HG_LOBBY || G.phase == HG_END){ *why = "No game runs"; return -1; }
         hg_end(&G, 2); after_turn("the host ended the game"); break;
+    case RMT_G_FIXYEAR:                                  /* the host: any song of this game (default the one now) */
+        if(G.phase == HG_PLAY && (c->pos < 0 || c->pos == G.nt - 1)){ *why = "Reveal the song first"; return -1; }
+        if(fix_turn_year(c->pos >= 0 ? (int)c->pos : G.nt - 1, (int)c->arg, "the host", why)) return -1;
+        break;
     case RMT_G_AGAIN: hg_again(&G); memset(&P, 0, sizeof P); break;
     case RMT_G_RESET: hg_reset(&G, G.set); memset(&P, 0, sizeof P); break;
     default: *why = "Unknown action"; return -1;

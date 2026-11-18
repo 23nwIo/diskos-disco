@@ -16,6 +16,8 @@ file, fsync, rename).
 | `usage.bin`, `usage_charge.bin` | Battery & usage: one sample a minute for the last ~25 h, and the totals since the last full charge (ui/usage.c) | every 10 minutes, at a full charge and before power off; without a card the data stays in RAM until one is there | `/usr/data/usage.bin`, `/usr/data/usage.bin_charge`: read at start, deleted once the card has a copy |
 | `autotag.log` | Auto-tag: files where nothing was found, retried at most once a day (ui/tagfix.c) | per auto-tag attempt | `/usr/data/autotag.log`: dropped at the first write |
 | `party.conf` | Remote Control party mode settings: `key=value` lines (name, on, vol, maxvol, np, queue, skip, total, consec, repeat, radio, names; ui/party.c) | only when the host changes a setting on System > Party | new (2026-11-16) |
+| `hitguess.conf` | Hit&Guess setup: `key=value` lines (dir, pl and the game keys; ui/hitguess.c) | only when the host changes the setup on the game page | new (2026-11-18) |
+| `year-fixes.tsv` | Hit&Guess year corrections for the tags: a `#` header, then one tab-separated line per song (path on the card, title, artist, the library's date, the right year, by, when); a newer fix replaces the older | when a player or the host corrects a year | new (2026-11-18) |
 
 A different card brings its own files. Paths in `books.tsv` are as the Disc sees them (`/tmp/sdcard/...`).
 

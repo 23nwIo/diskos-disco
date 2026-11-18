@@ -96,7 +96,8 @@ typedef enum { RMT_OUT_AUX = 1, RMT_OUT_BT, RMT_OUT_VOL_AUX, RMT_OUT_VOL_BT, RMT
  * | again | reset, or the setup keys (HG_KEYS) with dir= (the pool's folder, relative to the card) and pl= (playlist id). */
 typedef enum { RMT_G_STATE = 0, RMT_G_JOIN, RMT_G_PICK, RMT_G_RANDOM, RMT_G_REROLL, RMT_G_REVEAL, RMT_G_MARK, RMT_G_CONFIRM,
                RMT_G_REPLAY, RMT_G_STOP, RMT_G_TIP, RMT_G_LEAVE,
-               RMT_G_START, RMT_G_SKIP, RMT_G_REMOVE, RMT_G_END, RMT_G_AGAIN, RMT_G_RESET, RMT_G_SETUP } rmt_game_t;
+               RMT_G_START, RMT_G_SKIP, RMT_G_REMOVE, RMT_G_END, RMT_G_AGAIN, RMT_G_RESET, RMT_G_SETUP,
+               RMT_G_FIXYEAR } rmt_game_t;   /* the right year of a song: the player whose turn it is, or the host (pos = the turn) */
 typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR, RMT_Q_ADD } rmt_queue_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
