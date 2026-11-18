@@ -144,7 +144,7 @@ and year points and the list of songs played.
 
 | Setting | Default | What it does |
 |---|---|---|
-| Songs | whole library | Or a folder with its subfolders, or a playlist. |
+| Songs | whole library | Or a folder with its subfolders (**Choose…** lists the card's folders: tap one to go in, **Use this folder** takes the one shown), or a playlist. |
 | Choosing a song | with 3 suggestions | The player chooses any song (search), chooses with 3 random suggestions (new suggestions once per turn; any other song of the pool is still allowed), or only chance (Random). |
 | The player sees a song chance chose | off | Off: a random song stays hidden from A too. |
 | Otherwise the player guesses along | on | A guesses (and gets points) when A does not know the song. |

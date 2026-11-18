@@ -81,6 +81,8 @@ reqs = [
     'POST /api/party on=1',                                                    # 44 back to the party
     'GET ~/api/game?' + A,                                                     # 45 no game
     'GET ~/api/state?' + A,                                                    # 46 the party works again
+    'GET /api/library/folder?limit=500&path=Music',                            # 47 the host's folder picker lists the card's folders
+    'POST /api/game_admin dir=',                                               # 48 the whole card
 ]
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -103,7 +105,7 @@ ok(1); s = ok(2)['set']
 assert s['pick'] == 1 and s['year'] == 1 and s['stagger'] == 1 and s['skip'] == 1 and s['late'] == 1 and s['form'] == 0 and s['countdown'] == 0
 assert ok(3)['set']['form'] == 1 and res[3]['body']['dir'] == 'Music/80s'
 conf = (sd/'.diskos/state/hitguess.conf').read_text()
-assert 'dir=Music/80s' in conf and 'form=1' in conf and 'pool=2' in conf and 'pl=1' in conf, conf   # as saved last (36)
+assert 'form=1' in conf and 'pool=2' in conf and 'pl=1' in conf, conf   # as saved last (36; dir: 48)
 b = ok(4); assert b['you'] == -1 and b['phase'] == 'lobby' and b['players'] == []
 no(5, 'name'); assert ok(6)['you'] == 0; no(7, 'that name'); assert ok(8)['you'] == 1
 b = ok(9); assert b['phase'] == 'pick' and b['cur'] == 0 and b['pool'] == 3
@@ -139,6 +141,8 @@ b = ok(41); assert not b['players'][1]['in']
 b = ok(42); assert b['cur'] == 2 and b['phase'] == 'pick'                     # Ben's out: Cleo's turn
 b = ok(43); assert b['phase'] == 'end' and b['ended'] == 2 and b['tracks'][0]['skipped'] == 1
 ok(44); no(45, 'No game'); ok(46)
+assert [x['name'] for x in ok(47)['items'] if x['dir']][:1] == ['80s'], res[47]
+assert ok(48)['dir'] == '' and 'dir=\n' in (sd/'.diskos/state/hitguess.conf').read_text()
 logs = sorted(Path('/tmp/hitguess').glob('game-*.log')); assert logs, 'no log'
 assert len(logs) == 2, logs
 text = '\n'.join(l.read_text() for l in logs)
