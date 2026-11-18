@@ -9,6 +9,8 @@
 int  party_dispatch(const rmt_cmd_t *c, const char **why, char **body);
 /* The party link's name while party mode is on, else "". */
 const char *party_link_name(void);
+/* What the guests' link is for: 0 off, 1 the party, 2 the game Hit&Guess (hitguess.c) */
+int  party_mode(void);
 /* Who queued a song (queue_item_who): the guest's name, "a guest" without one, "" for the host's own. */
 const char *party_guest_name(int who);
 /* Where guests' uploads go (absolute; "" while the party or its uploads are off) and the largest file in bytes. */

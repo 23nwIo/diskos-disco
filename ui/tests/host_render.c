@@ -2428,7 +2428,17 @@ int main(int argc, char **argv){
                 printf("REQ %s %s %s\nRC %d WHY %s SENT %d %s\nBODY %s\n", m, pq, bd ? bd : "", rc, why ? why : "-", send_count, last_sent, out ? out : "-");
                 free(out);
             }
-            fclose(rf); fflush(stdout); return 0;
+            fclose(rf); fflush(stdout);
+            if(getenv("REMOTE_RENDER")){   /* then the Disc's screen as it looks (the Hit&Guess game screen) */
+                void hitguess_tick(void);
+                for(int i=0;i<4;i++){ hitguess_tick(); for(int k=0;k<25;k++){lv_tick_inc(10);lv_timer_handler();} }
+                lv_refr_now(d);
+                FILE *f=fopen(argv[5],"wb"); if(!f) return 1;
+                fprintf(f,"P6\n360 360\n255\n");
+                for(size_t i=0;i<sizeof pixels;i+=3){ unsigned char rgb[3]={pixels[i+2],pixels[i+1],pixels[i]}; fwrite(rgb,1,3,f); }
+                if(fclose(f)) return 1;
+            }
+            return 0;
         }
         if(getenv("MPD_REQS")){   /* MPD server: one request per line (a literal \\n splits a command list) through the real handler */
             char *mpd_test_request(const char *); void mpd_test_serve(int, int);

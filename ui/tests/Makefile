@@ -21,11 +21,11 @@ fileops_test: fileops_test.c ../fileops.c
 apps_shortcut_test: apps_shortcut_test.c ../apps.c ../config.c ../md5.c
 	$(CC) $(CFLAGS) $(subst diskos_cfgtest,diskos_shortcuttest,$(DEFS)) -D_GNU_SOURCE -DLV_CONF_INCLUDE_SIMPLE -ffunction-sections -fdata-sections -I.. $< ../config.c ../md5.c -Wl,--gc-sections -o $@
 
-remote_test: remote_test.c ../remote_core.c ../remote_page.c ../remote_srv.c ../remote_core.h ../remote_srv.h
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_page.c ../remote_srv.c -pthread -o $@
+remote_test: remote_test.c ../remote_core.c ../remote_page.c ../remote_srv.c ../hitguess_core.c ../remote_core.h ../remote_srv.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. remote_test.c ../remote_core.c ../remote_page.c ../remote_srv.c ../hitguess_core.c -pthread -o $@
 
-mpd_test: mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c ../mpd_core.h ../mpd_srv.h
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c -pthread -o $@
+mpd_test: mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c ../hitguess_core.c ../mpd_core.h ../mpd_srv.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. mpd_test.c ../mpd_core.c ../mpd_srv.c ../remote_core.c ../hitguess_core.c -pthread -o $@
 
 wifi_reco_test: wifi_reco_test.c ../wifi_reco.h
 	$(CC) $(CFLAGS) -I.. wifi_reco_test.c -o $@
@@ -64,7 +64,7 @@ review: fileops_test apps_shortcut_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test
+run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -94,12 +94,17 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wif
 	./playlog_test
 	@echo "--- scanner date tags ---"
 	./scanner_date_test
+	@echo "--- hitguess rules ---"
+	./hitguess_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
+
+hitguess_test: hitguess_test.c ../hitguess_core.c ../hitguess_core.h
+	$(CC) $(CFLAGS) -I.. hitguess_test.c ../hitguess_core.c -o $@
 
 scanner_date_test: scanner_date_test.c ../scanner.c ../scanner.h sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_date_test.c sqlite3_host.o -pthread -ldl -lm -o $@

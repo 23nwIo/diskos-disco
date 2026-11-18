@@ -24,6 +24,8 @@ void rsrv_set_notify(void (*cb)(void));  /* called on the server thread when a c
 int  rsrv_queue_watched(void);
 /* Party mode (main thread): the guests' link name, "" = off (their link answers 404). Cheap when unchanged. */
 void rsrv_set_party(const char *name);
+/* 1: the guests' link shows the game's page (Hit&Guess) instead of the party's */
+void rsrv_set_party_game(int on);
 /* Guests' uploads (party mode): the folder they go to (absolute, "" = uploads off) and the largest file in bytes. An
  * upload runs on its own thread (one at a time) so the page keeps answering; once the file is on the card it asks the
  * main thread to queue it (RMT_CMD_PARTY_UPLOAD) and answers the browser with that result. */

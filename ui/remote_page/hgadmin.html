@@ -1,0 +1,66 @@
+<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
+<meta name=referrer content=no-referrer><title>Hit&amp;Guess setup</title>
+<style>
+@@STYLE@@
+.pl{display:flex;gap:.5em;align-items:center;padding:.5em 1em;border-bottom:1px solid var(--line)}.pl span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pl button{border:0;border-radius:8px;padding:.35em .6em;background:var(--line);color:var(--fg)}
+.blk select,.blk input{margin-bottom:.2em}
+</style><main><div class=top><h1>Hit&amp;Guess</h1><a href=system#party>System</a></div>
+<div class=card><b id=mode></b><div class='hd hide' id=lw><small id=lk class='hint u' style=flex:1></small><button id=lc>Copy</button></div>
+<div class=tr style='margin:.6em 0 0'><button id=bs class=pp>Start</button><button id=bk class=sm>Skip turn</button><button id=be class=sm>End game</button></div>
+<div class=tr style=margin:0><button id=ba class=sm>New game, same players</button><button id=br class=sm>Empty the lobby</button></div><div id=now class=hint></div></div>
+<h2 class=qh>Players</h2><div id=pls class=card style=padding:0>Nobody yet</div>
+<div id=fin class=hide><h2 class=qh>Songs played</h2><div id=trk class=card style=padding:0></div></div>
+<h2 class=qh>Setup</h2><div class='card blk' id=set>
+<label for=spo>Songs</label><select id=spo data-k=pool><option value=0>The whole library<option value=1>A folder and its subfolders<option value=2>A playlist</select>
+<div id=dw><label for=sdi>Folder on the SD card (e.g. Music/80s)</label><div class=hd style=margin:0><input id=sdi autocapitalize=none style='flex:1;margin-right:.5em'><button id=sds>Save</button></div></div>
+<div id=pw><label for=spl>Playlist</label><select id=spl></select></div>
+<label for=spk>Choosing a song</label><select id=spk data-k=pick><option value=0>The player chooses any song<option value=1>The player chooses, with 3 random suggestions<option value=2>Only chance (Random)</select>
+<label><input type=checkbox data-k=rndknown> The player sees a song chance chose</label>
+<label><input type=checkbox data-k=along> Otherwise the player guesses along</label>
+<label><input type=checkbox data-k=repeat> A song may come up again</label>
+<label><input type=checkbox data-k=year> Guess the year too (songs with a date)</label>
+<label><input type=checkbox data-k=stagger> Year off by up to 2 years: 1 point (exact: 2)</label>
+<label><input type=checkbox data-k=form> Players type their guesses (otherwise they say them aloud)</label>
+<label><input type=checkbox data-k=countdown> Countdown: the song's length plus</label><label for=scd>seconds</label><input id=scd data-k=cdextra type=number min=0 max=600 inputmode=numeric>
+<label for=sst>Playing</label><select id=sst data-k=start><option value=0>From the start<option value=1>A part from a random place</select>
+<label for=ssn>Length of the part (seconds)</label><input id=ssn data-k=snip type=number min=3 max=120 inputmode=numeric>
+<label><input type=checkbox data-k=replay> The player may play the part again</label>
+<label for=ssk>Once revealed, who may stop the song</label><select id=ssk data-k=skip><option value=0>Nobody<option value=1>The player whose turn it was<option value=2>That player or the next<option value=3>Everybody</select>
+<label for=swi>The game ends after</label><div class=hd style=margin:0><input id=swn data-k=win_n type=number min=1 max=400 inputmode=numeric style='width:6em;margin-right:.5em'><select id=swi data-k=win style=margin:0><option value=0>songs<option value=1>rounds<option value=2>points (the first to reach them wins)</select></div>
+<label><input type=checkbox data-k=late> Players may join a running game</label>
+<div class=hint>Kept on the SD card. The setup can change before a game starts or after it ends. Every game is logged in /tmp/hitguess/ on the Disc.</div></div>
+<div id=msg></div></main>
+<script>
+@@COMMON@@
+/* the host's game page: the setup (api/game_admin) and the running game; players use the guests' link */
+var G=null,pls=0;
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function adm(b){return cmdj('game_admin',b).then(function(j){if(j.ok)draw(j);return j})}
+function refresh(){if(document.hidden)return;fetch('api/game_admin',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.ok)draw(j)}).catch(function(){say('Disc not reachable')})}
+var PH={lobby:'Waiting for players',pick:'Choosing',play:'Playing - the players guess',reveal:'Revealed - ticking',end:'Game over'};
+function draw(j){G=j;var s=j.set,ph=j.phase,P=j.players,run=ph!=='lobby'&&ph!=='end';
+$('mode').textContent=j.mode!==2?'The guests’ link is not set to the game - change it in System > Party.':PH[ph]+(run?' · round '+j.round+' · '+j.songs+' songs'+(j.left>0?' · '+j.left+' left':''):'');
+var u=j.link&&j.mode===2?location.origin+'/'+j.link+'/':'';$('lw').classList.toggle('hide',!u);$('lk').textContent=u;
+$('bs').disabled=run||j.mode!==2;$('bk').disabled=$('be').disabled=!run;$('ba').disabled=ph==='lobby';
+var n=$('now');n.textContent='';if(j.turn&&j.turn.song&&(ph==='play'||ph==='reveal'))n.textContent=P[j.cur].name+'’s song: '+j.turn.song.title+' – '+j.turn.song.artist+(j.turn.song.date?' ('+j.turn.song.date+')':'')+(j.turn.chance?' · random':'');
+else if(run&&j.cur>=0)n.textContent=P[j.cur].name+' chooses';
+var l=$('pls');l.textContent='';var ord=j.rank?j.rank.map(function(r){return r[1]}):[];
+ord.forEach(function(i,k){var p=P[i];var r=el('div','pl');r.appendChild(el('span','',j.rank[k][0]+'. '+(i===j.cur&&run?'▶ ':'')+p.name+(p.in?'':' (left)')));
+r.appendChild(el('small','hint',p.pts+' (A '+p.pa+' · T '+p.pt+' · Y '+p.py+')'));if(p.in){var b=el('button','','Remove');b.onclick=function(){if(confirm('Remove '+p.name+' from the game?'))adm(enc({action:'remove',p:i}))};r.appendChild(b)}l.appendChild(r)});
+if(!l.children.length)l.textContent='Nobody yet - players open the guests’ link';
+$('fin').classList.toggle('hide',!(j.tracks&&j.tracks.length));var tk=$('trk');tk.textContent='';(j.tracks||[]).forEach(function(x,k){var r=el('div','r');r.appendChild(el('b','',(k+1)+'. '+x.s.title));
+r.appendChild(el('small','',x.s.artist+(x.s.date?' · '+x.s.date:'')+' · '+(P[x.by]?P[x.by].name:'?')+(x.chance?' (random)':'')+(x.skipped?' · skipped':'')));tk.appendChild(r)});
+[].forEach.call(document.querySelectorAll('#set [data-k]'),function(e){if(document.activeElement===e)return;if(e.type==='checkbox')e.checked=!!s[e.dataset.k];else e.value=s[e.dataset.k];e.disabled=run});
+$('dw').classList.toggle('hide',s.pool!=1);$('pw').classList.toggle('hide',s.pool!=2);if(document.activeElement!==$('sdi')&&!$('sdi').dataset.e)$('sdi').value=j.dir;$('sdi').disabled=$('sds').disabled=$('spl').disabled=run;
+if(!pls){pls=1;fetch('api/library/playlists?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(p){var o=$('spl');o.textContent='';o.appendChild(el('option','','Choose…')).value=0;
+(p.items||[]).forEach(function(x){var e=el('option','',x.name);e.value=x.id;o.appendChild(e)});o.value=G.pl}).catch(function(){pls=0})}else if(document.activeElement!==$('spl'))$('spl').value=j.pl}
+[].forEach.call(document.querySelectorAll('#set [data-k]'),function(e){e.onchange=function(){var v=e.type==='checkbox'?(e.checked?1:0):e.value;adm(e.dataset.k+'='+encodeURIComponent(v)).then(function(j){if(j.ok)say('Saved',1)})}});
+$('sdi').oninput=function(){$('sdi').dataset.e=1};$('sds').onclick=function(){adm(enc({dir:$('sdi').value.trim().replace(/^\/+|\/+$/g,'')})).then(function(j){if(j.ok){$('sdi').dataset.e='';say('Saved',1)}})};
+$('spl').onchange=function(){adm('pl='+$('spl').value).then(function(j){if(j.ok)say('Saved',1)})};
+$('bs').onclick=function(){adm('action=start').then(function(j){if(j.ok)say('The game starts',1)})};
+$('bk').onclick=function(){if(confirm('Skip this turn? Nobody gets points for it.'))adm('action=skip')};
+$('be').onclick=function(){if(confirm('End the game now?'))adm('action=end')};
+$('ba').onclick=function(){adm('action=again')};$('br').onclick=function(){if(confirm('Send every player out of the lobby?'))adm('action=reset')};
+$('lc').onclick=function(){var t=$('lk').textContent;try{navigator.clipboard.writeText(t).then(function(){say('Link copied',1)},function(){prompt('The players’ link',t)})}catch(e){prompt('The players’ link',t)}};
+setInterval(refresh,2000);document.addEventListener('visibilitychange',refresh);refresh();
+</script></html>

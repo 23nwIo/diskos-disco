@@ -47,6 +47,52 @@ static rmt_route_t preq(const char *method, const char *path, const char *body){
     if(rmt_req_parse(buf, &r)) return bad;
     return rmt_route_party(&r, "Fest_1");
 }
+/* Hit&Guess (Jo, 2026-11-18): the players' requests on the guests' link, the host's on the own link */
+static void test_game(void){
+    rmt_route_t r = preq("GET", "/Fest_1/api/game?g=AnnaAnnaAnna1234", NULL);
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_GAME && r.cmd.sub == RMT_G_STATE && r.cmd.guest && !strcmp(r.cmd.gid, "AnnaAnnaAnna1234"));
+    CHECK(preq("GET", "/Fest_1/api/game", NULL).kind == RMT_R_BAD_PARAM);                    /* a player is their id */
+    r = preq("POST", "/Fest_1/api/game", "action=join&g=AnnaAnnaAnna1234&n=Anna+B");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_JOIN && !strcmp(r.cmd.gname, "Anna B"));
+    r = preq("POST", "/Fest_1/api/game", "action=pick&song_id=7&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_PICK && r.cmd.song_id == 7);
+    CHECK(preq("POST", "/Fest_1/api/game", "action=pick&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
+    r = preq("POST", "/Fest_1/api/game", "action=mark&p=2&m=5&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_MARK && r.cmd.pos == 2 && r.cmd.arg == 5);
+    CHECK(preq("POST", "/Fest_1/api/game", "action=mark&p=2&m=16&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
+    CHECK(preq("POST", "/Fest_1/api/game", "action=mark&p=32&m=1&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
+    r = preq("POST", "/Fest_1/api/game", "action=tip&a=Queen&t=Bohemian+Rhapsody&y=1975&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_TIP && !strcmp(r.cmd.q, "Queen") && !strcmp(r.cmd.text, "Bohemian Rhapsody") && r.cmd.arg == 1975);
+    r = preq("POST", "/Fest_1/api/game", "action=tip&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && !r.cmd.q[0] && !r.cmd.text[0] && !r.cmd.arg);
+    CHECK(preq("POST", "/Fest_1/api/game", "action=start&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);   /* the host's, not a player's */
+    CHECK(preq("POST", "/Fest_1/api/game", "action=nope&g=AnnaAnnaAnna1234").kind == RMT_R_BAD_PARAM);
+    r = preq("GET", "/Fest_1/api/game_search?q=abba&offset=40&limit=40&g=AnnaAnnaAnna1234", NULL);
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_GAME_SEARCH && !strcmp(r.cmd.q, "abba") && r.cmd.offset == 40 && r.cmd.limit == 40);
+    CHECK(preq("GET", "/Fest_1/api/game_search?limit=500&g=AnnaAnnaAnna1234", NULL).kind == RMT_R_BAD_PARAM);
+    CHECK(preq("GET", "/Fest_1/api/game_admin", NULL).kind == RMT_R_NOT_FOUND);              /* guests never reach the host's */
+    CHECK(preq("GET", "/Fest_1/hitguess", NULL).kind == RMT_R_NOT_FOUND);
+    CHECK(req("GET", p("/api/game?g=AnnaAnnaAnna1234"), NULL).kind == RMT_R_NOT_FOUND);       /* the players' API is on their link */
+    CHECK(req("GET", p("/hitguess"), NULL).kind == RMT_R_GAME_PAGE);
+    r = req("GET", p("/api/game_admin"), NULL);
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_GAME_ADMIN && !r.cmd.arg);
+    r = req("POST", p("/api/game_admin"), "action=remove&p=3");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 1 && r.cmd.sub == RMT_G_REMOVE && r.cmd.pos == 3);
+    CHECK(req("POST", p("/api/game_admin"), "action=remove").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/game_admin"), "action=start");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_START);
+    r = req("POST", p("/api/game_admin"), "pick=2&win_n=10&dir=Music%2F80s");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_G_SETUP && r.cmd.game[HG_S_PICK] == 2 && r.cmd.game[HG_S_WIN_N] == 10 && r.cmd.game[HG_S_YEAR] == -1
+          && r.cmd.item == 1 && !strcmp(r.cmd.name, "Music/80s") && r.cmd.id == -1);
+    r = req("POST", p("/api/game_admin"), "dir=");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.item == 1 && !r.cmd.name[0]);                          /* the card's root */
+    CHECK(req("POST", p("/api/game_admin"), "pick=3").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/game_admin"), "dir=..%2Fetc").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/game_admin"), "").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/game_admin"), "pl=4");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.id == 4 && !r.cmd.item);
+    CHECK(req("POST", p("/api/party"), "on=2").kind == RMT_R_CMD && req("POST", p("/api/party"), "on=3").kind == RMT_R_BAD_PARAM);
+}
 static void test_party(void){
     CHECK(rmt_party_name_ok("ab") && rmt_party_name_ok("Fest_1-x") && !rmt_party_name_ok("a") && !rmt_party_name_ok("System")
           && !rmt_party_name_ok("api") && !rmt_party_name_ok("a b") && !rmt_party_name_ok("f%C3%BC") && !rmt_party_name_ok("123456789012345678901234567890123"));
@@ -384,7 +430,7 @@ static void test_core(void){
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
     memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0; memset(s.bt_device, 1, sizeof s.bt_device - 1); s.bt_device[sizeof s.bt_device - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
-    CHECK(strlen(RMT_PAGE_HTML) < 32768 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768);   /* each page stays light */
+    CHECK(strlen(RMT_PAGE_HTML) < 32768 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768 && strlen(RMT_HG_HTML) < 32768 && strlen(RMT_HGADMIN_HTML) < 32768);   /* each page stays light */
 }
 
 /* ---------------------------------------------------------------- server round trip */
@@ -761,6 +807,7 @@ int main(int argc, char **argv){
     }
     test_core();
     test_party();
+    test_game();
     test_server();
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     puts("PASS remote control: parsing, routing, token, JSON, HTTP round trip");

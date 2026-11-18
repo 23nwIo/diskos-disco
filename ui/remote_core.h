@@ -18,6 +18,7 @@
 #ifndef DISKOS_REMOTE_CORE_H
 #define DISKOS_REMOTE_CORE_H
 #include <stddef.h>
+#include "hitguess_core.h"
 
 #define REMOTE_PORT       8088
 #define REMOTE_TOKEN_LEN  20          /* base32 characters = 100 random bits */
@@ -52,6 +53,9 @@ typedef enum {
     RMT_CMD_PARTY_UPLOAD,    /* a guest's upload is on the card: name = its path relative to the card (the server thread wrote it) */
     RMT_CMD_PARTY_STATIONS,  /* a guest's own radio stations (kept in their browser), for the host to see: text */
     RMT_CMD_PARTY,           /* the party settings: arg 0 read (JSON answer), 1 change (party[] / name; -1 = leave) */
+    RMT_CMD_GAME,            /* a player's request in a game (party link while a game is the mode): sub = rmt_game_t */
+    RMT_CMD_GAME_SEARCH,     /* the player whose turn it is searches the game's songs: q, offset, limit */
+    RMT_CMD_GAME_ADMIN,      /* the host's game page: arg 0 read, 1 an action (sub) or the setup (game[], name = folder, id = playlist) */
     RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
                               * (1-based, 0 = keep the station), name = its url (checked) */
 } rmt_cmd_kind_t;
@@ -83,11 +87,22 @@ typedef enum { RMT_OUT_AUX = 1, RMT_OUT_BT, RMT_OUT_VOL_AUX, RMT_OUT_VOL_BT, RMT
  * | remove (i) | move (i, to) | clear; action=add (no ver) kind=song song_id | kind=album name | kind=artist name | kind=next b=ID
  * (an Up next row: item -1, id = b) adds to the end of the queue. cmd: sub = action, item = 1 queue / 2 next, pos = i, id = b, offset = to,
  * arg = ver (list: limit). GET api/state?q=1 also reports queue_ver (only asked for while a page shows the queue). */
+/* Games (Hit&Guess, hitguess.c). The players' link is the party link while the mode (party setting "on") is 2:
+ *   GET  api/game?g=&n=           the player's view (JSON)
+ *   POST api/game action=... g= n= join | pick song_id | random | reroll | reveal | mark p= m= | confirm | replay | stop
+ *                                 | tip a= t= y= | leave
+ *   GET  api/game_search?g=&q=&offset=&limit=   the game's songs (only for the player choosing now)
+ * The host: GET /<token>/hitguess (page), GET api/game_admin, POST api/game_admin action=start | skip | remove p= | end
+ * | again | reset, or the setup keys (HG_KEYS) with dir= (the pool's folder, relative to the card) and pl= (playlist id). */
+typedef enum { RMT_G_STATE = 0, RMT_G_JOIN, RMT_G_PICK, RMT_G_RANDOM, RMT_G_REROLL, RMT_G_REVEAL, RMT_G_MARK, RMT_G_CONFIRM,
+               RMT_G_REPLAY, RMT_G_STOP, RMT_G_TIP, RMT_G_LEAVE,
+               RMT_G_START, RMT_G_SKIP, RMT_G_REMOVE, RMT_G_END, RMT_G_AGAIN, RMT_G_RESET, RMT_G_SETUP } rmt_game_t;
 typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR, RMT_Q_ADD } rmt_queue_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;
 #define RMT_PL_NAME_MAX 64
-/* Party mode: guests use their own link /<party name>/ with a reduced page (rmt_route_party). The settings, as numbers: */
+/* Party mode: guests use their own link /<party name>/ with a reduced page (rmt_route_party). The settings, as numbers;
+ * "on" is the mode of that link: 0 off, 1 the party, 2 the game Hit&Guess (one at a time, Jo 2026-11-18): */
 enum { RMT_P_ON, RMT_P_VOL, RMT_P_MAXVOL, RMT_P_NP, RMT_P_QUEUE, RMT_P_SKIP, RMT_P_TOTAL, RMT_P_CONSEC, RMT_P_REPEAT,
        RMT_P_RADIO, RMT_P_NAMES, RMT_P_UPLOAD, RMT_P_UPMAX, RMT_P_N };
 typedef struct { const char *key; int min, max, def; } rmt_party_key_t;
@@ -123,7 +138,8 @@ typedef struct {
     int  guest;              /* 1: came in through the party link (rmt_route_party); gid/gname from g= / n= */
     char gid[RMT_GID_MAX + 1], gname[RMT_GNAME_MAX + 1];
     int  party[RMT_P_N];     /* RMT_CMD_PARTY: new values, -1 = unchanged; name = the new party name ("" = unchanged) */
-    char text[3072];         /* RMT_CMD_PARTY_STATIONS: the guest's stations, "name\turl\n" each */
+    char text[3072];         /* RMT_CMD_PARTY_STATIONS: the guest's stations, "name\turl\n" each; RMT_G_TIP: the title */
+    int  game[HG_S_N];       /* RMT_G_SETUP: new values, -1 = unchanged */
 } rmt_cmd_t;
 /* An upload is POST /<party>/api/upload?g=<guest id>&n=<name>&f=<file name> with the file as the whole body
  * (Content-Length, no chunking): too big for the normal request buffer, so the server checks the head first.
@@ -136,11 +152,12 @@ typedef enum {
     RMT_R_REDIRECT,        /* 301 to /<token>/ (the page uses relative URLs) */
     RMT_R_PAGE,            /* 200 the control page */
     RMT_R_SYS_PAGE,        /* 200 the system page (/<token>/system) */
-    RMT_R_PARTY_PAGE,      /* 200 the guests' page (/<party>/) */
+    RMT_R_PARTY_PAGE,      /* 200 the guests' page (/<party>/): the party's, or the game's while a game is the mode */
     RMT_R_STATE,           /* 200 state JSON */
     RMT_R_CMD,             /* run route.cmd */
     RMT_R_BAD_METHOD,      /* 405 */
-    RMT_R_BAD_PARAM        /* 400: missing or out-of-range parameter */
+    RMT_R_BAD_PARAM,       /* 400: missing or out-of-range parameter */
+    RMT_R_GAME_PAGE        /* 200 the host's game page (/<token>/hitguess) */
 } rmt_route_kind_t;
 
 typedef struct { rmt_route_kind_t kind; rmt_cmd_t cmd; } rmt_route_t;
@@ -225,5 +242,5 @@ char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NU
 /* The pages (static HTML, remote_page.c, generated from ui/remote_page/ by ui/tools/gen_remote_page.py): the control
  * page at /<token>/ (Now playing, queue, library) and the system page at /<token>/system (Status, Bluetooth, Screen).
  * Both are self-contained and use relative URLs. */
-extern const char RMT_PAGE_HTML[], RMT_SYS_HTML[], RMT_PARTY_HTML[];
+extern const char RMT_PAGE_HTML[], RMT_SYS_HTML[], RMT_PARTY_HTML[], RMT_HG_HTML[], RMT_HGADMIN_HTML[];
 #endif

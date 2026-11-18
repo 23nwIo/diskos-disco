@@ -16,7 +16,8 @@ int  remote_link_shown(void);    /* the overlay is up (keeps the screen lit) */
 void remote_test_link(const char *url);   /* host renders only */
 #include "remote_core.h"
 int  remote_exec(const rmt_cmd_t *c, const char **why, char **body);   /* MPD server: run a command as the page would (0 ok) */
-void remote_state(rmt_state_t *s);   /* MPD server: the playback snapshot */
+void remote_state(rmt_state_t *s);
+int  remote_guests_url(char *out, size_t cap);   /* http://<Disc>:8088/<party name>/ while the server and the guests' link run; -1 else */   /* MPD server: the playback snapshot */
 const char *remote_token(void);
 /* A file on the card (a path relative to it, as api/library/folder lists it): its one song in the library. 1 and *id;
  * 0 and *why (not indexed, several tracks in it, no such file, the library busy). Main thread. */

@@ -17,7 +17,8 @@ import sys
 UI = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(UI, 'remote_page')
 OUT = os.path.join(UI, 'remote_page.c')
-PAGES = [('RMT_PAGE_HTML', 'remote.html'), ('RMT_SYS_HTML', 'system.html'), ('RMT_PARTY_HTML', 'party.html')]
+PAGES = [('RMT_PAGE_HTML', 'remote.html'), ('RMT_SYS_HTML', 'system.html'), ('RMT_PARTY_HTML', 'party.html'),
+         ('RMT_HG_HTML', 'hitguess.html'), ('RMT_HGADMIN_HTML', 'hgadmin.html')]
 
 
 def read(name):

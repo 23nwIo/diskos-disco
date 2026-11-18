@@ -10,8 +10,9 @@
 <label for=lka>Page colour (this browser)</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
 <label for=lkf>Favourites</label><select id=lkf><option value=heart>Hearts (red)<option value=star>Stars (yellow)</select></div>
 <div id=stv class=hide></div>
-<div id=ptv class='hide blk'><div class=card><label><input type=checkbox data-k=on> Party mode: guests use their own link</label>
-<label for=pnm>Party name (the guests' link)</label><div class=hd><input id=pnm maxlength=32 placeholder=e.g.&nbsp;birthday autocapitalize=none style='flex:1;margin-right:.5em'><button id=pns>Save</button></div>
+<div id=ptv class='hide blk'><div class=card><label for=pmo>The guests' link</label><select id=pmo data-k=on><option value=0>Off<option value=1>Party: guests add songs<option value=2>Game: Hit&amp;Guess</select>
+<div class=hint>One at a time. The game is set up and run on <a href=hitguess>the game page</a>; the settings below are the party's.</div>
+<label for=pnm>Name of the guests' link</label><div class=hd><input id=pnm maxlength=32 placeholder=e.g.&nbsp;birthday autocapitalize=none style='flex:1;margin-right:.5em'><button id=pns>Save</button></div>
 <div id=plw class='hd hide'><small id=pl class='hint u' style=flex:1></small><button id=plc>Copy</button></div><div class=hint>At least 2 letters, digits, "-" or "_" (upper and lower case differ). Changing it locks out guests with the old link. Kept on the SD card.</div></div>
 <div class=card><b>Guests may</b>
 <label><input type=checkbox data-k=vol> Change the volume</label><label for=pmv>Up to <span id=pmvv></span> % of the Disc's volume (their 100 %)</label><input id=pmv data-k=maxvol type=range min=1 max=100>

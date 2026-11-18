@@ -46,6 +46,8 @@ void rsrv_set_party(const char *name){
     if(strcmp(g_party, name ? name : "")) snprintf(g_party, sizeof g_party, "%s", name ? name : "");
     pthread_mutex_unlock(&g_mu);
 }
+static int g_party_game;                                   /* under g_mu */
+void rsrv_set_party_game(int on){ pthread_mutex_lock(&g_mu); g_party_game = !!on; pthread_mutex_unlock(&g_mu); }
 static char g_up_dir[PATH_MAX];                           /* under g_mu; "" = uploads off */
 static long long g_up_max;
 static atomic_int g_uploading;                             /* 1 while an upload thread runs */
@@ -284,10 +286,12 @@ static int handle(int c){
     case RMT_R_REDIRECT: {
         char loc[64]; snprintf(loc, sizeof loc, "Location: /%s/\r\n", rt.cmd.guest ? party : g_token);
         reply(c, "301 Moved Permanently", "text/plain", "", loc); break; }
-    case RMT_R_PAGE: case RMT_R_SYS_PAGE: case RMT_R_PARTY_PAGE:
-        reply(c, "200 OK", "text/html; charset=utf-8", rt.kind == RMT_R_PAGE ? RMT_PAGE_HTML : rt.kind == RMT_R_SYS_PAGE ? RMT_SYS_HTML : RMT_PARTY_HTML,
+    case RMT_R_PAGE: case RMT_R_SYS_PAGE: case RMT_R_PARTY_PAGE: case RMT_R_GAME_PAGE: {
+        int game; pthread_mutex_lock(&g_mu); game = g_party_game; pthread_mutex_unlock(&g_mu);
+        reply(c, "200 OK", "text/html; charset=utf-8", rt.kind == RMT_R_PAGE ? RMT_PAGE_HTML : rt.kind == RMT_R_SYS_PAGE ? RMT_SYS_HTML
+              : rt.kind == RMT_R_GAME_PAGE ? RMT_HGADMIN_HTML : game ? RMT_HG_HTML : RMT_PARTY_HTML,
               "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'\r\n");
-        break;
+        break; }
     case RMT_R_STATE: {
         rmt_state_t s; int have;
         if(rt.cmd.arg){ struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); atomic_store(&g_queue_at, (long)ts.tv_sec | 1); }   /* q=1 */

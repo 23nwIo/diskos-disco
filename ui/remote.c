@@ -32,6 +32,7 @@
 #include "modes.h"
 #include "queueview.h"
 #include "party.h"
+#include "hitguess.h"
 #include <sys/statvfs.h>
 #include <stdarg.h>
 #include "version.h"
@@ -1097,7 +1098,8 @@ static char *read_cover(const char **why){
 }
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL; g_blob_len = 0;
-    if(c->guest || c->kind == RMT_CMD_PARTY) return party_dispatch(c, why, body);   /* checks, then back here as the host */
+    if(c->guest || c->kind == RMT_CMD_PARTY) return party_dispatch(c, why, body);
+    if(c->kind == RMT_CMD_GAME_ADMIN) return hitguess_dispatch(c, why, body);   /* checks, then back here as the host */
     if(c->kind == RMT_CMD_COVER){ *body = read_cover(why); return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_SCREEN){
         size_t n = 0; *body = rscr_bmp(&n, why);
@@ -1150,6 +1152,11 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
 int remote_exec(const rmt_cmd_t *c, const char **why, char **body){ return dispatch(c, why, body); }
 void remote_state(rmt_state_t *s){ snapshot(s); }
 const char *remote_token(void){ return token(); }
+int remote_guests_url(char *out, size_t cap){
+    const char *n = party_link_name();
+    if(!rsrv_running() || !g_ip[0] || !n[0]) return -1;
+    return snprintf(out, cap, "http://%s:%d/%s/", g_ip, REMOTE_PORT, n) < (int)cap ? 0 : -1;
+}
 /* Host tests: one request through the real routing and the main-thread half, without sockets. Returns the command's
  * result (0 ok, -1 refused with *why), or -100 - route kind when it never became a command. *out: a JSON answer. */
 int remote_test_request(const char *method, const char *path_query, const char *body, char **out, const char **why){
@@ -1174,6 +1181,8 @@ void remote_pump(void){
     static uint32_t last;
     if(!rsrv_running()) return;
     rsrv_set_party(party_link_name());
+    rsrv_set_party_game(party_mode() == 2);
+    hitguess_tick();
     { long long mx = 0; const char *ud = party_upload_dir(&mx); rsrv_set_upload(ud, mx); }
     rmt_state_t s;
     if(!last || lv_tick_elaps(last) >= 250){ snapshot(&s); rsrv_publish(&s); last = lv_tick_get() | 1; }   /* a page polls 1/s */
@@ -1182,7 +1191,8 @@ void remote_pump(void){
         const char *why = NULL; char *body = NULL;
         int rc = dispatch(&c, &why, &body);
         int ro = c.kind == RMT_CMD_BROWSE || c.kind == RMT_CMD_COVER || c.kind == RMT_CMD_SCREEN || c.kind == RMT_CMD_STATUS || c.kind == RMT_CMD_EQ_LIST || c.kind == RMT_CMD_BT_LIST || (c.kind == RMT_CMD_QUEUE && c.sub == RMT_Q_LIST)
-                 || c.kind == RMT_CMD_PARTY_STATE || (c.kind == RMT_CMD_PARTY && !c.arg);
+                 || c.kind == RMT_CMD_PARTY_STATE || (c.kind == RMT_CMD_PARTY && !c.arg)
+                 || c.kind == RMT_CMD_GAME_SEARCH || (c.kind == RMT_CMD_GAME && c.sub == RMT_G_STATE) || (c.kind == RMT_CMD_GAME_ADMIN && !c.arg);
         if(!ro || rc != 0){ fprintf(stderr, "remote: %s %d %ld -> %d\n", rmt_cmd_name(c.kind), c.sub, c.arg, rc); fflush(stderr); }   /* pages poll the reads: log only changes and failures */
         if(rc == 0 && g_blob_len > 0) rsrv_done_blob(body, (size_t)g_blob_len, "image/bmp");
         else rsrv_done_body(rc == 0, rc == 0 ? NULL : why, body);

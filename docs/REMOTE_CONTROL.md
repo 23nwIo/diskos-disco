@@ -84,7 +84,7 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 
 | Setting | Default | What it does |
 |---|---|---|
-| Party mode | off | Off: the guests' link answers 404. |
+| Party mode | off | Off: the guests' link answers 404. **Party** is the guests' page below; **Game: Hit&Guess** turns the guests' link into the game (see below). Party and game never run at once. |
 | Party name | — | The guests' link: at least 2 letters, digits, `-` or `_` (upper and lower case differ). A new name locks out the old link. **Copy** copies the link. |
 | Change the volume | on | Guests get a volume slider. **Up to N %**: their 100 % is N % of the Disc's volume (scaled, so their slider still goes from 0 to 100). |
 | See what plays now | on | Off: title, artist, cover and position are hidden (for a music quiz), and the queue shows other guests' and the host's songs as "A secret song" (with who queued it); each guest still sees their own songs in full. |
@@ -127,6 +127,45 @@ A guest is told apart by a random id their browser keeps; a private window or an
 The ids, names and who queued what are kept in RAM only and start afresh after a restart. The settings are kept on
 the SD card in `.diskos/state/party.conf` (written only when the host changes one); without a card party mode is off.
 The host's own page has no limits and shows "by <name>" on guests' songs. Not yet tested on a Disc.
+
+### Hit&Guess (music quiz)
+
+A game for the guests' link: set **Party mode** to **Game: Hit&Guess** and open the host page
+`http://<address>:8088/<link code>/hitguess` (also linked from the Party tab). Players open the guests' link on their
+phones and give a name. The host presses **Start**; players take turns in the order they joined.
+
+One turn: the player whose turn it is (A) chooses a song (or **Random**), it plays, everybody guesses artist, title and
+(for songs with a date) the year, aloud by default. A presses **Reveal**: all phones and the Disc show title, artist,
+album, cover and date. A ticks per player what was right and confirms; the next player (B) takes over and may already
+choose their song while A's song still plays. Points: artist 1, title 1, year 2 (with the staggered setting 1 point
+when off by up to 2 years). The game shows only the year; the library keeps the full date (the scanner stores
+`YYYY-MM-DD` where the tags have it; songs scanned before need a rescan). The end shows the ranking with artist, title
+and year points and the list of songs played.
+
+| Setting | Default | What it does |
+|---|---|---|
+| Songs | whole library | Or a folder with its subfolders, or a playlist. |
+| Choosing a song | with 3 suggestions | The player chooses any song (search), chooses with 3 random suggestions (new suggestions once per turn; any other song of the pool is still allowed), or only chance (Random). |
+| The player sees a song chance chose | off | Off: a random song stays hidden from A too. |
+| Otherwise the player guesses along | on | A guesses (and gets points) when A does not know the song. |
+| A song may come up again | off | Off: the game ends when the pool is used up. |
+| Guess the year too | on | Songs with a date say "year counts". |
+| Year off by up to 2 years: 1 point | on | Exact year: 2 points. |
+| Players type their guesses | off | Each phone gets a form; the Disc pre-ticks matching guesses on Reveal (case, accents, "The", brackets and small typos ignored), A can still change the ticks. |
+| Countdown | off | The song's length (or the part's) plus N seconds (default 0), shown on the phones and the Disc; then "Time is up" and typed guesses are closed. A still reveals. |
+| Playing | from the start | Or a part (default 10 s) from a random place; **Play the part again** when allowed (default on). |
+| Once revealed, who may stop the song | the player whose turn it was | Nobody, A, A or B, everybody. |
+| The game ends after | 3 rounds | N songs, N rounds or N points (the first to reach them wins). |
+| Players may join a running game | on | Late players start with 0 points and are marked "joined after N songs". |
+
+The host can skip a turn, remove a player, end the game, start a new game with the same players or empty the lobby.
+The setup is kept on the SD card in `.diskos/state/hitguess.conf` and can change only before a game starts or after it
+ends. Every game is logged to `/tmp/hitguess/game-<date>-<time>.log` (RAM; the newest 20 are kept): players, songs,
+guesses, ticks, points and the result.
+
+**On the Disc's screen** (while the game is on): the lobby shows a QR code of the players' link; while a song plays a
+big "?" with whose song it is (and "Guess the year too"; the countdown when on); after Reveal the title, artist and
+year; at the end the winner. A tap hides the screen until the next step. Not yet tested on a Disc.
 
 ### Page look
 

@@ -1,0 +1,96 @@
+<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
+<meta name=referrer content=no-referrer><title>Hit&amp;Guess</title>
+<style>
+@@STYLE@@
+.big{font-size:5em;text-align:center;font-weight:800;color:var(--acc);line-height:1.1}.ctr{text-align:center}.tr button.sm{font-size:1em}
+.pl{display:flex;gap:.5em;align-items:center;padding:.5em 1em;border-bottom:1px solid var(--line)}.pl span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pl.me span{font-weight:700}
+.pl i{font-style:normal;color:var(--mut);font-size:.85em}.mk{display:flex;gap:.3em}.mk button{border:1px solid var(--line);background:none;color:var(--fg);border-radius:8px;padding:.35em .5em;font-size:.85em}
+.mk button.on{background:var(--acc);border-color:var(--acc);color:#fff}.yr{background:var(--acc);color:#fff;border-radius:10px;padding:.5em;text-align:center;font-weight:600;margin-bottom:.8em}
+#cd{font-size:2em;text-align:center;font-weight:700}.tip{font-size:.8em;color:var(--mut);padding:0 1em .4em}
+</style><main><div class=top><h1>Hit&amp;Guess</h1><small id=info class=hint></small></div>
+<div id=join class='card blk hide'><label for=nm>Your name</label><input id=nm maxlength=24 autocomplete=nickname><div class=tr style='margin:.8em 0 0'><button id=jb class=pp>Join the game</button></div></div>
+<div id=stage></div>
+<div id=pick class=hide><div class=card><b id=pkh></b><div id=sug></div>
+<div class=tr style='margin:.6em 0 0'><button id=rnd class='pp sm'>&#127922; Random</button><button id=rer class=sm>New suggestions</button></div></div>
+<div id=fw><input id=q type=search placeholder='Search the game&#8217;s songs' aria-label=Search><div id=list style=margin-top:.6em></div><button id=mo class='more hide'>Load more</button></div></div>
+<div id=form class='card blk hide'><b>Your guess</b><label for=ga>Artist</label><input id=ga maxlength=90><label for=gt>Title</label><input id=gt maxlength=90>
+<div id=gyw><label for=gy>Year</label><input id=gy type=number inputmode=numeric min=1000 max=2999></div><div class=tr style='margin:.8em 0 0'><button id=gs class=pp>Send my guess</button></div><div id=gst class=hint></div></div>
+<h2 class=qh>Players</h2><div id=pls class=card style=padding:0></div>
+<div id=fin class=hide><h2 class=qh>Songs played</h2><div id=trk class=card style=padding:0></div></div>
+<div class=hint id=rules></div>
+<div id=msg></div></main>
+<script>
+@@COMMON@@
+/* a player's page: who you are is a random id this browser keeps (a private window is a new player) */
+var GID='',NM='',G=null,off=0,qt=0,shown='';
+try{GID=localStorage.getItem('hg')||'';NM=localStorage.getItem('hn')||localStorage.getItem('pn')||''}catch(e){}
+if(!/^[A-Za-z0-9]{16}$/.test(GID)){var A='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789',r=new Uint8Array(16);crypto.getRandomValues(r);GID='';r.forEach(function(x){GID+=A[x%A.length]});try{localStorage.setItem('hg',GID)}catch(e){}}
+$('nm').value=NM;
+function who(){return'g='+GID+(NM?'&n='+encodeURIComponent(NM):'')}
+function act(a,b){return cmdj('game',who()+'&action='+a+(b?'&'+b:'')).then(function(j){if(j.ok)draw(j);return j})}
+function refresh(){if(document.hidden)return;fetch('api/game?'+who(),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.ok)draw(j);else say(j.message)}).catch(function(){say('Disc not reachable')})}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function nm(i){return G.players[i]?G.players[i].name:'?'}
+function songbox(s,card){var d=el('div',card?'card ctr':'ctr');if(s.id){var im=el('img');im.id='cv';im.alt='';im.src='api/cover?v=s'+s.id+'&'+who();im.onerror=function(){im.remove()};d.appendChild(im)}
+d.appendChild(el('div','',s.title)).id='t';d.appendChild(el('div','',s.artist)).id='a';var al=el('div','',s.album+(s.date?' · '+s.date:''));al.id='al';d.appendChild(al);return d}
+var ML=[[1,'Artist'],[2,'Title'],[4,'Year'],[8,'±2']];
+function marks(m,yr,st){return ML.filter(function(x){return m&x[0]&&(x[0]<4||yr)}).map(function(x){return x[1]}).join(' + ')||'–'}
+function pts(m){return(m&1?1:0)+(m&2?1:0)+(m&4?2:m&8?1:0)}
+function draw(j){G=j;var me=j.you,P=j.players,ph=j.phase,t=j.turn,s=G.set,cur=j.cur,inn=me>=0&&P[me].in;
+$('join').classList.toggle('hide',inn);if(!inn&&ph==='end')$('join').classList.add('hide');
+$('info').textContent=ph==='lobby'||ph==='end'?'':'Round '+j.round+' · song '+(j.songs+(ph==='pick'?1:0))+(s.win==0?' of '+s.win_n:'')+(j.left>0?' · '+j.left+' left':'');
+var g=$('stage');g.textContent='';
+if(ph==='lobby'){var c=el('div','card ctr');c.appendChild(el('div','big','?'));c.appendChild(el('p','',inn?'You’re in. The game starts when the host says so.':'Enter your name to play.'));g.appendChild(c)}
+if(ph==='pick'&&me!==cur){var c=el('div','card ctr');c.appendChild(el('div','big','?'));c.appendChild(el('p','',nm(cur)+' chooses a song…'));g.appendChild(c)}
+if(ph==='play'){var c=el('div','card');if(t.year_counts&&s.year)c.appendChild(el('div','yr','This song has a year: guess it too for extra points'));
+if(t.song){c.appendChild(songbox(t.song));c.appendChild(el('p','hint ctr',me===cur?'Only you see this - the others guess.':''))}
+else{c.appendChild(el('div','big','?'));c.appendChild(el('p','ctr',me===cur?(t.chance?'Chance chose - guess along!':'Your song plays'):nm(cur)+'’s song plays - who is it?'))}
+if(t.countdown>=0){var d=el('div','',t.countdown?t.countdown+' s':'Time is up');d.id='cd';c.appendChild(d)}
+if(s.form){var n=0,k=0;P.forEach(function(p){if(p.guesses){n++;if(p.tipped)k++}});c.appendChild(el('p','hint ctr',k+' of '+n+' guessed'))}
+if(j.can.reveal||j.can.replay){var tr=el('div','tr');if(j.can.replay){var b=el('button','sm','↻ Play again');b.onclick=function(){act('replay')};tr.appendChild(b)}
+if(j.can.reveal){var b=el('button','pp sm','Reveal');b.onclick=function(){if(!s.form||t.all_tipped||t.countdown===0||confirm('Not everybody has guessed yet. Reveal anyway?'))act('reveal')};tr.appendChild(b)}c.appendChild(tr)}g.appendChild(c)}
+if(ph==='reveal'&&t.song){var c=el('div','card');c.appendChild(songbox(t.song));
+if(t.song.year&&s.year)c.appendChild(el('p','hint ctr','Year: '+t.song.year));
+if(me===cur){c.appendChild(el('p','hint','Tick what each player got right, then confirm.'))}
+var tr=el('div','tr');if(j.can.stop){var b=el('button','sm','■ Stop the song');b.onclick=function(){act('stop')};tr.appendChild(b)}
+if(me===cur){var b=el('button','pp sm','Confirm');b.onclick=function(){act('confirm')};tr.appendChild(b)}if(tr.children.length)c.appendChild(tr);g.appendChild(c)}
+if(ph==='end'){var c=el('div','card ctr');c.appendChild(el('div','big','🏆'));var w=j.rank&&j.rank[0];c.appendChild(el('p','',w?nm(w[1])+' wins with '+P[w[1]].pts+' points!':'Game over'));
+c.appendChild(el('p','hint',j.ended==1?'Every song has played.':j.ended==2?'The host ended the game.':''));g.appendChild(c)}
+/* choosing: A now, or B while A's song is revealed */
+var ch=j.can.choose;$('pick').classList.toggle('hide',!ch);
+if(ch){$('pkh').textContent=ph==='reveal'?(j.next_ready?'Your song is chosen - it plays once '+nm(cur)+' confirms.':'Your turn is next - choose your song now'):'Your turn: choose a song';
+var sg=$('sug');sg.textContent='';(j.sugg||[]).forEach(function(x){var b=el('button','r');b.appendChild(el('b','',x.title));b.appendChild(el('small','',x.artist));b.onclick=function(){act('pick','song_id='+x.id)};sg.appendChild(b)});
+$('rer').classList.toggle('hide',!j.sugg||!!j.rerolled);$('fw').classList.toggle('hide',!j.can.pick);$('rnd').disabled=!!j.next_ready;
+$('rnd').textContent=s.rndknown?'🎲 Random':'🎲 Random (a surprise for you too)';if(j.can.pick&&!$('list').children.length&&!$('q').value)find(0)}
+else{$('list').textContent='';$('q').value=''}
+/* typed guesses */
+$('form').classList.toggle('hide',!(ph==='play'&&s.form&&P[me]&&P[me].guesses));$('gyw').classList.toggle('hide',!(t&&t.year_counts&&s.year));
+var key=j.songs+ph;if(shown!==key){shown=key;if(ph==='play'){$('ga').value=$('gt').value=$('gy').value=''}}
+if(me>=0&&P[me].tip)$('gst').textContent='Sent: '+[P[me].tip.a,P[me].tip.t,P[me].tip.y||''].filter(Boolean).join(' · ')+' - you can still change it.';else $('gst').textContent='';$('gs').disabled=!j.can.tip;
+/* players: points; while revealed the ticks (the player whose turn it is sets them) */
+var l=$('pls');l.textContent='';var ord=ph==='end'&&j.rank?j.rank.map(function(r){return r[1]}):P.map(function(p,i){return i});
+ord.forEach(function(i,k){var p=P[i];if(!p.in&&ph!=='end'&&!p.pts)return;var r=el('div','pl'+(i===me?' me':''));
+var lab=(ph==='end'&&j.rank?j.rank[k][0]+'. ':'')+(i===cur&&ph!=='end'&&ph!=='lobby'?'▶ ':'')+p.name+(p.in?'':' (left)');r.appendChild(el('span','',lab));
+if(ph==='play'&&s.form&&p.guesses)r.appendChild(el('i','',p.tipped?'✓ guessed':'…'));
+if(ph==='reveal'&&p.mark!=null){if(me===cur&&(i!==cur||t.chance)){var mk=el('div','mk');ML.forEach(function(x){if(x[0]>2&&!(t.year_counts&&s.year))return;if(x[0]==8&&!s.stagger)return;
+var b=el('button',p.mark&x[0]?'on':'',x[1]);b.onclick=function(){var m=p.mark^x[0];if(x[0]==4&&m&4)m&=~8;if(x[0]==8&&m&8)m&=~4;act('mark','p='+i+'&m='+m)};mk.appendChild(b)});r.appendChild(mk)}
+else if(i!==cur||t.chance)r.appendChild(el('i','',marks(p.mark,t.year_counts&&s.year)+(p.mark?' (+'+pts(p.mark)+')':'')))}
+var sc=el('b','',p.pts+(ph==='end'?' (A '+p.pa+' · T '+p.pt+' · Y '+p.py+')':''));sc.style.flex='none';r.appendChild(sc);l.appendChild(r);
+if(ph==='reveal'&&p.tip)l.appendChild(el('div','tip','Guessed: '+[p.tip.a,p.tip.t,p.tip.y||''].filter(Boolean).join(' · ')));
+if(ph==='end'&&p.joined)l.appendChild(el('div','tip','joined after '+p.joined+(p.joined>1?' songs':' song')))});
+if(!l.children.length)l.appendChild(el('div','pl','Nobody yet'));
+/* the end: every song that played */
+$('fin').classList.toggle('hide',ph!=='end');if(ph==='end'){var tk=$('trk');tk.textContent='';(j.tracks||[]).forEach(function(x,n){var r=el('div','r');r.appendChild(el('b','',(n+1)+'. '+x.s.title));
+r.appendChild(el('small','',x.s.artist+(x.s.date?' · '+x.s.date:'')+' · '+nm(x.by)+(x.chance?' (random)':'')+(x.skipped?' · skipped':'')));tk.appendChild(r)})}
+var ru=['Points: artist 1, title 1'+(s.year?', year 2'+(s.stagger?' (1 if off by up to 2 years)':''):'')+'.'];ru.push(s.win==0?'The game ends after '+s.win_n+' songs.':s.win==1?'The game ends after '+s.win_n+(s.win_n>1?' rounds.':' round.'):'The first to '+s.win_n+' points wins.');
+if(!s.form)ru.push('Say your guesses aloud; the player whose turn it is ticks them.');$('rules').textContent=ru.join(' ')}
+function find(o){off=o;var q=$('q').value.trim();fetch('api/game_search?'+who()+'&q='+encodeURIComponent(q)+'&offset='+o+'&limit=40',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+if(!j.ok){say(j.message);return}var l=$('list');if(!o)l.textContent='';j.items.forEach(function(x){var b=el('button','r');b.appendChild(el('b','',x.title));b.appendChild(el('small','',x.artist+(x.album?' · '+x.album:'')));
+b.onclick=function(){act('pick','song_id='+x.id).then(function(r){if(r.ok){$('q').value='';l.textContent=''}})};l.appendChild(b)});if(!l.children.length)l.appendChild(el('div','pl','No song found'));$('mo').classList.toggle('hide',!j.more)}).catch(function(){say('Disc not reachable')})}
+$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){find(0)},350)};$('mo').onclick=function(){find(off+40)};
+$('rnd').onclick=function(){act('random')};$('rer').onclick=function(){act('reroll')};
+$('jb').onclick=function(){NM=$('nm').value.trim();if(!NM){say('Enter your name first');return}try{localStorage.setItem('hn',NM)}catch(e){}act('join').then(function(j){if(j.ok)say('Welcome, '+NM+'!',1)})};
+$('gs').onclick=function(){act('tip',enc({a:$('ga').value.trim(),t:$('gt').value.trim(),y:$('gy').value||0})).then(function(j){if(j.ok)say('Guess sent',1)})};
+setInterval(refresh,1500);document.addEventListener('visibilitychange',refresh);refresh();
+if(NM)fetch('api/game?'+who(),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.ok&&j.you<0&&j.phase!=='end')act('join')}).catch(function(){});
+</script></html>

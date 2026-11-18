@@ -306,6 +306,9 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_PARTY_STATE) return "party_state";
     if(k == RMT_CMD_PARTY) return "party";
     if(k == RMT_CMD_PARTY_RADIO) return "party_radio";
+    if(k == RMT_CMD_GAME) return "game";
+    if(k == RMT_CMD_GAME_SEARCH) return "game_search";
+    if(k == RMT_CMD_GAME_ADMIN) return "game_admin";
     for(size_t i = 0; i < sizeof CMDS / sizeof CMDS[0]; i++) if(CMDS[i].kind == k) return CMDS[i].name;
     return "none";
 }
@@ -318,6 +321,7 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
     const char *rest = slash;                                    /* "/" | "/api/..." */
     if(!strcmp(rest, "/")){ rt.kind = get ? RMT_R_PAGE : RMT_R_BAD_METHOD; return rt; }
     if(!strcmp(rest, "/system")){ rt.kind = get ? RMT_R_SYS_PAGE : RMT_R_BAD_METHOD; return rt; }
+    if(!strcmp(rest, "/hitguess")){ rt.kind = get ? RMT_R_GAME_PAGE : RMT_R_BAD_METHOD; return rt; }
     if(strncmp(rest, "/api/", 5)) return rt;
     const char *ep = rest + 5;
     if(!strcmp(ep, "state")){ long q = 0; rt.kind = get ? RMT_R_STATE : RMT_R_BAD_METHOD; rt.cmd.arg = param(r, "q", &q) == 0 && q == 1; return rt; }
@@ -331,6 +335,39 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
         rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LIST_END; rt.cmd.arg = m; rt.cmd.pos = pp == 0 ? pos : 0;
         if(ppl == 0){ rt.cmd.id = pl; rt.cmd.offset = fl; rt.cmd.item = 1; }   /* the playlist for mode 3, with Repeat 1 / Shuffle 2 */
         if(pp != 0) rt.cmd.name[0] = 0;
+        return rt;
+    }
+    if(!strcmp(ep, "game_admin")){
+        if(get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_GAME_ADMIN; return rt; }
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        rt.cmd.kind = RMT_CMD_GAME_ADMIN; rt.cmd.arg = 1;
+        char act[16]; int pa = param_str(r, "action", act, sizeof act);
+        if(pa == 0){
+            static const char *const A[] = { "start", "skip", "remove", "end", "again", "reset" };
+            rt.kind = RMT_R_BAD_PARAM;
+            for(int i = 0; i < 6; i++) if(!strcmp(act, A[i])) rt.cmd.sub = RMT_G_START + i;
+            if(!rt.cmd.sub){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
+            long p = -1;
+            if(rt.cmd.sub == RMT_G_REMOVE && (param(r, "p", &p) || p < 0 || p >= HG_PLAYERS)){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
+            rt.cmd.pos = p; rt.kind = RMT_R_CMD; return rt;
+        }
+        int any = 0, bad = pa == -2;
+        for(int k = 0; k < HG_S_N; k++){
+            long v; int pr = param(r, HG_KEYS[k].key, &v);
+            rt.cmd.game[k] = -1;
+            if(pr == -1) continue;
+            if(pr || v < HG_KEYS[k].min || v > HG_KEYS[k].max) bad = 1;
+            else { rt.cmd.game[k] = (int)v; any = 1; }
+        }
+        rt.cmd.id = -1;
+        int pd = param_str(r, "dir", rt.cmd.name, sizeof rt.cmd.name);
+        if(pd == 0){ if(!rmt_relpath_ok(rt.cmd.name)) bad = 1; else { any = 1; rt.cmd.item = 1; } }
+        else if(pd == -2) bad = 1;
+        long pl; int pp = param(r, "pl", &pl);
+        if(pp == 0){ if(pl < 0) bad = 1; else { rt.cmd.id = pl; any = 1; } }
+        else if(pp == -2) bad = 1;
+        if(bad || !any){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.kind = RMT_R_CMD; rt.cmd.sub = RMT_G_SETUP;
         return rt;
     }
     if(!strcmp(ep, "party")){
@@ -553,7 +590,7 @@ rmt_route_t rmt_route(const rmt_req_t *r, const char *token){
 
 /* ---------------------------------------------------------------- party mode (the guests' link) */
 const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N] = {
-    [RMT_P_ON] = { "on", 0, 1, 0 },          [RMT_P_VOL] = { "vol", 0, 1, 1 },        [RMT_P_MAXVOL] = { "maxvol", 1, 100, 100 },
+    [RMT_P_ON] = { "on", 0, 2, 0 },          [RMT_P_VOL] = { "vol", 0, 1, 1 },        [RMT_P_MAXVOL] = { "maxvol", 1, 100, 100 },
     [RMT_P_NP] = { "np", 0, 1, 1 },          [RMT_P_QUEUE] = { "queue", 0, 1, 1 },    [RMT_P_SKIP] = { "skip", 0, 1, 0 },
     [RMT_P_TOTAL] = { "total", 1, 50, 3 },   [RMT_P_CONSEC] = { "consec", 1, 10, 1 }, [RMT_P_REPEAT] = { "repeat", 0, 1, 0 },
     [RMT_P_RADIO] = { "radio", 0, 1, 0 },    [RMT_P_NAMES] = { "names", 0, 1, 1 },
@@ -692,6 +729,39 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
         else if(!ok) a.kind = RMT_R_BAD_PARAM;
         else { a.kind = RMT_R_CMD; a.cmd.kind = RMT_CMD_PARTY_RADIO; a.cmd.arg = now; }
         if(a.kind != RMT_R_CMD) memset(&a.cmd, 0, sizeof a.cmd);
+    } else if(slash && (!strcmp(slash, "/api/game") || !strcmp(slash, "/api/game_search"))){   /* a game's players */
+        memset(&a, 0, sizeof a);
+        int get = !strcmp(r->method, "GET"), search = !strcmp(slash, "/api/game_search");
+        a.kind = RMT_R_CMD; a.cmd.kind = search ? RMT_CMD_GAME_SEARCH : RMT_CMD_GAME;
+        if(search){
+            long off = 0, lim = 50; int po = param(r, "offset", &off), pl = param(r, "limit", &lim), pq = param_str(r, "q", a.cmd.q, sizeof a.cmd.q);
+            if(!get) a.kind = RMT_R_BAD_METHOD;
+            else if(po == -2 || pl == -2 || pq == -2 || off < 0 || lim < 1 || lim > 100) a.kind = RMT_R_BAD_PARAM;
+            if(pq == -1) a.cmd.q[0] = 0;
+            a.cmd.offset = off; a.cmd.limit = lim;
+        } else if(!get){
+            static const char *const A[] = { "join", "pick", "random", "reroll", "reveal", "mark", "confirm", "replay", "stop", "tip", "leave" };
+            char act[16]; long v;
+            if(strcmp(r->method, "POST")) a.kind = RMT_R_BAD_METHOD;
+            else if(param_str(r, "action", act, sizeof act)) a.kind = RMT_R_BAD_PARAM;
+            else {
+                for(int i = 0; i < 11; i++) if(!strcmp(act, A[i])) a.cmd.sub = RMT_G_JOIN + i;
+                if(!a.cmd.sub) a.kind = RMT_R_BAD_PARAM;
+                if(a.cmd.sub == RMT_G_PICK){ if(param(r, "song_id", &v) || v < 1) a.kind = RMT_R_BAD_PARAM; else a.cmd.song_id = v; }
+                if(a.cmd.sub == RMT_G_MARK){
+                    long m; if(param(r, "p", &v) || v < 0 || v >= HG_PLAYERS || param(r, "m", &m) || m < 0 || m > 15) a.kind = RMT_R_BAD_PARAM;
+                    else { a.cmd.pos = v; a.cmd.arg = m; }
+                }
+                if(a.cmd.sub == RMT_G_TIP){
+                    int pa = param_str(r, "a", a.cmd.q, sizeof a.cmd.q), pt = param_str(r, "t", a.cmd.text, HG_TIP_MAX), py = param(r, "y", &v);
+                    if(pa == -2 || pt == -2 || py == -2 || (py == 0 && (v < 0 || v > 9999))) a.kind = RMT_R_BAD_PARAM;
+                    if(pa == -1) a.cmd.q[0] = 0;
+                    if(pt == -1) a.cmd.text[0] = 0;
+                    a.cmd.arg = py == 0 ? v : 0;
+                }
+            }
+        }
+        if(a.kind != RMT_R_CMD){ rmt_route_kind_t k = a.kind; memset(&a.cmd, 0, sizeof a.cmd); a.kind = k; }
     } else a = route_rest(r, slash);
     int ok = 0;
     switch(a.kind){
@@ -701,6 +771,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     case RMT_R_CMD:
         switch(a.cmd.kind){
         case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: case RMT_CMD_PARTY_RADIO: case RMT_CMD_PARTY_STATIONS: ok = 1; break;
+        case RMT_CMD_GAME: case RMT_CMD_GAME_SEARCH: ok = 1; break;
         case RMT_CMD_VOLUME:                                       /* the guests' scale: 100 = the host's maximum */
             ok = 1; if(a.cmd.arg > 100){ memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; }
             break;
@@ -719,7 +790,8 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
         int pg = param_str(r, "g", a.cmd.gid, sizeof a.cmd.gid), pn = param_str(r, "n", a.cmd.gname, sizeof a.cmd.gname);
         if(pg == -1) a.cmd.gid[0] = 0;
         if(pn == -1) a.cmd.gname[0] = 0;
-        int need = (a.cmd.kind == RMT_CMD_QUEUE && a.cmd.sub == RMT_Q_ADD) || a.cmd.kind == RMT_CMD_PARTY_STATIONS;   /* adding counts against the guest's songs */
+        int need = (a.cmd.kind == RMT_CMD_QUEUE && a.cmd.sub == RMT_Q_ADD) || a.cmd.kind == RMT_CMD_PARTY_STATIONS   /* adding counts against the guest's songs */
+                   || a.cmd.kind == RMT_CMD_GAME || a.cmd.kind == RMT_CMD_GAME_SEARCH;                                  /* a player is their id */
         if(pg == -2 || pn == -2 || (pg == 0 && !guest_id_ok(a.cmd.gid)) || (need && pg != 0)){
             memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; a.cmd.guest = 1; }
     }

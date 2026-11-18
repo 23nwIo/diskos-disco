@@ -29,6 +29,7 @@
 #include <strings.h>
 
 #include "own_player.h"
+#include "hitguess.h"
 int settings_outputs_state(opl_outputs_t *o, int *auto_out);   /* settings.c */
 #define GUESTS 128
 static struct { char gid[RMT_GID_MAX + 1], name[RMT_GNAME_MAX + 1]; uint32_t seen; char *stations; } g_guest[GUESTS];
@@ -72,10 +73,11 @@ static int save(const int *val, const char *name){
     return r;
 }
 const char *party_link_name(void){ return cfg_val(RMT_P_ON) ? cfg_name() : ""; }
+int party_mode(void){ return cfg_name()[0] ? cfg_val(RMT_P_ON) : 0; }
 const char *party_upload_dir(long long *max_bytes){
     static char dir[PATH_MAX];
     *max_bytes = (long long)cfg_val(RMT_P_UPMAX) * 1024 * 1024;
-    if(!party_link_name()[0] || !cfg_val(RMT_P_UPLOAD)) return "";
+    if(party_mode() != 1 || !cfg_val(RMT_P_UPLOAD)) return "";
     snprintf(dir, sizeof dir, "%s/%s/%s", FOLDERBROWSER_ROOT, RMT_UPLOAD_DIR, cfg_name());
     return dir;
 }
@@ -131,7 +133,7 @@ static int admin(const rmt_cmd_t *c, const char **why, char **body){
     if(c->arg){
         const char *tok = remote_token();
         if(c->name[0] && tok && !strcasecmp(c->name, tok)){ *why = "Choose a party name that is not your own link"; return -1; }
-        int turn_on = c->party[RMT_P_ON] == 1;
+        int turn_on = c->party[RMT_P_ON] >= 1;
         if(turn_on && !c->name[0] && !cfg_name()[0]){ *why = "Choose a party name first"; return -1; }
         int val[RMT_P_N]; char name[RMT_PARTY_NAME_MAX + 1];
         g_read_at = 0; load();                            /* the card's current file, not an old copy */
@@ -269,6 +271,16 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL;
     if(c->kind == RMT_CMD_PARTY) return admin(c, why, body);
     if(!party_link_name()[0]){ *why = "The party is over"; return -1; }
+    if(party_mode() == 2){                                 /* a game, not the party: only the game's requests (Jo, 2026-11-18) */
+        if(c->kind == RMT_CMD_GAME || c->kind == RMT_CMD_GAME_SEARCH) return hitguess_dispatch(c, why, body);
+        if(c->kind == RMT_CMD_COVER){
+            if(!hitguess_cover_ok(c->gid)){ *why = "Not revealed yet"; return -1; }
+            rmt_cmd_t x = *c; x.guest = 0;
+            return remote_exec(&x, why, body);
+        }
+        *why = "A game is on - reload the page"; return -1;
+    }
+    if(c->kind == RMT_CMD_GAME || c->kind == RMT_CMD_GAME_SEARCH){ *why = "No game is on - reload the page"; return -1; }
     int who = guest_slot(c->gid);
     if(who && c->gname[0] && cfg_val(RMT_P_NAMES)) snprintf(g_guest[who - 1].name, sizeof g_guest[who - 1].name, "%s", c->gname);
     rmt_cmd_t x = *c; x.guest = 0;
