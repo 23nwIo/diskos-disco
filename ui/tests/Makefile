@@ -64,7 +64,7 @@ review: fileops_test apps_shortcut_test
 	./apps_shortcut_test
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test
+run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -92,12 +92,17 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wif
 	@echo "--- audiobook bookmarks on the card ---"
 	./bookmarks_test
 	./playlog_test
+	@echo "--- scanner date tags ---"
+	./scanner_date_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
+
+scanner_date_test: scanner_date_test.c ../scanner.c ../scanner.h sqlite3_host.o
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_date_test.c sqlite3_host.o -pthread -ldl -lm -o $@
 
 playlog_test: playlog_test.c ../playlog.c ../playlog.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. playlog_test.c ../playlog.c -o $@

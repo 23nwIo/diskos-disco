@@ -109,6 +109,7 @@ ui/tests/trace_launch_test
 ui/tests/usbsync_core_test
 ui/tests/bookmarks_test
 ui/tests/playlog_test
+ui/tests/scanner_date_test
 ui/tests/wd_override_test
 ui/tests/playback_test
 ui/tests/btavrcp_test
