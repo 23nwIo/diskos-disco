@@ -267,6 +267,20 @@ static int add_song(int who, int id, const char **why, char **body){
 }
 
 /* ---------------------------------------------------------------- the guests' requests */
+/* a guest's (or a player's) volume: their 0..100 is 0..the host's "Up to N %" of the Disc's maximum */
+static int guest_volume(const rmt_cmd_t *c, const char **why, char **body){
+    if(!cfg_val(RMT_P_VOL)){ *why = "The volume is the host's at this party"; return -1; }
+    rmt_state_t s; remote_state(&s);
+    long top = (long)s.volume_max * cfg_val(RMT_P_MAXVOL) / 100;
+    rmt_cmd_t x = *c; x.guest = 0;
+    x.arg = (c->arg * top + 50) / 100;                      /* the guests' 100 = the host's maximum */
+    return remote_exec(&x, why, body);
+}
+int party_volume_now(void){
+    if(!cfg_val(RMT_P_VOL)) return -1;
+    rmt_state_t s; remote_state(&s);
+    return scale_down(s.volume, s.volume_max, cfg_val(RMT_P_MAXVOL));
+}
 int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL;
     if(c->kind == RMT_CMD_PARTY) return admin(c, why, body);
@@ -278,6 +292,7 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
             rmt_cmd_t x = *c; x.guest = 0;
             return remote_exec(&x, why, body);
         }
+        if(c->kind == RMT_CMD_VOLUME) return guest_volume(c, why, body);   /* every player, as the party's volume settings allow (Jo, 2026-11-18) */
         *why = "A game is on - reload the page"; return -1;
     }
     if(c->kind == RMT_CMD_GAME || c->kind == RMT_CMD_GAME_SEARCH){ *why = "No game is on - reload the page"; return -1; }
@@ -294,12 +309,7 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
     case RMT_CMD_NEXT:
         if(!cfg_val(RMT_P_SKIP)){ *why = "Skipping is off at this party"; return -1; }
         return remote_exec(&x, why, body);
-    case RMT_CMD_VOLUME: {
-        if(!cfg_val(RMT_P_VOL)){ *why = "The volume is the host's at this party"; return -1; }
-        rmt_state_t s; remote_state(&s);
-        long top = (long)s.volume_max * cfg_val(RMT_P_MAXVOL) / 100;
-        x.arg = (c->arg * top + 50) / 100;                  /* the guests' 100 = the host's maximum */
-        return remote_exec(&x, why, body); }
+    case RMT_CMD_VOLUME: return guest_volume(c, why, body);
     case RMT_CMD_QUEUE:
         if(c->sub == RMT_Q_ADD){
             int id = (int)c->song_id;

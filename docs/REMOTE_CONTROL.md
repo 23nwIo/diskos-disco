@@ -160,6 +160,9 @@ and year points and the list of songs played.
 | The game ends after | 3 rounds | N songs, N rounds or N points (the first to reach them wins). |
 | Players may join a running game | on | Late players start with 0 points and are marked "joined after N songs". |
 
+Every phone gets a volume slider, as the Party tab's **Change the volume** and **Up to N %** allow (the only party
+settings the game uses besides the link's name).
+
 The host can skip a turn, remove a player, end the game, start a new game with the same players or empty the lobby.
 The setup is kept on the SD card in `.diskos/state/hitguess.conf` and can change only before a game starts or after it
 ends. Every game is logged to `/tmp/hitguess/game-<date>-<time>.log` (RAM; the newest 20 are kept): players, songs,

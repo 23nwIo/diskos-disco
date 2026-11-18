@@ -476,6 +476,7 @@ static char *view_json(int me, int admin){
         }
         rmt_buf_put(&b, "]");
     }
+    { int v = party_volume_now(); if(v >= 0) rmt_buf_printf(&b, ",\"volume\":%d", v); }   /* every player may change it */
     if(admin){
         rmt_buf_put(&b, ",\"dir\":"); rmt_buf_str(&b, g_dir); rmt_buf_printf(&b, ",\"pl\":%ld,\"mode\":%d,\"link\":", g_pl, party_mode());
         rmt_buf_str(&b, party_link_name());

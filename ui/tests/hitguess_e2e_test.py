@@ -83,6 +83,12 @@ reqs = [
     'GET ~/api/state?' + A,                                                    # 46 the party works again
     'GET /api/library/folder?limit=500&path=Music',                            # 47 the host's folder picker lists the card's folders
     'POST /api/game_admin dir=',                                               # 48 the whole card
+    'POST /api/party on=2',                                                    # 49 the game again
+    'POST ~/api/volume value=40&' + A,                                         # 50 every player may change the volume
+    'GET ~/api/game?' + A,                                                     # 51
+    'POST /api/party vol=0',                                                   # 52 the host keeps the volume
+    'POST ~/api/volume value=40&' + A,                                         # 53
+    'GET ~/api/game?' + A,                                                     # 54
 ]
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -143,6 +149,8 @@ b = ok(43); assert b['phase'] == 'end' and b['ended'] == 2 and b['tracks'][0]['s
 ok(44); no(45, 'No game'); ok(46)
 assert 'workmode 2 for now (not saved' in r.stderr and 'again (rc=' in r.stderr, r.stderr[-3000:]   # Repeat One while the game plays, the saved mode after
 assert [x['name'] for x in ok(47)['items'] if x['dir']][:1] == ['80s'], res[47]
+ok(49); ok(50); assert 'volume' in ok(51), res[51]
+ok(52); no(53, "host's"); assert 'volume' not in ok(54)
 assert ok(48)['dir'] == '' and 'dir=\n' in (sd/'.diskos/state/hitguess.conf').read_text()
 logs = sorted(Path('/tmp/hitguess').glob('game-*.log')); assert logs, 'no log'
 assert len(logs) == 2, logs
