@@ -90,23 +90,31 @@ reqs = [
     'POST ~/api/volume value=40&' + A,                                         # 53
     'GET ~/api/game?' + A,                                                     # 54
     'POST /api/game_admin action=again',                                       # 55
-    'POST /api/game_admin rndknown=1',                                         # 56 Anna sees what chance chose
+    'POST /api/game_admin pick=0',                                             # 56 Anna chooses: she knows the song
     'POST /api/game_admin action=start',                                       # 57
-    'POST ~/api/game action=random&' + A,                                      # 58
+    'POST ~/api/game action=pick&song_id=5&' + A,                              # 58 Zombie
     'POST ~/api/game action=mark&p=1&m=1&' + A,                                # 59 Anna ticks Cleo's guess before the reveal
     'POST ~/api/game action=mark&p=0&m=1&' + C,                                # 60 Cleo may not
     'GET ~/api/game?' + C,                                                     # 61 Cleo doesn't see the tick yet
     'POST ~/api/game action=reveal&' + A,                                      # 62
-    'POST ~/api/game action=fixyear&y=1999&' + C,                              # 63 only Anna corrects the year
-    'POST ~/api/game action=fixyear&y=1999&' + A,                              # 64
-    'POST /api/game_admin action=fixyear&y=1998&k=0',                          # 65 the host, the first song of this game
-    'POST /api/game_admin action=fixyear&y=3500',                              # 66
+    'POST ~/api/game action=fixsong&y=1999&' + C,                              # 63 only Anna corrects the song
+    'POST ~/api/game action=fixsong&a=Cranberries&t=Zombie&y=1999&x=0&' + A,   # 64 the artist and year (the title as it is)
+    'POST /api/game_admin action=fixsong&k=0&a=The+Cranberries&t=Zombie+(Live)&y=1998',   # 65 the host: artist back, another title
+    'POST /api/game_admin action=fixsong&y=3500',                              # 66
     'POST /api/game_admin action=end',                                         # 67
     'POST /api/game_admin action=again',                                       # 68
-    'POST /api/game_admin pick=0',                                             # 69
-    'POST /api/game_admin action=start',                                       # 70
-    'POST ~/api/game action=pick&song_id=5&' + A,                              # 71 Zombie: the correction counts when it was the fixed song
-    'GET ~/api/game?' + A,                                                     # 72
+    'POST /api/game_admin action=start',                                       # 69
+    'POST ~/api/game action=pick&song_id=5&' + A,                              # 70 Zombie again: the corrections count
+    'GET ~/api/game?' + A,                                                     # 71
+    'POST /api/game_admin action=fixsong&y=1990',                              # 72 not before the reveal
+    'POST ~/api/game action=reveal&' + A,                                      # 73
+    'POST /api/game_admin action=fixsong&k=0&t=Zombie+(Live)&y=1998&x=1',      # 74 the host leaves it out
+    'GET /api/game_admin',                                                     # 75
+    'POST /api/game_admin action=end',                                         # 76
+    'POST /api/game_admin action=again',                                       # 77
+    'POST /api/game_admin action=start',                                       # 78
+    'POST ~/api/game action=pick&song_id=5&' + A,                              # 79 left out
+    'POST ~/api/game action=pick&song_id=4&' + A,                              # 80
 ]
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -173,16 +181,20 @@ ok(55); ok(56); b = ok(57); assert b['cur'] == 0, b
 ok(58); b = ok(59); assert b['can']['mark'] and b['players'][1]['mark'] == 1, b
 no(60, 'Only the player'); assert 'mark' not in ok(61)['players'][1]
 assert ok(62)['players'][1]['mark'] == 1
-no(63, 'whose turn'); t = ok(64)['turn']['song']; assert t['year'] == 1999 and t['date'] == '1999', t
-assert ok(65)['tracks'][0]['s']['date'] == '1998'; assert res[66]['rc'] <= -100, res[66]
-fx = (sd/'.diskos/state/year-fixes.tsv').read_text().splitlines()
-for k in (67, 68, 69, 70, 71): ok(k)
-t = ok(72)['turn']['song']; fixed = res[64]['body']['turn']['song']['title'] == 'Zombie'
-assert t['title'] == 'Zombie' and (t['date'], t['year']) == (('1998', 1998) if fixed else ('1994', 1994)), (t, fixed)
-assert fx[0].startswith('# diskOS Hit&Guess') and len(fx) == 2 and fx[1].split('\t')[0].startswith('Music/') and fx[1].split('\t')[4] == '1998' and fx[1].split('\t')[5] == 'the host', fx
+no(63, 'whose turn'); t = ok(64)['turn']['song']; assert (t['artist'], t['title'], t['year'], t['date']) == ('Cranberries', 'Zombie', 1999, '1999'), t
+t = ok(65)['tracks'][0]['s']; assert (t['artist'], t['title'], t['date']) == ('The Cranberries', 'Zombie (Live)', '1998'), t
+assert res[66]['rc'] <= -100, res[66]
+for k in (67, 68, 69, 70): ok(k)
+t = ok(71)['turn']['song']; assert (t['artist'], t['title'], t['date'], t['year']) == ('The Cranberries', 'Zombie (Live)', '1998', 1998), t
+no(72, 'Reveal the song first'); ok(73); ok(74); assert ok(75)['tracks'][0]['s']['out'] == 1
+for k in (76, 77, 78): ok(k)
+no(79, ''); ok(80)
+fx = [l.split('\t') for l in (sd/'.diskos/state/song-fixes.tsv').read_text().splitlines()]
+assert fx[0][0].startswith('# diskOS Hit&Guess') and len(fx) == 2, fx
+assert fx[1][:9] == ['Music/90s/05 Zombie.flac', 'Zombie', 'The Cranberries', '1994', '', 'Zombie (Live)', '1998', '1', 'the host'], fx
 assert ok(48)['dir'] == '' and 'dir=\n' in (sd/'.diskos/state/hitguess.conf').read_text()
 logs = sorted(Path('/tmp/hitguess').glob('game-*.log')); assert logs, 'no log'
-assert len(logs) == 4, logs   # one per game started
+assert len(logs) == 5, logs   # one per game started
 text = '\n'.join(l.read_text() for l in logs)
 for want in ['game starts: 3 songs (folder Music/80s)', 'Cleo joined the running game', 'song 1 by Anna (chosen): "Take On Me"',
              'Ben guesses: artist "A-Ha"', 'Anna revealed the song', 'Ben chose the next song early', '  Ben: artist title near year = 2.5',

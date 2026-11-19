@@ -37,7 +37,7 @@
 var G=null,pls=0;
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
 function adm(b){return cmdj('game_admin',b).then(function(j){if(j.ok)draw(j);return j})}
-function refresh(){if(document.hidden)return;fetch('api/game_admin',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.ok)draw(j)}).catch(function(){say('Disc not reachable')})}
+function refresh(){if(document.hidden||document.querySelector('.fixf'))return;fetch('api/game_admin',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.ok)draw(j)}).catch(function(){say('Disc not reachable')})}
 var PH={lobby:'Waiting for players',pick:'Choosing',play:'Playing - the players guess',reveal:'Revealed - ticking',end:'Game over'};
 function draw(j){G=j;var s=j.set,ph=j.phase,P=j.players,run=ph!=='lobby'&&ph!=='end';
 $('mode').textContent=j.mode!==2?'The guests’ link is not set to the game - change it in System > Party.':PH[ph]+(run?' · round '+j.round+' · '+j.songs+' songs'+(j.left>0?' · '+j.left+' left':''):'');
@@ -51,7 +51,7 @@ r.appendChild(el('small','hint',p.pts+' (A '+p.pa+' · T '+p.pt+' · Y '+p.py+')
 if(!l.children.length)l.textContent='Nobody yet - players open the guests’ link';
 $('fin').classList.toggle('hide',!(j.tracks&&j.tracks.length));var tk=$('trk');tk.textContent='';(j.tracks||[]).forEach(function(x,k){var r=el('div','r');r.appendChild(el('b','',(k+1)+'. '+x.s.title));
 r.appendChild(el('small','',x.s.artist+(x.s.date?' · '+x.s.date:'')+' · '+(P[x.by]?P[x.by].name:'?')+(x.chance?' (random)':'')+(x.skipped?' · skipped':'')));
-var fb=el('button','sm','Wrong year?');fb.style.cssText='font-size:.85em;padding:.2em 0';fb.onclick=function(){fixy(k)};r.appendChild(fb);tk.appendChild(r)});
+var fb=el('button','sm',x.s.out?'✎ Fix… (left out)':'✎ Fix…');fb.style.cssText='background:none;border:0;color:var(--acc);padding:.3em 0;font-size:.85em';fb.onclick=function(){if(!r.querySelector('.fixf'))fixform(r,x.s,function(b){return adm('action=fixsong&k='+k+'&'+b)})};r.appendChild(fb);tk.appendChild(r)});
 [].forEach.call(document.querySelectorAll('#set [data-k]'),function(e){if(document.activeElement===e)return;if(e.type==='checkbox')e.checked=!!s[e.dataset.k];else e.value=s[e.dataset.k];e.disabled=run});
 $('dw').classList.toggle('hide',s.pool!=1);$('pw').classList.toggle('hide',s.pool!=2);$('fcur').textContent=j.dir?'/'+j.dir:'The whole card';$('fch').disabled=$('spl').disabled=run;if(run)$('fb').classList.add('hide');
 if(!pls){pls=1;fetch('api/library/playlists?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(p){var o=$('spl');o.textContent='';o.appendChild(el('option','','Choose…')).value=0;
@@ -71,8 +71,15 @@ $('spl').onchange=function(){adm('pl='+$('spl').value).then(function(j){if(j.ok)
 $('bs').onclick=function(){adm('action=start').then(function(j){if(j.ok)say('The game starts',1)})};
 $('bk').onclick=function(){if(confirm('Skip this turn? Nobody gets points for it.'))adm('action=skip')};
 $('be').onclick=function(){if(confirm('End the game now?'))adm('action=end')};
-/* a wrong year: to the corrections on the SD card (year-fixes.tsv), and it counts in this game */
-function fixy(k){var y=prompt('The right year of this song','');if(y==null)return;y=parseInt(y,10);if(!(y>=1000&&y<=2999)){say('A year from 1000 to 2999');return}adm('action=fixyear&y='+y+(k!=null?'&k='+k:'')).then(function(j){if(j.ok)say('Year saved for the correction',1)})}
+/* corrections: artist, title, year, leave the song out of the game; saved on the SD card (song-fixes.tsv) for the tags */
+function fixform(box,so,send){var f=el('div','blk fixf');f.style.cssText='margin-top:.6em;border-top:1px solid var(--line);padding-top:.6em';
+function inp(lab,v,ty){var l=el('label','',lab);f.appendChild(l);var i=el('input');i.value=v||'';if(ty){i.type='number';i.inputMode='numeric';i.min=1000;i.max=2999}else i.maxLength=150;f.appendChild(i);return i}
+var a=inp('Artist',so.artist),t=inp('Title',so.title),y=inp('Year',so.year||'',1);
+var xl=el('label');var x=el('input');x.type='checkbox';x.checked=!!so.out;xl.appendChild(x);xl.appendChild(document.createTextNode(' Leave this song out of future games'));f.appendChild(xl);
+var tr=el('div','tr');tr.style.margin='.6em 0 0';var c=el('button','sm','Cancel');c.onclick=function(){f.remove()};var s=el('button','pp sm','Save');
+s.onclick=function(){var yv=y.value.trim();if(yv&&!(+yv>=1000&&+yv<=2999)){say('A year from 1000 to 2999');return}
+send('a='+encodeURIComponent(a.value.trim())+'&t='+encodeURIComponent(t.value.trim())+'&y='+(yv||0)+'&x='+(x.checked?1:0)).then(function(j){if(j.ok){say('Saved for the corrections',1);f.remove()}})};
+tr.appendChild(c);tr.appendChild(s);f.appendChild(tr);f.appendChild(el('div','hint','Kept on the SD card for fixing the tags later; this game and later ones use it now.'));box.appendChild(f);a.focus()}
 $('ba').onclick=function(){adm('action=again')};$('br').onclick=function(){if(confirm('Send every player out of the lobby?'))adm('action=reset')};
 $('lc').onclick=function(){var t=$('lk').textContent;try{navigator.clipboard.writeText(t).then(function(){say('Link copied',1)},function(){prompt('The players’ link',t)})}catch(e){prompt('The players’ link',t)}};
 setInterval(refresh,2000);document.addEventListener('visibilitychange',refresh);refresh();

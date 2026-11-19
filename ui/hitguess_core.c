@@ -87,11 +87,15 @@ int hg_year_of(const char *date){
     int y = atoi(date);
     return y >= 1000 && y <= 2999 ? y : 0;
 }
-int hg_fix_year(hg_game_t *g, int k, int year){
-    if(k < 0 || k >= g->nt || year < 1000 || year > 2999) return -1;
+int hg_fix_song(hg_game_t *g, int k, const char *artist, const char *title, int year){
+    if(k < 0 || k >= g->nt || (year && (year < 1000 || year > 2999))) return -1;
     hg_turn_t *t = &g->t[k];
-    snprintf(t->date, sizeof t->date, "%d", year);         /* the library's day and month may be as wrong as its year */
-    if(g->set[HG_S_YEAR]) t->year = year;
+    if(artist && artist[0]) snprintf(t->artist, sizeof t->artist, "%s", artist);
+    if(title && title[0]) snprintf(t->title, sizeof t->title, "%s", title);
+    if(year){
+        snprintf(t->date, sizeof t->date, "%d", year);     /* the library's day and month may be as wrong as its year */
+        if(g->set[HG_S_YEAR]) t->year = year;
+    }
     return 0;
 }
 void hg_song(hg_game_t *g, int song, int chance, const char *title, const char *artist, const char *album, const char *date){

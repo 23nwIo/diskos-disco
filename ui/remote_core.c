@@ -157,6 +157,20 @@ static int param_str(const rmt_req_t *r, const char *name, char *out, size_t cap
     if(a != -1) return a;
     return param_str_list(r->body, name, out, cap);
 }
+/* Hit&Guess corrections: a = artist, t = title (absent or empty: unchanged), y = year (absent or 0: unchanged),
+ * x = 1 leave the song out of the game from now on. 0, or -1 when a value is bad. */
+static int rmt_fix_params(const rmt_req_t *r, rmt_cmd_t *c){
+    long y = 0, x = 0;
+    int pa = param_str(r, "a", c->name, HG_TXT_MAX), pt = param_str(r, "t", c->text, HG_TXT_MAX), py = param(r, "y", &y), px = param(r, "x", &x);
+    if(pa == -2 || pt == -2 || py == -2 || px == -2) return -1;
+    if(pa == -1) c->name[0] = 0;
+    if(pt == -1) c->text[0] = 0;
+    if(py == -1) y = 0;
+    if(px == -1) x = 0;
+    if((y && (y < 1000 || y > 2999)) || x < 0 || x > 1) return -1;
+    c->offset = y; c->item = (int)x;
+    return 0;
+}
 int rmt_relpath_ok(const char *p){
     if(!p) return 0;
     if(!*p) return 1;
@@ -346,10 +360,10 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
             static const char *const A[] = { "start", "skip", "remove", "end", "again", "reset" };
             rt.kind = RMT_R_BAD_PARAM;
             for(int i = 0; i < 6; i++) if(!strcmp(act, A[i])) rt.cmd.sub = RMT_G_START + i;
-            if(!strcmp(act, "fixyear")){                     /* y = the right year, k = the turn (0 = the first song; default the current) */
-                long y, k = -1; int pk = param(r, "k", &k);
-                if(param(r, "y", &y) || y < 1000 || y > 2999 || pk == -2 || (pk == 0 && (k < 0 || k >= HG_TURNS))){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
-                rt.cmd.sub = RMT_G_FIXYEAR; rt.cmd.arg = y; rt.cmd.pos = k; rt.kind = RMT_R_CMD; return rt;
+            if(!strcmp(act, "fixsong")){                     /* k = the turn (0 = the first song; default the one now) */
+                long k = -1; int pk = param(r, "k", &k);
+                if(pk == -2 || (pk == 0 && (k < 0 || k >= HG_TURNS)) || rmt_fix_params(r, &rt.cmd)){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
+                rt.cmd.sub = RMT_G_FIXSONG; rt.cmd.pos = k; rt.kind = RMT_R_CMD; return rt;
             }
             if(!rt.cmd.sub){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
             long p = -1;
@@ -751,7 +765,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
             else if(param_str(r, "action", act, sizeof act)) a.kind = RMT_R_BAD_PARAM;
             else {
                 for(int i = 0; i < 11; i++) if(!strcmp(act, A[i])) a.cmd.sub = RMT_G_JOIN + i;
-                if(!strcmp(act, "fixyear")){ a.cmd.sub = RMT_G_FIXYEAR; if(param(r, "y", &v) || v < 1000 || v > 2999) a.kind = RMT_R_BAD_PARAM; else a.cmd.arg = v; }
+                if(!strcmp(act, "fixsong")){ a.cmd.sub = RMT_G_FIXSONG; if(rmt_fix_params(r, &a.cmd)) a.kind = RMT_R_BAD_PARAM; }
                 if(!a.cmd.sub) a.kind = RMT_R_BAD_PARAM;
                 if(a.cmd.sub == RMT_G_PICK){ if(param(r, "song_id", &v) || v < 1) a.kind = RMT_R_BAD_PARAM; else a.cmd.song_id = v; }
                 if(a.cmd.sub == RMT_G_MARK){

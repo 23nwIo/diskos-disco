@@ -161,11 +161,15 @@ and year points and the list of songs played.
 | The game ends after | 3 rounds | N songs, N rounds or N points (the first to reach them wins). |
 | Players may join a running game | on | Late players start with 0 points and are marked "joined after N songs". |
 
-**Wrong years.** After the reveal the player whose turn it is has **Wrong year?** (or **Add the year**), and the host
-has it on every song in **Songs played**. The right year counts in this game at once and is kept on the SD card in
-`.diskos/state/year-fixes.tsv` (tab-separated: path on the card, title, artist, the library's date, the right year,
-who, when; one line per song, a newer fix replaces the older), to be written into the tags later. Until then every
-game uses the fixed year for that song. The tags and the library are not changed.
+**Corrections.** After the reveal the player whose turn it is has **Fix this song…**, and the host has **Fix…** on
+every song in **Songs played**: the right artist, title and year, and **Leave this song out of future games** for a
+song that is no good for the game. They count in this game at once and are kept on the SD card in
+`.diskos/state/song-fixes.tsv`, to be written into the tags later: a `#` header, then one tab-separated line per song
+(path on the card, title, artist, the library's date, the right artist, title, year - empty when unchanged -, `1` to
+leave it out, who, when); a newer correction replaces the older one, and saving the library's values again removes
+the line. Until the tags are fixed every game uses the corrections, and a song left out never comes up (also not in
+the search or the suggestions). The tags and the library are not changed. (`year-fixes.tsv`, the first version with
+years only, is still read.)
 
 Every phone gets a volume slider, as the Party tab's **Change the volume** and **Up to N %** allow (the only party
 settings the game uses besides the link's name).
