@@ -4,6 +4,10 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Disco, Squash and Null: the "Tap title for more" hint now counts as learned once the title opens the song menu (it
+  kept coming back on the next starts). Settings › Audio no longer leaves the Outputs rows Auto Outputs and Headphone
+  Volume reachable through the settings list when the stock player runs. Not yet tested on a Disc.
+
 - Remote Control party mode: guests get their own link (`/<party name>/`) to a small page where they see what plays,
   see the queue and who queued what, browse the whole library and add single songs; set up on the system page's
   Party tab: volume (scaled to a maximum), what plays now, the queue, skip, songs per guest, guests taking turns,

@@ -5,7 +5,10 @@ static int settings_hidden(const setting_t *s){
     if(reason && strcmp(k,"imm_scrub_action") && strcmp(k,CTL_CFG_ROT))return 1;
     if(s->apply==apply_grp_discoqs && !(th_disco()||th_null()))return 1;
     if(s->apply==apply_grp_zune)return 1;
-    if(outputs_row(s) && !own_player_cached())return 1;          /* the own player's outputs; the stock player has none */
+    if(!own_player_cached()){   /* the own player's outputs (Audio > Outputs and every row on that page); the stock player has none */
+        const char *page=settings_page(s);
+        if(outputs_row(s) || (page && !strcmp(page,"Outputs")))return 1;
+    }
     if(!strcmp(k,"end_mode") && !own_player_cached())return 1;    /* After the List Ends: the own player only */
     if(s->apply==apply_grp_musicprogress && th_null())return 1;
     if(!strcmp(k,"outdoor")&&(th_null()||th_zune()))return 1;
