@@ -131,18 +131,6 @@ static void assert_round_target(lv_obj_t *o){
 }
 int ui_np_cover_shown(void);
 static int media_local(void){ return 1; }
-static int find_sharp_image(lv_obj_t *root){
-    if(lv_obj_check_type(root,&lv_image_class) && !lv_obj_has_flag(root,LV_OBJ_FLAG_HIDDEN)){
-        const void *src=lv_image_get_src(root);
-        if(src && lv_image_src_get_type(src)==LV_IMAGE_SRC_VARIABLE){
-            const lv_image_dsc_t *d=src;
-            if(d->header.w==364 && d->header.h==364) return 1;
-        }
-    }
-    for(uint32_t i=0;i<lv_obj_get_child_count(root);i++)
-        if(find_sharp_image(lv_obj_get_child(root,i))) return 1;
-    return 0;
-}
 /* Fixture seams exist only in the host executable; device firmware gates remain intact. */
 static int test_rate_queries;
 int __real_mdb_song_rates(const char*,int*,int*);
@@ -2688,7 +2676,7 @@ int main(int argc, char **argv){
             lv_tick_inc(10); lv_timer_handler(); lyrics_poll(NULL); usleep(1000);
         }
         if(getenv("SEEK_PREVIEW")){ui_seek_preview(59999000,59999000,1);goto render;}
-        assert(find_sharp_image(root));
+        { int ui_imm_sharp_shown(void); assert(ui_imm_sharp_shown()); }   /* the record renderer draws it into a 360 px frame */
         lyr_line_t lines[8]; unsigned rev;
         assert(lyrics_immersive_load(lines,8,&rev)==2);
         assert(!strcmp(lines[0].text,"First lyric"));

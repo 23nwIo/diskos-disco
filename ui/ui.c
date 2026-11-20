@@ -819,6 +819,9 @@ static void imm_ring_update(int permille){
     imm_record_set_ring(1, permille, theme_rgb(THEME_CLR_FIXED_MEDIA_TRACK) & 0xFFFFFFu, ind);
 }
 static int imm_lyrics_on(void);
+/* host tests (tests/host_render.c): Immersive shows the sharp 364 px cover - through the fast record renderer's 360 px
+ * frame (imm_bind_record) or directly - and not the 148 px fallback */
+int ui_imm_sharp_shown(void){ return fsart_on && g_spin_ok && imm_spin && !lv_obj_has_flag(imm_spin, LV_OBJ_FLAG_HIDDEN); }
 static void imm_bind_record(void){
     imm_fast=0;
     if(!imm_spin || !g_spin_ok) return;

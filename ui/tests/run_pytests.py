@@ -23,8 +23,7 @@ TIMEOUT = int(os.environ.get('DISKOS_TEST_TIMEOUT', '900'))   # seconds per test
 # Tests that fail for a reason that is understood but not fixed yet. Each entry says why; remove it when fixed.
 # A listed test that passes is reported as FIXED and fails the run, so this list cannot go stale.
 KNOWN_FAILURES = {
-    # all three already failed in upstream 3.4.1 (1cb1828), the version this fork started from
-    'render_test': 'host-render immersive shows the 148 px fallback, not the sharp 364 px cover (cause not found yet)',
+    # both already failed in upstream 3.4.1 (1cb1828), the version this fork started from
     'theme_efficiency_test': 'pixel baseline fixtures/theme-efficiency-baseline.json older than the rendering',
     'zune_scroll_test': 'pixel baseline fixtures/zune-scroll-3.0.0.txt is from 3.0.0',
 }

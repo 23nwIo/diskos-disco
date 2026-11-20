@@ -47,10 +47,9 @@ The tests share `/tmp/sdcard`, `ui/tests/host_build/` and a few `/tmp` paths, so
 
 ## Known failures (2026-11-20)
 
-All of the following already failed in upstream Disco 3.4.1 (`1cb1828`), where this fork started; they are listed in
+Both already failed in upstream Disco 3.4.1 (`1cb1828`), where this fork started; they are listed in
 `KNOWN_FAILURES` with the reason:
 
-- `render_test` (immersive part): the immersive view shows the 148 px fallback instead of the sharp 364 px cover.
 - `theme_efficiency_test`, `zune_scroll_test`: pixel baselines in `ui/tests/fixtures/` older than the rendering. These
   compare every frame bit for bit with a recorded run, so any intended visual change breaks them.
 
