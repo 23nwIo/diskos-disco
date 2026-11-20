@@ -5,6 +5,13 @@
 static char test_database[256];
 #define DB_PATH test_database
 #include "../musicdb.c"
+/* Stand-ins for the SD gates (main.c, sdio.c) and the firmware EQ check (fwcaps.c), which need the device; this test
+ * only reads and writes song.db. The Makefile links the real bookmarks.c + sdstate.c and jsmn (jsmn_impl.c). */
+int sd_io_begin(void){return 1;}
+void sd_io_end(void){}
+int sd_write_begin(void){return 1;}
+void sd_write_end(void){}
+int fw_custom_peq_curve_writecheck(const int *hz,int count){(void)hz;(void)count;return 0;}
 static long long milliseconds(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1000LL+t.tv_nsec/1000000;}
 static void *reader_thread(void *arg){
     sqlite3*d=db_read();assert(d&&d!=arg);

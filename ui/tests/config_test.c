@@ -71,11 +71,13 @@ static void c_overflow(void){
 static void c_failed_persist_retry(void){
     CHECK(cfg_set_int("x", 7) == 0, "initial set ok");
     CHECK(file_has("x=7"), "x=7 on disk");
-    CHECK(chmod(TDIR, 0500) == 0, "make dir read-only");
-    CHECK(cfg_set_int("x", 9) == -1, "set fails while dir RO");
+    /* a directory where the temp file goes makes the write fail for any user: chmod 0500 on the dir
+     * does not stop root, so the test failed when run as root (containers, CI) */
+    CHECK(mkdir(CFGP ".tmp", 0700) == 0, "block the temp file");
+    CHECK(cfg_set_int("x", 9) == -1, "set fails while the temp file is blocked");
     CHECK(cfg_take_save_error() == 1, "save error reported");
     CHECK(file_has("x=7") && !file_has("x=9"), "old value intact after failed write");
-    CHECK(chmod(TDIR, 0700) == 0, "restore dir writable");
+    CHECK(rmdir(CFGP ".tmp") == 0, "unblock the temp file");
     CHECK(cfg_set_int("x", 9) == 0, "same-value retry now succeeds");   /* <-- the fix */
     CHECK(file_has("x=9"), "retry actually persisted x=9");
     CASE_DONE();

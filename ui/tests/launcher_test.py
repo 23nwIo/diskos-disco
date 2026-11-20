@@ -28,6 +28,15 @@ harness = r'''
 #include <errno.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include "trace_launch.h"   /* the player trace and own player switches the launcher checks (main.c) */
+#include "own_player.h"
+/* The player and trace builds carried inside mq_ui (pl_blob.c, trace_blob.c): empty here. Neither switch file
+ * (/usr/data/diskos-own-player, /usr/data/diskos-trace-player) exists on a host, so the stock player is the one
+ * the launcher must reach. */
+const unsigned char *pl_blob_data(void){static const unsigned char b[1];return b;}
+size_t pl_blob_size(void){return 0;}
+const unsigned char *trace_blob_data(void){static const unsigned char b[1];return b;}
+size_t trace_blob_size(void){return 0;}
 static volatile sig_atomic_t g_bounded_pgid = 0;   /* real one lives with run_bounded in main.c */
 static volatile sig_atomic_t g_bounded_pid = 0;    /* ditto: the direct child, killed with or without a group */
 /* Observe the REAL handoff instead of replacing the program. */
@@ -120,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix='diskos-launcher-test-') as temp:
     status=root/'status'; blog=root/'boot.log'
     subprocess.run([os.environ.get('CC','cc'),'-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
                     '-DLAUNCH_STATUS_PATH="%s"' % status, '-DBOOT_LOG_PATH="%s"' % blog, '-DLAUNCH_DEADLINE_S=2', '-DPLAYER_COMM_NAME="test"',
-                    str(c),'-o',str(exe)],check=True)
+                    '-I'+str(app),str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
     # OWNER CONSTRAINT: diskOS must never deny the stock player. EVERY failure reaches the exec,
     # promptly, and records why - it must never hold, and must never depend on the deadline firing.

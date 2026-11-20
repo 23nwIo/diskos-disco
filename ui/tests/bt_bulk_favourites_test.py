@@ -130,6 +130,7 @@ unsigned ipc_generation(void){return gen;}
 static const char *ui_route_mac(void){return route;}
 void ipc_get_state(track_state_t *s){*s=current;}
 int ipc_send_cmd(const char *s){(void)s;sends++;return 0;}
+static int opl_running(void){return 0;}   /* own_player.h: the stock player runs here */
 static void ui_toast(const char *s){(void)s;notices++;}
 int bt_codec_upgrade_pending(void){return pending;}
 static int audio_run=-1; int ui_audio_running(void){return audio_run;}

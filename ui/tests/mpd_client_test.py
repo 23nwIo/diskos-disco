@@ -3,9 +3,12 @@
 """MPD server network thread against a real MPD client library (python-mpd2: pip install python-mpd2), with the fake
 player of mpd_test.c behind it (make -C ui/tests mpd_test). Checks what clients rely on: the greeting, password,
 command lists, idle/noidle across two connections, quoting, errors as exceptions, and that a connection survives them."""
-import socket, subprocess, threading, time
+import socket, subprocess, sys, threading, time
 from pathlib import Path
-import mpd
+try:
+    import mpd
+except ImportError as e:
+    print(f"SKIP: python-mpd2 not installed ({e})"); sys.exit(0)
 
 tests = Path(__file__).resolve().parent
 s = socket.socket(); s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]; s.close()

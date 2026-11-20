@@ -35,7 +35,8 @@ def main():
     exe = app / "tests/host_build/host-render"
     config = app / "tests/host_build/diskos.conf"
     cases = [(-1,-1,"migration"),(-2,0,"migration"),(-2,1,"migration"),(-2,2,"migration")]
-    cases += [(p,v,"migration") for p in (0,2,7) for v in (-1,0,1)]
+    cases += [(p,v,"migration") for p in (0,2,7) for v in (-1,0,1)]   # retired presets: Disco, variant kept
+    cases += [(p,v,"migration") for p in (6,8,12) for v in (-1,0,1)]   # Stone, Ring, Squash: kept
     cases += [(-2,0,"reset")]
     for prior,variant,page in cases:
         config.unlink(missing_ok=True)
@@ -57,7 +58,7 @@ def main():
                     subprocess.run([str(exe),str(preset),str(variant),page,str(enabled),str(ppm)],check=True)
                     if args.out:
                         save_png(ppm,args.out / f"{name}-{page}-{'on' if enabled else 'off'}.png")
-    print("PASS: 14 migration/reset cases, 3 navigation runs, 3 real-decoder immersive runs and 12 LVGL render/visibility checks")
+    print("PASS: 23 migration/reset cases, 3 navigation runs, 3 real-decoder immersive runs and 12 LVGL render/visibility checks")
 
 
 if __name__ == "__main__":

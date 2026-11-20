@@ -14,6 +14,7 @@ static int screen_current(void){return 0;}
 static void screen_back(void){}
 static void ui_show_volume(int v){(void)v;bars++;}
 static int request(void){requests++;return 0;}
+int settings_outputs_recent(void){return 0;}   /* settings.c: no Settings > Audio > Outputs change just now */
 static void volume_step(void){
 '''
 body='''}

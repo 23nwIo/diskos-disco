@@ -77,7 +77,8 @@ def run_harness(exe, timeout):
 with tempfile.TemporaryDirectory(prefix='diskos-font-test-') as tmp:
     p=Path(tmp); (p/'test.c').write_text(header+chain+test)
     sources=[p/'test.c', lvgl/'src/font/lv_font.c', lvgl/'src/font/lv_font_fmt_txt.c',lvgl/'src/misc/lv_utils.c',app/'font_cjk_extra_16.c',lvgl/'src/font/lv_font_source_han_16_cjk.c']
-    for size in [14,16,18,20]: sources += [app/f'font_intl_{size}.c']
+    for size in [14,16,18,20]: sources += [app/f'font_intl_{size}.c', app/f'font_thai_{size}.c', app/f'font_viet_{size}.c']
+    sources += [app/'font_kr_16.c']   # the Thai, Vietnamese and Korean fallbacks the CJK chain links to
     for size in [14,16,18,20,24,28]: sources += [lvgl/f'src/font/lv_font_montserrat_{size}.c']
     for name in ['medium_14','medium_16','bold_18','bold_22']: sources += [app/f'font_inter_{name}.c']
     cmd=[os.environ.get('CC','cc'),'-g','-O1','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-DLV_CONF_INCLUDE_SIMPLE','-I'+str(app),'-I'+str(app.parent),*[str(x) for x in sources],'-Wl,--gc-sections','-o',str(p/'test')]

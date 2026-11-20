@@ -36,9 +36,11 @@ int main(int argc,char**argv){
  ds_shared.replace=1;fail=1;assert(!download_track(r,&saved,&skipped));check(path,"fLaC0001");fail=0;
  cancel=1;assert(!download_track(r,&saved,&skipped));check(path,"fLaC0001");cancel=0;atomic_store(&ds_abort_job,0);
  assert(download_track(r,&saved,&skipped));check(path,"fLaC0003");assert(saved==2);
- /* A local tag match does not grant overwrite ownership. */
- assert(sqlite3_prepare_v2(db,"INSERT INTO local VALUES('other','artist','album',?)",-1,&q,NULL)==SQLITE_OK);sqlite3_bind_text(q,1,path,-1,SQLITE_TRANSIENT);assert(sqlite3_step(q)==SQLITE_DONE);sqlite3_finalize(q);
- strcpy(r.id,"two");strcpy(r.name,"Other");int oldserial=serial;assert(download_track(r,&saved,&skipped));assert(serial==oldserial);check(path,"fLaC0003");
+ /* A local tag match does not grant overwrite ownership: the user's own file with the same tags is skipped, not
+  * replaced. (A local row for a file this server downloaded under another ID is no match: duplicate() excludes it.) */
+ char user[1200];snprintf(user,sizeof user,"%s/user-Other.flac",argv[1]);{FILE*f=fopen(user,"w");assert(f);fputs("USERFILE",f);fclose(f);}
+ assert(sqlite3_prepare_v2(db,"INSERT INTO local VALUES('other','artist','album',?)",-1,&q,NULL)==SQLITE_OK);sqlite3_bind_text(q,1,user,-1,SQLITE_TRANSIENT);assert(sqlite3_step(q)==SQLITE_DONE);sqlite3_finalize(q);
+ strcpy(r.id,"two");strcpy(r.name,"Other");int oldserial=serial;assert(download_track(r,&saved,&skipped));assert(serial==oldserial);check(user,"USERFILE");check(path,"fLaC0003");
  /* Missing member of a partial album is still downloaded. */
  ds_shared.replace=0;strcpy(r.id,"three");strcpy(r.name,"Missing");assert(download_track(r,&saved,&skipped));assert(saved==3);
  shelf_close();free(ds_context);puts("PASS partial album missing track, default skip, exact-ID atomic replacement, failure/cancel retain original, tag-only match preserved");

@@ -727,6 +727,7 @@ int main(int argc, char **argv){
             if(variant>=0) assert(!cfg_set_int_deferred("theme_variant",variant));
         }
         int want=prior>=0 ? prior : (prior==-2 ? (variant==0 ? 8 : 9) : 10);
+        if(prior>=0 && !theme_preset_available(prior)) want=THEME_PRESET_DISCO;   /* a retired preset falls back to Disco */
         int light=prior>=0 ? (variant>=0 ? variant : 0) :
                   (prior==-2 && variant!=0 && variant!=2 ? 1 : 0);
         if(!strcmp(argv[3],"reset")){

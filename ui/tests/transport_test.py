@@ -7,7 +7,9 @@ import os,subprocess,tempfile
 app=Path(__file__).resolve().parents[1]
 s=(app/'main.c').read_text();hint=s[s.index('static int      g_pp_hint'):s.index('/* set absolute volume')]
 scan=s[s.index('void ui_rescan_library(void)'):s.index('/* Poll for scan completion')]
-s=(app/'ui.c').read_text();action=s[s.index('int ui_transport_command('):s.index('static void transport_cb(')]
+# transport_now is the command itself; ui_transport_command in front of it only paces rapid skips (an LVGL timer), so
+# the harness calls transport_now directly
+s=(app/'ui.c').read_text();action=s[s.index('static int transport_now(const char *cmd)\n{'):s.index('static void transport_cb(')]
 headers=r'''
 #include <assert.h>
 #include <stdio.h>
@@ -34,7 +36,23 @@ static int queue_reply,prev_notes;
 static int queue_next(void){ return queue_reply; }
 static void queue_note_prev(void){ prev_notes++; }
 static int cancel_ok=1,cancels; static int scanner_cancel(void){ cancels++; return cancel_ok; }   /* Rescan during a scan = Stop */
-typedef struct { char path[40]; long position_ms,duration_ms; } track_state_t;
+typedef struct { int have_track; char path[40]; long position_ms,duration_ms; } track_state_t;
+#define ui_transport_command transport_now
+static int queue_count(void){ return 0; }            /* nothing queued: Play goes to the player */
+static int ui_play_mode_now(void){ return 0; }       /* not shuffle: Previous/Next go to the player */
+static int sh_back(int *id,char *p,size_t n){ (void)id;(void)p;(void)n; return 0; }
+static int sh_forward(int *id,char *p,size_t n){ (void)id;(void)p;(void)n; return 0; }
+static int mdb_queue_ord(int id,const char *p){ (void)id;(void)p; return 0; }
+static int ui_queue_jump(int ord){ (void)ord; return -1; }
+static uint32_t g_sh_jump_at;
+static void sh_cancel(void){}
+static void sh_reset(void){}
+void ui_resume_guard_cancel(void){}
+void ui_route_hold_cancel(void){}
+void ui_route_hold_follow(void){}
+int ui_play_defer_transport(int is_toggle){ (void)is_toggle; return 0; }   /* no headphones just connected */
+static int th_zune(void){ return 0; }
+void zune_scan_show(void){}
 static track_state_t state;
 static uint32_t lv_tick_get(void){return now;}
 static int ui_is_playing(void){return g_playing;}

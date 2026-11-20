@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "../apps.c"
+/* braun.c (needs LVGL): not the Braun 2.0 theme, so five shortcut slots and no Braun 2.0 vector icons */
+int th_braun2(void){ return 0; }
 int main(void){
     assert(mkdir(CFG_DIR,0755)==0 || errno==EEXIST); unlink(CFG_PATH);
     cfg_load(); g_napps=2;
