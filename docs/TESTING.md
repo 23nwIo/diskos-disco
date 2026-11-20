@@ -50,11 +50,9 @@ The tests share `/tmp/sdcard`, `ui/tests/host_build/` and a few `/tmp` paths, so
 All of the following already failed in upstream Disco 3.4.1 (`1cb1828`), where this fork started; they are listed in
 `KNOWN_FAILURES` with the reason:
 
-- `display_pass_test`, `review_ui_test`, `render_test` (immersive part): `host-render` assertions about the Display
-  pages, Home after a preview and the immersive cover no longer match the UI.
-- `theme_efficiency_test`, `zune_scroll_test`: pixel baselines in `ui/tests/fixtures/` older than the rendering.
-- `settings_alignment_test`: Display rows changed upstream; since our Outputs work (bb8c0d2, 06b4c07) the Outputs page
-  is also listed without the own player and has a Headphone Volume row the test does not expect.
+- `render_test` (immersive part): the immersive view shows the 148 px fallback instead of the sharp 364 px cover.
+- `theme_efficiency_test`, `zune_scroll_test`: pixel baselines in `ui/tests/fixtures/` older than the rendering. These
+  compare every frame bit for bit with a recorded run, so any intended visual change breaks them.
 
 ## Writing a test
 

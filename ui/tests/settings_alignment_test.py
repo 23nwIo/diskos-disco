@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
    assert [x['label'] for x in pages['Playback']]==want,(theme,pages['Playback'])
    assert [x['label'] for x in pages['Audio']]==audio,(theme,pages['Audio'])
    assert not any(x['label']=='Custom EQ' for items in pages.values() for x in items)
-   if own:assert [x['label'] for x in pages['Outputs']]==['Auto Outputs','AUX Volume','Bluetooth Codec','Bluetooth Volume','AUX','Bluetooth'],(theme,pages['Outputs'])
+   if own:assert [x['label'] for x in pages['Outputs']]==['Auto Outputs','AUX Volume','Bluetooth Codec','Bluetooth Volume','Headphone Volume','AUX','Bluetooth'],(theme,pages['Outputs'])
    else:assert 'Outputs' not in pages,(theme,'Outputs shown without the own player')
    # Validate with an independent rule, not the production comparator.
    for page,items in pages.items():
@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
       'Library':['Rescan Library'], 'Maintenance':['Update from SD Card'],
       'MA Sendspin':['Server'], 'Remote Control':['Control Page'], 'Bluetooth':['Devices'],
       'Volume Keys':['Press','Double Press','Long Press']}.get(page,[])
+    if page=='Display' and 'Light / dark' in labels:anchors=anchors+['Light / dark']   # pinned after the theme rows (settings_order.h, theme_variant); dark-only themes have none
     if page=='Playback':continue
     assert labels[:len(anchors)]==anchors,(theme,page,labels,anchors)
     rest=items[len(anchors):]

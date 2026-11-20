@@ -194,10 +194,26 @@ static lv_obj_t *find_text(lv_obj_t *o,const char *text){
     return NULL;
 }
 #include "az_wheel_designs.h"
+static void dump_labels(lv_obj_t *o,int depth){   /* diagnostics for a failed check */
+    if(lv_obj_check_type(o,&lv_label_class))fprintf(stderr,"  label: %s (w %d, x %d)\n",lv_label_get_text(o),(int)lv_obj_get_width(o),(int)lv_obj_get_x(o));
+    for(uint32_t i=0;i<lv_obj_get_child_count(o)&&depth<12;i++)dump_labels(lv_obj_get_child(o,i),depth+1);
+}
 
+/* a label showing text, or text cut to fit with "..." (LV_LABEL_LONG_DOT shortens the label's text itself) */
+static lv_obj_t *find_text_or_cut(lv_obj_t *o,const char *text){
+    if(lv_obj_check_type(o,&lv_label_class)){
+        const char *t=lv_label_get_text(o);size_t n=strlen(t);
+        if(!strcmp(t,text))return o;
+        if(n>=6 && !strcmp(t+n-3,"...") && !strncmp(t,text,n-3) && n-3<strlen(text))return o;
+    }
+    for(uint32_t i=0;i<lv_obj_get_child_count(o);i++){lv_obj_t *f=find_text_or_cut(lv_obj_get_child(o,i),text);if(f)return f;}
+    return NULL;
+}
+/* Page headings: a long one ends in "..." where the round screen leaves too little room (header_align, library.c),
+ * e.g. Null's "GESTURES" -> "GEST..." */
 static lv_obj_t *find_heading(lv_obj_t *root,const char *text){
-    lv_obj_t *label=find_text(root,text);if(label)return label;
-    char upper[160];theme_upper(upper,sizeof upper,text);return find_text(root,upper);
+    lv_obj_t *label=find_text_or_cut(root,text);if(label)return label;
+    char upper[160];theme_upper(upper,sizeof upper,text);return find_text_or_cut(root,upper);
 }
 
 static lv_obj_t *find_visible_text(lv_obj_t *o,const char *text){
@@ -381,14 +397,14 @@ static void review_hints(void){
     nav_touch(top,70);assert(cfg_get_int("hint_nav",0)==2);
     disco_nav_set_open(0);nav_wait(300);nav_touch(tab,70);assert(cfg_get_int("hint_menu",0)==2);
     disco_nav_set_open(0);screen_show(SCR_LIBRARY);onboarding_library(1);nav_wait(900);
-    assert(find_visible_text(lv_layer_top(),"Hold a song or album\nfor actions"));
+    assert(find_visible_text(lv_layer_top(),onboarding_gesture_text(HINT_LIBRARY)));
     songmenu_open_song("/fixture/hint-song.flac");assert(cfg_get_int("hint_library",0)==1);
-    assert(!find_visible_text(lv_layer_top(),"Hold a song or album\nfor actions"));
+    assert(!find_visible_text(lv_layer_top(),onboarding_gesture_text(HINT_LIBRARY)));
     lv_point_t hub={180,180};nav_touch(hub,70);
     screen_show(SCR_HOME);nav_wait(900);
     assert(find_visible_text(lv_layer_top(),"Tap title for more\nHold it for full screen"));   /* Title Hold: Immersive */
     lv_point_t title={180,155};nav_touch(title,70);assert(cfg_get_int("hint_music",0)==1);
-    dhome_overlay_close();nav_wait(100);
+    assert(screen_current()==SCR_NPMENU);screen_back();nav_wait(100);assert(screen_current()==SCR_HOME);   /* the track popup is the Now Playing menu */
     /* All four contexts learned: no automatic hints. */
     onboarding_screen(SCR_HOME,0);nav_wait(900);assert(!find_visible_text(lv_layer_top(),menu));
     assert(!find_visible_text(lv_layer_top(),"Tap title for more\nHold it for full screen"));
@@ -1716,12 +1732,13 @@ int main(int argc, char **argv){
             nav_wait(60);int n=null_transport_calls;
             nav_touch((lv_point_t){180,154},60);nav_wait(80);nav_touch((lv_point_t){180,154},60);
             assert(null_transport_calls==n+1 && !strcmp(null_last_command,"0201000C0000"));
-            nav_wait(450);assert(!disco_track_overlay_visible());
-            nav_touch((lv_point_t){180,120},60);nav_wait(450);assert(disco_track_overlay_visible());dhome_overlay_close();nav_wait(60);
+            nav_wait(450);assert(!disco_track_overlay_visible()&&screen_current()==SCR_HOME);
+            /* the track popup is the Now Playing menu screen now (disco_track_overlay_open) */
+            nav_touch((lv_point_t){180,120},60);nav_wait(450);assert(screen_current()==SCR_NPMENU);screen_back();nav_wait(60);assert(screen_current()==SCR_HOME);
             nav_pointer=(lv_indev_data_t){.point={100,188},.state=LV_INDEV_STATE_PRESSED};nav_wait(50);
             nav_pointer.point.x=240;nav_wait(50);nav_pointer.state=LV_INDEV_STATE_RELEASED;nav_wait(40);
             assert(null_transport_calls==n+2 && !strcmp(null_last_command,"0201000C0001"));
-            nav_wait(450);assert(!disco_track_overlay_visible());
+            nav_wait(450);assert(!disco_track_overlay_visible()&&screen_current()==SCR_HOME);
             nav_pointer=(lv_indev_data_t){.point={240,130},.state=LV_INDEV_STATE_PRESSED};nav_wait(50);
             nav_pointer.point.x=100;nav_wait(50);nav_pointer.state=LV_INDEV_STATE_RELEASED;nav_wait(40);
             assert(null_transport_calls==n+3 && !strcmp(null_last_command,"0201000C0002"));
@@ -1940,7 +1957,8 @@ int main(int argc, char **argv){
             for(size_t i=0;i<sizeof keys/sizeof keys[0];i++)saved[i]=simple_cfg_get_int(keys[i],-999);
             int disabled=0;
             for(size_t i=0;i<sizeof pages/sizeof pages[0];i++){
-                settings_open_group(pages[i]);nav_wait(30);lv_obj_t *root=screen_get_root(SCR_SETLIST);assert(find_heading(root,!strcmp(pages[i],"Theme navigation")?"Navigation":pages[i]));
+                settings_open_group(pages[i]);nav_wait(30);lv_obj_t *root=screen_get_root(SCR_SETLIST);
+                if(!find_heading(root,!strcmp(pages[i],"Theme navigation")?"Navigation":pages[i])){fprintf(stderr,"REVIEW_DISPLAY: no heading on page %s (screen %d)\n",pages[i],screen_current());dump_labels(root,0);abort();}
                 lv_obj_t *stack[512];int n=0;stack[n++]=root;
                 while(n){lv_obj_t *o=stack[--n];
                     if(lv_obj_check_type(o,&lv_label_class)&&!strcmp(lv_label_get_text(o),"Disabled")){
@@ -2311,7 +2329,9 @@ int main(int argc, char **argv){
             lv_obj_t *hint=find_text(np, "No synced lyrics for this track"); assert(hint);
             lv_obj_t *cover=lv_obj_get_parent(hint);
             ui_np_fsart_close();
-            assert(screen_current()==SCR_HOME && !ui_np_fsart_active());
+            /* animated: the record lifts off first (240 ms, imm_out_done), then Music returns; without animation at once */
+            int animated=screen_get_anim();
+            assert(!ui_np_fsart_active() && (animated || screen_current()==SCR_HOME));
             for(int i=0;i<ms/5;i++){
                 lv_tick_inc(5);lv_timer_handler();
                 if(!lv_obj_has_flag(np,LV_OBJ_FLAG_HIDDEN)){
@@ -2319,7 +2339,7 @@ int main(int argc, char **argv){
                     assert(lv_obj_get_style_opa(cover,0)==LV_OPA_COVER);
                 }
             }
-            if(ms>=260) assert(lv_obj_has_flag(np,LV_OBJ_FLAG_HIDDEN));
+            if(ms>=260) assert(lv_obj_has_flag(np,LV_OBJ_FLAG_HIDDEN) && screen_current()==SCR_HOME);
             printf("PASS: Disco exit %dms keeps Ring covered until NP is hidden\n",ms);
         }
         if(getenv("REVIEW_BATTERY_LAYOUT")){
