@@ -61,8 +61,17 @@ None (2026-11-20). When one is added to `KNOWN_FAILURES`, list it here with the 
    `python3 ui/tests/zune_scroll_test.py --record-baseline`.
 3. Commit the fixtures together with the change and say why in the message.
 
-Never re-record to make a difference go away that nobody can explain. Both were last recorded on 2026-11-20 (after
-`fc36fcf`), replacing baselines older than upstream 3.4.1.
+Never re-record to make a difference go away that nobody can explain. Both were recorded on 2026-11-20 (after
+`fc36fcf`), replacing baselines older than upstream 3.4.1; `theme_efficiency_test` again the same day for the washed
+Now Playing backdrop.
+
+## Readability
+
+`np_contrast_test.py` renders Now Playing in every theme, light and dark, over a black, a white, an orange and a busy
+multicolour cover, and measures the WCAG contrast of title, artist and album against the pixels behind them
+(`REVIEW_NP_CONTRAST=1 host-render PRESET VARIANT preview-np 0 out.ppm` prints the values; the cover is `out.png`).
+It fails below 4.5. When it fails, fix the colours or the backdrop wash (`np_backdrop_wash()` in `ui/ui.c`), not
+the limit.
 
 ## Writing a test
 

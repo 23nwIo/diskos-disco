@@ -1883,6 +1883,35 @@ void ui_vinyl_spin(int want)
 
 /* Now Playing style: 0 = album cover (rounded square), 1 = vinyl disc. */
 static void np_layout(int poster);
+/* WCAG relative luminance of an sRGB colour, and the contrast ratio of two luminances */
+static float np_lum(lv_color_t c){
+    float v[3]={c.red/255.0f,c.green/255.0f,c.blue/255.0f};
+    for(int i=0;i<3;i++)v[i]=v[i]<=0.04045f?v[i]/12.92f:powf((v[i]+0.055f)/1.055f,2.4f);
+    return 0.2126f*v[0]+0.7152f*v[1]+0.0722f*v[2];
+}
+static float np_contrast(float a,float b){return a>b?(a+0.05f)/(b+0.05f):(b+0.05f)/(a+0.05f);}
+/* The blurred cover behind Now Playing is washed with the theme's canvas colour (image recolor). How much: the
+ * least that still keeps every text on it (title, artist, album, times) at a contrast of at least 4.5 (WCAG AA)
+ * over the worst cover, which is black on a light canvas and white on a dark one. So in light themes a dark cover
+ * becomes a light tint of its colour, and in dark themes a light cover a dark one; the text colours stay the
+ * theme's. np_contrast_test.py checks the result in every theme. */
+static void np_backdrop_wash(void){
+    if(!backdrop) return;
+    lv_color_t canvas=TC(CANVAS);
+    float lc=np_lum(canvas);
+    lv_color_t worst=lc>0.18f?lv_color_black():lv_color_white();   /* 0.18: the luminance equally far from black and white */
+    lv_obj_t *texts[]={title,artist,album,t_elapsed};
+    int opa=LV_OPA_COVER;
+    for(int o=0;o<=LV_OPA_COVER;o+=5){
+        float lb=np_lum(lv_color_mix(canvas,worst,(uint8_t)o));
+        int ok=1;
+        for(unsigned i=0;i<sizeof texts/sizeof *texts&&ok;i++)
+            if(texts[i]&&np_contrast(np_lum(lv_obj_get_style_text_color(texts[i],LV_PART_MAIN)),lb)<4.6f)ok=0;
+        if(ok){opa=o;break;}
+    }
+    lv_obj_set_style_image_recolor(backdrop,canvas,LV_PART_MAIN);
+    lv_obj_set_style_image_recolor_opa(backdrop,(lv_opa_t)opa,LV_PART_MAIN);
+}
 static void np_layout_ring(int on);
 void kit_fork_np_braun(void);
 void kit_fork_np_zune(void);
@@ -1941,6 +1970,7 @@ void ui_set_np_style(int style)
     np_layout(g_np_poster);
     np_layout_ring(g_np_ring);
     if(theme_kit()->fork_np_layout) theme_kit()->fork_np_layout();
+    np_backdrop_wash();   /* after every layout: it reads the text colours the layout chose */
     np_queue_place();
     apply_accent();
     ui_np_rescroll();
@@ -2570,6 +2600,8 @@ static void np_layout(int poster){
                 lv_obj_set_style_text_color(artist, poster ? TC(POSTER_SUBTITLE) : TC(TEXT_LYRICS), 0);
                 lv_obj_align(artist, LV_ALIGN_TOP_MID, 0, poster ? 222 : 226); }
     lv_color_t side = poster ? TC(POSTER_SIDE) : TC(TEXT_MUTED);
+    if(btn_queue && lv_obj_get_child_count(btn_queue)){   /* the queue glyph sits on the cover backdrop, like the play-mode icon */
+        lv_obj_t *ql = lv_obj_get_child(btn_queue, 0); if(lv_obj_check_type(ql, &lv_label_class)) lv_obj_set_style_text_color(ql, poster ? TC(POSTER_SIDE) : TC(TEXT_MUTED), 0); }
     if(btn_prev){ lv_obj_set_style_text_color(btn_prev, side, 0); lv_obj_align(btn_prev, LV_ALIGN_TOP_MID, poster ? -62 : -60, poster ? 272 : 284); }
     if(btn_next){ lv_obj_set_style_text_color(btn_next, side, 0); lv_obj_align(btn_next, LV_ALIGN_TOP_MID, poster ?  62 :  60, poster ? 272 : 284); }
     if(btn_pp)    lv_obj_align(btn_pp, LV_ALIGN_TOP_MID, 0, poster ? 268 : 280);
@@ -3826,9 +3858,7 @@ void ui_create(lv_obj_t *root)
     backdrop = lv_image_create(scr);
     lv_obj_set_size(backdrop, 360, 360);
     lv_obj_align(backdrop, LV_ALIGN_CENTER, 0, 0);
-    /* darken the blurred art so foreground text/controls stay readable */
-    lv_obj_set_style_image_recolor(backdrop,theme_ring_light()?TC(CANVAS):TC(SCRIM),LV_PART_MAIN);
-    lv_obj_set_style_image_recolor_opa(backdrop,theme_ring_light()?85:150,LV_PART_MAIN);
+    /* washed with the canvas colour so the text on it stays readable: np_backdrop_wash(), once the labels exist */
     lv_obj_add_flag(backdrop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 

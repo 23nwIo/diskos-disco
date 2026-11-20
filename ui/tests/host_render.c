@@ -182,6 +182,55 @@ static lv_obj_t *find_text(lv_obj_t *o,const char *text){
     return NULL;
 }
 #include "az_wheel_designs.h"
+/* REVIEW_NP_CONTRAST: WCAG contrast of the Now Playing title, artist and album against what is drawn behind them.
+   For each label: render with and without it; the pixels that change (grown by 2 px) are where the text sits, and the
+   frame without the label gives the background there. The label's style colour (blended by its opacity) is the text
+   colour. Prints the 10th percentile and the minimum of the per-pixel contrast. */
+static double srgb_lin(int c){double v=c/255.0;return v<=0.04045?v/12.92:pow((v+0.055)/1.055,2.4);}
+static double rel_lum(int r,int g,int b){return 0.2126*srgb_lin(r)+0.7152*srgb_lin(g)+0.0722*srgb_lin(b);}
+static int cmp_double(const void *a,const void *b){double x=*(const double*)a,y=*(const double*)b;return (x>y)-(x<y);}
+static int label_shows(lv_obj_t *o,const char *want){
+    const char *t=lv_label_get_text(o); size_t n=strlen(t);
+    if(!strcmp(t,want)) return 1;
+    return n>3 && !strcmp(t+n-3,"...") && !strncmp(t,want,n-3);
+}
+/* the last visible label showing the text: drawn on top, so a shadow copy under it counts as background */
+static lv_obj_t *find_shown(lv_obj_t *o,const char *want){
+    lv_obj_t *found=lv_obj_check_type(o,&lv_label_class) && lv_obj_is_visible(o) && label_shows(o,want) ? o : NULL;
+    for(uint32_t i=0;i<lv_obj_get_child_count(o);i++){lv_obj_t *f=find_shown(lv_obj_get_child(o,i),want); if(f) found=f;}
+    return found;
+}
+static void np_contrast_report(lv_display_t *d){
+    static unsigned char with[sizeof pixels], without[sizeof pixels]; static unsigned char mask[360*360]; static double cr[360*360];
+    const char *names[3]={"title","artist","album"};
+    const char *texts[3]={getenv("NP_TITLE")?getenv("NP_TITLE"):"Northern Lights",getenv("NP_ARTIST")?getenv("NP_ARTIST"):"The Midnight",
+                          getenv("NP_ALBUM")?getenv("NP_ALBUM"):"Afterglow"};
+    for(int k=0;k<3;k++){
+        lv_obj_t *l=find_shown(lv_screen_active(),texts[k]);
+        if(!l){printf("CONTRAST %s none\n",names[k]);continue;}
+        lv_obj_invalidate(lv_screen_active()); lv_refr_now(d); memcpy(with,pixels,sizeof pixels);
+        lv_obj_add_flag(l,LV_OBJ_FLAG_HIDDEN); lv_obj_invalidate(lv_screen_active()); lv_refr_now(d); memcpy(without,pixels,sizeof pixels);
+        lv_obj_remove_flag(l,LV_OBJ_FLAG_HIDDEN); lv_obj_invalidate(lv_screen_active()); lv_refr_now(d);
+        memset(mask,0,sizeof mask);
+        for(int y=0;y<360;y++)for(int x=0;x<360;x++){
+            size_t i=((size_t)y*360+x)*3; if(!memcmp(with+i,without+i,3)) continue;
+            for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++){int yy=y+dy,xx=x+dx; if(yy>=0&&yy<360&&xx>=0&&xx<360) mask[yy*360+xx]=1;}
+        }
+        lv_color_t c=lv_obj_get_style_text_color(l,LV_PART_MAIN);
+        int a=lv_obj_get_style_text_opa(l,LV_PART_MAIN)*lv_obj_get_style_opa_recursive(l,LV_PART_MAIN)/255;
+        int n=0;
+        for(int p=0;p<360*360;p++){
+            if(!mask[p]) continue;
+            int br=without[p*3+2],bg=without[p*3+1],bb=without[p*3];   /* the buffer is BGR */
+            int fr=(c.red*a+br*(255-a))/255,fg=(c.green*a+bg*(255-a))/255,fb=(c.blue*a+bb*(255-a))/255;
+            double l1=rel_lum(fr,fg,fb),l2=rel_lum(br,bg,bb);
+            cr[n++]=(fmax(l1,l2)+0.05)/(fmin(l1,l2)+0.05);
+        }
+        if(!n){printf("CONTRAST %s none\n",names[k]);continue;}
+        qsort(cr,(size_t)n,sizeof cr[0],cmp_double);
+        printf("CONTRAST %s p10 %.2f min %.2f fg #%02x%02x%02x opa %d pixels %d\n",names[k],cr[n/10],cr[0],c.red,c.green,c.blue,a,n);
+    }
+}
 static void dump_labels(lv_obj_t *o,int depth){   /* diagnostics for a failed check */
     if(lv_obj_check_type(o,&lv_label_class))fprintf(stderr,"  label: %s (w %d, x %d)\n",lv_label_get_text(o),(int)lv_obj_get_width(o),(int)lv_obj_get_x(o));
     for(uint32_t i=0;i<lv_obj_get_child_count(o)&&depth<12;i++)dump_labels(lv_obj_get_child(o,i),depth+1);
@@ -3076,6 +3125,7 @@ render:
     if(getenv("TOAST")){ui_toast(getenv("TOAST"));nav_wait(400);lv_refr_now(d);}   /* a pop-up on any screen, for checking its fit */
     if(getenv("BACK_HINT")){void ui_back_hint(int,int);ui_back_hint(180,atoi(getenv("BACK_HINT")));nav_wait(200);lv_refr_now(d);}   /* the back arrow, for checking it shows */
     if(th_zune()){zune_status_refresh();nav_wait(40);lv_refr_now(d);}
+    if(getenv("REVIEW_NP_CONTRAST")) np_contrast_report(d);   /* np_contrast_test.py */
     FILE *f=fopen(argv[5],"wb"); if(!f) return 1;
     fprintf(f,"P6\n360 360\n255\n");
     for(size_t i=0;i<sizeof pixels;i+=3){

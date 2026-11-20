@@ -4,6 +4,11 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Music (Stone and Ring): the blurred cover behind Now Playing is now washed with the theme's background colour just
+  enough that title, artist, album and times stay readable over any cover: in light themes a dark or colourful cover
+  becomes a light tint of its colour (light Stone showed dark text on a darkened cover before), in dark themes a light
+  cover becomes a dark one. The queue icon there uses the text colour. Not yet tested on a Disc.
+
 - Disco, Squash and Null: the "Tap title for more" hint now counts as learned once the title opens the song menu (it
   kept coming back on the next starts). Settings › Audio no longer leaves the Outputs rows Auto Outputs and Headphone
   Volume reachable through the settings list when the stock player runs. Not yet tested on a Disc.
