@@ -409,6 +409,7 @@ static void row_cb(int slot){                 /* a tap inside a slice (the wheel
 /* Remote Control: the same as tapping that mode on the Working mode screen (toasts included). 0 started, -2 a switch is
  * still applying, -1 refused (the reason was toasted) or not a mode of the picker. */
 int modes_switch(int m){ return slot_of_mode(m) < 0 ? -1 : switch_to(m); }
+int modes_in_picker(int m){ return slot_of_mode(m) >= 0; }
 static int switch_to(int m){
     /* Serialise: ignore taps while the previous switch is still applying (the player's gadget
      * state-machine is asynchronous). NB we do NOT early-return on "same mode" - re-issuing must

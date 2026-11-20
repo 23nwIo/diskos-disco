@@ -83,6 +83,14 @@ int sd_mount(sd_log_fn log){
         if(e == EBUSY && sd_is_mounted()){ log("sd: mounted meanwhile by someone else"); return 0; }
         log("sd: mount %s as %s: %s", dev, fs[i].type, strerror(e));
     }
+    /* An ext card the kernel will not mount writable (e.g. ext4 features a newer PC kernel left behind when the card
+     * came back from USB storage while still mounted there): read-only, so it plays and can go back to USB storage
+     * for a repair. mq_ui sees the "ro" mount and tells the user. */
+    if(mount(dev, SD_MOUNTPOINT, "ext4", MS_NOATIME | MS_RDONLY, "") == 0){
+        log("sd: mounted %s (ext4) READ-ONLY on %s: the writable mount was refused", dev, SD_MOUNTPOINT);
+        return 0;
+    }
+    log("sd: mount %s as ext4 read-only: %s", dev, strerror(errno));
     return -1;
 }
 

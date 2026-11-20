@@ -48,6 +48,7 @@
 #include "npshade.h"
 #include "ma.h"
 #include "modes.h"
+#include "sdfscheck.h"     /* is the shared card still marked in use by the computer? */
 #include "anim.h"
 #include "ipc.h"
 #include "crashlog.h"
@@ -636,6 +637,19 @@ void settings_restart_now(void);           /* settings.c: the Restart path (drai
  * under g_sd_mode_mu, by a new export request and by storage_unknown); started: once per return; running: the
  * worker is up; failed: it could not leave the card mounted -> restart instead. */
 static _Atomic int g_ext_ret_allow, g_ext_ret_started, g_ext_ret_running, g_ext_ret_failed;
+/* Emergency read-only card (sd_ext_mount): an ext card the kernel refuses to mount writable (2026-11-20: a card taken
+ * back from USB storage while the computer still had it mounted carries ext4 features from the newer PC kernel) is
+ * mounted read-only, so music still plays and USB storage can be entered again to repair it on a computer (our mount:
+ * sd_ext_mount; the own player does the same). storage_tick shows the notice once per read-only spell, whoever
+ * mounted it; sd_write_begin refuses writes meanwhile. */
+static int g_sd_ro_shown;
+static int sd_card_ro(void);               /* /tmp/sdcard is mounted read-only */
+static void sd_ro_notice_show(void);
+/* Leaving USB storage while the computer still has the card mounted: warn first (storage_leave_warn); "Switch anyway"
+ * sets g_leave_forced for the one switch it repeats. */
+static int sd_host_has_card(void);         /* shared over USB and its filesystem is marked in use */
+static void storage_leave_warn(int mode);
+static int g_leave_forced;
 int ui_local_playback_allowed(void){
     return atomic_load(&g_launch_verdict) == 1 && g_sd_phase == SD_LOCAL && !g_sd_hold && sd_io_healthy();
 }
@@ -737,7 +751,7 @@ static void sd_holders_log(FILE *f){
 }
 int sd_write_begin(void){
     atomic_fetch_add(&g_sd_writers, 1);
-    if(!atomic_load(&g_sd_writable) || sd_exported_to_host()){
+    if(!atomic_load(&g_sd_writable) || sd_exported_to_host() || sd_card_ro()){
         atomic_fetch_sub(&g_sd_writers, 1); return 0;
     }
     return 1;
@@ -875,6 +889,8 @@ int ui_set_source_mode(int mode){
         return 0;
     }
     if(g_sd_phase == SD_HOST){
+        if(!g_leave_forced && sd_host_has_card()){ storage_leave_warn(mode); return -1; }
+        g_leave_forced = 0;
         if(!storage_mark('R', mode)){ ui_toast("Couldn't leave USB storage"); return -1; }
         g_sd_return_mode = mode; g_sd_phase = SD_WAIT_LOCAL;
         atomic_store(&g_ext_ret_started, 0); atomic_store(&g_ext_ret_failed, 0);
@@ -909,6 +925,11 @@ static void storage_tick(lv_timer_t *t){
         return;
     }
     if(g_sd_phase == SD_LOCAL){
+        if(coldplug_mounted()){
+            int ro = sd_card_ro();
+            if(ro && !g_sd_ro_shown) sd_ro_notice_show();
+            g_sd_ro_shown = ro;
+        }
         /* the return worker ended with the ext card unmounted (the player took it away again): restart */
         if(atomic_load(&g_ext_ret_failed) && !atomic_load(&g_ext_ret_running) && !coldplug_mounted()){
             storage_restart_for_card(); return;
@@ -2625,6 +2646,18 @@ static int coldplug_mounted(void){
     fclose(m);
     return ok;
 }
+/* Is the card at /tmp/sdcard mounted read-only (our emergency mount, or the kernel's errors=remount-ro)? */
+static int sd_card_ro(void){
+    FILE *m = fopen("/proc/mounts", "r");
+    if(!m) return 0;
+    char line[512], dev[128], target[128], fstype[32], opts[256]; int ro = 0;
+    while(fgets(line, sizeof line, m)){
+        if(sscanf(line, "%127s %127s %31s %255s", dev, target, fstype, opts) != 4 || strcmp(target, "/tmp/sdcard")) continue;
+        ro = !strcmp(opts, "ro") || !strncmp(opts, "ro,", 3);
+    }
+    fclose(m);
+    return ro;
+}
 /* Logs in /tmp (RAM, so no flash writes; Jo 2026-11-16): checked every 10 minutes, and one past 2 MB keeps its last
  * 2 MB as <log>.1 and starts empty again (the writers append, so they go on at the start). /tmp is a small tmpfs. */
 static const char *const TMP_LOGS[] = { "/tmp/diskos-player.log", OPL_VOLUME_LOG, "/tmp/diskos-mpd/log",
@@ -2792,6 +2825,73 @@ int sd_card_is_ext_now(void){ return !sd_exported_to_host() && sd_card_is_ext();
 static int sd_return_needs_mount(void){
     return !sd_exported_to_host() && !coldplug_mounted() && sd_card_is_ext();
 }
+/* Shared over USB, and the card's filesystem is marked in use (sdfscheck.h): the computer most likely still has it
+ * mounted, or it was unplugged without ejecting. Reads the start of the filesystem from /dev/mmcblk0, the device the
+ * USB gadget serves, so the read goes through the same page cache as the computer's writes. Reading does not disturb
+ * the export. Any read failure counts as "not known to be in use" (the warning is advice, not a guard). */
+static int sd_host_has_card(void){
+    if(!sd_exported_to_host()) return 0;
+    long long start = 0;
+    FILE *f = fopen("/sys/class/block/mmcblk0p1/start", "r");
+    if(f){ if(fscanf(f, "%lld", &start) != 1) start = 0; fclose(f); }
+    int fd = open("/dev/mmcblk0", O_RDONLY | O_CLOEXEC);
+    if(fd < 0) return 0;
+    unsigned char b[SDFS_HEAD];
+    ssize_t n = pread(fd, b, sizeof b, (off_t)start * 512);
+    close(fd);
+    if(n <= 0) return 0;
+    int st = sdfs_state(b, (size_t)n);
+    char m[96]; snprintf(m, sizeof m, "storage leave: %s filesystem %s", sdfs_kind(b, (size_t)n),
+                         st == SDFS_DIRTY ? "marked in use" : st == SDFS_CLEAN ? "clean" : "state unknown");
+    coldplug_log(m);
+    return st == SDFS_DIRTY;
+}
+/* ---- the two card dialogs (UI thread: storage_tick and ui_set_source_mode run there) ---- */
+lv_obj_t *sys_modal_card(const char *title, int h);
+lv_obj_t *sys_modal_text(lv_obj_t *card, const char *txt, int y, theme_color_role_t col);
+void sys_modal_pill(lv_obj_t *card, int x, const char *txt, theme_color_role_t col, lv_event_cb_t cb, const char *action);
+void sys_modal_simple(const char *title, const char *body);
+void sys_modal_close(void);
+static void sd_ro_notice_show(void){
+    sys_modal_simple("SD card is read-only",
+        "The card's file system needs a check, so diskOS opened it read-only. Music plays, but nothing is saved to the "
+        "card. To repair it, switch to USB storage and check the card on a computer (Linux: e2fsck -f).");
+}
+static int g_leave_mode;
+static void cb_leave_cancel(lv_event_t *e){ if(lv_event_get_code(e) == LV_EVENT_CLICKED) sys_modal_close(); }
+static void cb_leave_anyway(lv_event_t *e){
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    sys_modal_close();
+    coldplug_log("storage leave: switched back although the card was marked in use");
+    g_leave_forced = 1;
+    if(modes_in_picker(g_leave_mode)) modes_switch(g_leave_mode);   /* the Working mode screen shows the switch */
+    else ui_set_source_mode(g_leave_mode);
+    g_leave_forced = 0;
+}
+static void storage_leave_warn(int mode){
+    g_leave_mode = mode;
+    lv_obj_t *c = sys_modal_card("Eject on the computer first", 250);
+    sys_modal_text(c, "The computer still has the SD card mounted, or it was unplugged without ejecting. "
+                      "Switching back now can leave the card needing a repair.", 46, THEME_CLR_TEXT_MUTED);
+    sys_modal_pill(c, -58, "Cancel", THEME_CLR_TEXT_SECONDARY, cb_leave_cancel, "storage.leave_cancel");
+    sys_modal_pill(c,  58, "Switch", THEME_CLR_STATUS_DANGER, cb_leave_anyway, "storage.leave_anyway");
+}
+/* Mount an ext2/3/4 card at /tmp/sdcard; when the kernel refuses it writable, mount it read-only instead (journal
+ * replay included, as a plain "mount -o ro": checked by hand on the device 2026-11-20). 0 writable, 1 read-only,
+ * -1 not mounted (errno from the writable attempt). The caller holds g_sd_mode_mu and has done its guards. */
+static int sd_ext_mount(const char *dev, const char *who){
+    if(mount(dev, "/tmp/sdcard", "ext4", 0, NULL) == 0) return 0;
+    int e = errno; char b[160];
+    if(mount(dev, "/tmp/sdcard", "ext4", MS_RDONLY, NULL) == 0){
+        snprintf(b, sizeof b, "%s: writable mount of %s refused errno=%d(%s) - mounted READ-ONLY", who, dev, e, strerror(e));
+        coldplug_log(b);
+        return 1;
+    }
+    snprintf(b, sizeof b, "%s: read-only mount of %s failed too errno=%d(%s)", who, dev, errno, strerror(errno));
+    coldplug_log(b);
+    errno = e;
+    return -1;
+}
 /* An ext2/3/4 card needs watching after the direct mount. A few seconds later the stock player runs its own SD mount
  * routine: it unmounts the card ("umount /tmp/sdcard"), clears the mountpoint (the SD guard turns that "rm -rf" into
  * an rmdir of the then-empty directory) and mounts again with iocharset=utf8, which ext4 rejects. The card is then
@@ -2813,7 +2913,7 @@ static void sd_ext_keep_mounted(const char *dev){
         pthread_mutex_lock(&g_sd_mode_mu);
         if(ui_get_source_mode() == 0 && !coldplug_mounted() && sd_cold_mount_allowed()){
             mkdir("/tmp/sdcard", 0755);              /* the guard's rmdir may have removed the mountpoint */
-            if(mount(dev, "/tmp/sdcard", "ext4", 0, NULL) == 0){
+            if(sd_ext_mount(dev, "ext watch") >= 0){
                 if(sd_exported_to_host()){
                     if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)
                         coldplug_log("WARNING: post-remount export + unmount BOTH failed (card busy) - possible transient dual-access");
@@ -2853,7 +2953,7 @@ static void *ext_return_thread(void *arg){
             pthread_mutex_lock(&g_sd_mode_mu);
             if(atomic_load(&g_ext_ret_allow) && !atomic_load(&g_sd_formatting) && !sd_exported_to_host() && !coldplug_mounted()){
                 mkdir("/tmp/sdcard", 0755);          /* the guard's rmdir may have removed the mountpoint */
-                if(mount(dev, "/tmp/sdcard", "ext4", 0, NULL) == 0){
+                if(sd_ext_mount(dev, "storage return") >= 0){
                     if(sd_exported_to_host()){
                         if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)
                             coldplug_log("WARNING: return mount: export + unmount BOTH failed (card busy) - possible transient dual-access");
@@ -2954,6 +3054,8 @@ static void *coldplug_thread(void *arg){
                     if(mount(dev, "/tmp/sdcard", SD_FS_TYPES[k], 0, NULL) == 0) fstype = SD_FS_TYPES[k];
                     else merr = errno;
                 }
+                /* an ext card the kernel will not mount writable: the emergency read-only mount */
+                if(!fstype && sd_cold_mount_allowed() && sd_card_is_ext() && sd_ext_mount(dev, "coldplug") >= 0) fstype = "ext4";
                 if(fstype){
                     if(sd_exported_to_host()){
                         if(umount("/tmp/sdcard") != 0 && umount2("/tmp/sdcard", MNT_DETACH) != 0)

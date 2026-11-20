@@ -47,8 +47,19 @@ with tempfile.TemporaryDirectory(prefix="diskos-storage-tests-") as tmp:
 #include <pthread.h>
 #include <stdatomic.h>
 #include <assert.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/mount.h>
+#include <time.h>
 #include "sdio.h"
 typedef void lv_timer_t;
+/* the Format SD card hooks that live in this part of main.c (not under test here) */
+static void scanner_abort(void){}
+static void art_kill_all(void){}
+static int ui_audio_running(void){ return 0; }
+enum { UD_OFF, UD_STOPPING };                        /* no USB drive in these tests */
+static int usbdrive_state(void){ return UD_OFF; }
+static int usbdrive_stop(void){ return 0; }
 static uint32_t test_clock;
 static int test_mounted=1, test_exported, test_host, test_guarded=1, test_scan;
 static int test_sends, test_fail, test_export_sends, test_seed, test_ext, test_restarts, test_ext_starts, test_ext_mounts;
@@ -89,6 +100,11 @@ static int ipc_send_cmd(const char *s){
     tests = r'''
 static int sd_exported_to_host(void){ return test_exported; }
 static int coldplug_mounted(void){ return test_mounted; }
+static int test_ro, test_ro_notices, test_host_dirty, test_leave_warns, test_leave_mode=-1;
+static int sd_card_ro(void){ return test_mounted && test_ro; }
+static void sd_ro_notice_show(void){ test_ro_notices++; }
+static int sd_host_has_card(void){ return test_exported && test_host_dirty; }
+static void storage_leave_warn(int mode){ test_leave_warns++; test_leave_mode = mode; }
 /* Mirrors the real predicate in main.c, INCLUDING the launch verdict. Leaving the verdict out of this
  * stub is exactly what let a pending-verdict admission gap pass review. */
 static int storage_media_local(void){
@@ -111,6 +127,7 @@ static void reset(void){
     unlink(SD_EXPORT_MARKER);
     test_clock=0; test_mounted=1; test_exported=0; test_host=0;
     test_guarded=1; test_scan=0; test_sends=0; test_fail=0; test_export_sends=0; test_seed=0; test_ext=0; test_restarts=0; test_ext_starts=0; test_ext_mounts=0;
+    test_ro=0; test_ro_notices=0; test_host_dirty=0; test_leave_warns=0; test_leave_mode=-1; g_leave_forced=0; g_sd_ro_shown=0;
     g_sd_hold=0; g_sd_phase=SD_LOCAL; g_source_mode=0; g_sd_reissue=0;
     atomic_store(&g_sd_writable,1); atomic_store(&g_sd_writers,0);
     storage_init(); assert(sd_io_allowed() && ui_local_playback_allowed());
@@ -265,6 +282,34 @@ int main(void){
     reset(); FILE *f=fopen(SD_EXPORT_MARKER,"w"); assert(f); fclose(f);
     storage_init(); assert(g_sd_phase==SD_UNKNOWN && !sd_io_allowed());
     puts("PASS old or malformed handoff marker remains held");
+    /* the computer still has the card mounted: leaving USB storage warns and changes nothing; "Switch anyway" goes on */
+    reset(); enter_host(); test_host_dirty=1;
+    int s0=test_sends;
+    assert(ui_set_source_mode(0)<0 && test_leave_warns==1 && test_leave_mode==0);
+    assert(g_sd_phase==SD_HOST && test_sends==s0 && !sd_io_allowed());
+    g_leave_forced=1; assert(ui_set_source_mode(0)==0); g_leave_forced=0;
+    assert(g_sd_phase==SD_WAIT_LOCAL && test_sends>s0 && test_leave_warns==1);
+    reset(); enter_host();
+    assert(ui_set_source_mode(0)==0 && test_leave_warns==0 && g_sd_phase==SD_WAIT_LOCAL);
+    puts("PASS leaving USB storage while the computer has the card mounted asks first");
+
+    /* an emergency read-only card: readable, never written, the notice once per read-only spell */
+    reset(); test_ro=1;
+    storage_tick(NULL); storage_tick(NULL);
+    assert(test_ro_notices==1 && sd_io_begin()); sd_io_end();
+    assert(!sd_write_begin() && atomic_load(&g_sd_writers)==0);
+    assert(ui_set_source_mode(3)==0);                               /* USB storage stays reachable for the repair */
+    reset(); test_ro=1; storage_tick(NULL); test_ro=0; storage_tick(NULL); test_ro=1; storage_tick(NULL);
+    assert(test_ro_notices==2);
+    puts("PASS a read-only card plays, refuses writes, can be shared again and is announced once");
+
+    /* ext4 return that only mounts read-only: no restart */
+    reset(); test_ext=1; test_ext_mounts=1; enter_host();
+    assert(ui_set_source_mode(0)==0);
+    test_host=0; test_exported=0; test_ro=1; test_clock+=6000; storage_tick(NULL); storage_tick(NULL);
+    assert(g_sd_phase==SD_LOCAL && test_restarts==0); storage_tick(NULL);
+    assert(test_ro_notices==1 && !sd_write_begin());
+    puts("PASS an ext4 card that returns read-only stays without a restart");
     reset(); assert(ui_set_source_mode(3)==0); sd_io_fault(); storage_tick(NULL);
     assert(g_sd_phase==SD_UNKNOWN && test_export_sends==0 && !sd_io_resume());
     storage_init(); assert(!sd_io_resume() && !ui_local_playback_allowed());
@@ -276,7 +321,7 @@ int main(void){
     c = root / "test.c"
     c.write_text(headers + source + tests)
     exe = root / "test"
-    subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
+    subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror", "-Wno-format-truncation",
                     "-fsanitize=address,undefined", "-g", "-pthread", '-DSD_IO_FAULT_MARKER="' + str(root / "fault") + '"', "-I", str(app),
                     str(c), str(app / "sdio.c"), "-o", str(exe)], check=True)
     run_harness(exe, 10)

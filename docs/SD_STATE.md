@@ -32,3 +32,27 @@ A different card brings its own files. Paths in `books.tsv` are as the Disc sees
 Fatal signals of mq_ui and its start lines go to `/usr/data/diskos_crash.log` (rare; they must survive a reboot).
 Everything else written there only on an event (settings, Wi-Fi, a song played, ...) is listed in todo.md
 ("Flash writes"). The own player no longer writes the resume bookmark (todo.md, "Resume Playback").
+
+## A card that comes back read-only
+
+Switching from USB storage back to Playback while the computer still has the card mounted leaves the file system
+"in use" (2026-11-20, an ext4 card from a Linux PC: journal needs recovery and the newer kernel's `orphan_present`
+feature, which the Disc's kernel refuses to mount writable). diskOS handles this in two places:
+
+- **Leaving USB storage** reads the start of the shared file system (`ui/sdfscheck.c`, read from `/dev/mmcblk0` while
+  it stays exported) and asks first when it is marked in use: "Eject on the computer first", with Cancel or Switch.
+  Marked in use means: ext2/3/4 needs recovery, `orphan_present` or not "clean"; FAT/FAT32 dirty bit; exFAT
+  VolumeDirty. Linux sets these while a card is mounted (checked for ext4 with a loop mount). Whether Windows or macOS
+  set them is not checked, so no warning does not prove the computer let go.
+- **Emergency read-only mount**: an ext card the kernel will not mount writable is mounted read-only (as `mount -o ro`,
+  which replays the journal) at start-up and after USB storage, by mq_ui (`sd_ext_mount` in `ui/main.c`) and by the
+  own player (`ui/player/sdcard.c`). Before, a failed mount after USB storage restarted the Disc and the card then
+  stayed unmounted. While read-only, diskOS shows "SD card is read-only" once and makes no writes of its own to the
+  card (`sd_write_begin`). USB storage works again, so the card can be repaired on a computer:
+
+```
+sudo e2fsck -f /dev/sdX
+sudo tune2fs -O ^orphan_file /dev/sdX    # only if the card has orphan_file (formatted by e2fsprogs 1.47 or newer)
+```
+
+Back on Playback, the repaired card is mounted writable again.
