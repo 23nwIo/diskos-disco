@@ -24,7 +24,7 @@ make -C ui CROSS= host-render -j2
 make -C ui check-theme
 ```
 
-Choose focused diagnostics from `ui/tests/` for the changed behaviour. For settings, inspect `settings_alignment_test.py` and `display_pass_test.py`; for playback/power, the relevant idle, transport, Bluetooth and storage checks. Report actual results, including baseline failures. Do not state that all tests pass because the theme source gate passes.
+All host tests: `make -C ui/tests test` (see [TESTING.md](TESTING.md); known failures are listed there). Choose focused diagnostics from `ui/tests/` for the changed behaviour. For settings, inspect `settings_alignment_test.py` and `display_pass_test.py`; for playback/power, the relevant idle, transport, Bluetooth and storage checks. Report actual results, including baseline failures. Do not state that all tests pass because the theme source gate passes.
 
 Render changed screens at 360 × 360, including long text, empty states, supported appearances and navigation. Hardware playback, charging, standby, storage handoff and frame pacing still require the Disc.
 

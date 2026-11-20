@@ -1,0 +1,2 @@
+# test binaries built by the Makefile and the *_test.py harnesses (sources end in .c / .py)
+*_test

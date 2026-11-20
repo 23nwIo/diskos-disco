@@ -2,7 +2,12 @@
 # Copyright (C) 2026 diskOS contributors
 # Off-device host tests for diskOS pure-logic modules (arch#5 harness).
 # Native x86-64 build with sanitizers + CFG_* paths pointed at a temp dir. Does NOT touch the
-# device build (separate dir, separate Makefile). Run: make -C tests run
+# device build (separate dir, separate Makefile). See docs/TESTING.md.
+#   make -C ui/tests test      everything below, in this order (stops at the first failing group)
+#   make -C ui/tests run       the C unit tests
+#   make -C ui/tests review    fileops + app shortcut tests
+#   make -C ui/tests extra     further C tests (shuffle history, log rotation, song.db reads, cover upscale, Sendspin crypto)
+#   make -C ui/tests pytests   every *_test.py through run_pytests.py (builds host-render, sendspin-host, mpd_test first)
 CC ?= cc
 CFLAGS := -g -O1 -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 TDIR := /tmp/diskos_cfgtest
@@ -63,6 +68,32 @@ review: fileops_test apps_shortcut_test
 	./fileops_test
 	./apps_shortcut_test
 
+.PHONY: test extra pytests
+test: run review extra pytests
+
+EXTRA := shufhist_test logrotate_test db_read_test soft_backdrop_test
+extra: $(EXTRA)
+	./shufhist_test
+	./logrotate_test
+	./db_read_test
+	./soft_backdrop_test
+	$(MAKE) -C .. CROSS= sendspin-crypto-test
+
+shufhist_test: shufhist_test.c ../shufhist.c ../shufhist.h
+	$(CC) $(CFLAGS) -I.. shufhist_test.c ../shufhist.c -o $@
+logrotate_test: logrotate_test.c ../logrotate.h
+	$(CC) $(CFLAGS) -I.. logrotate_test.c -o $@
+# musicdb.c is #included by the test; jsmn_impl.c supplies the JSON parser it is built against (JSMN_HEADER)
+db_read_test: db_read_test.c ../musicdb.c ../musicdb.h ../bookmarks.c ../sdstate.c jsmn_impl.c sqlite3_host.o
+	$(CC) $(CFLAGS) -Wno-misleading-indentation -Wno-format-truncation -Wno-unused-function -D_GNU_SOURCE -DSDS_NO_DEVICE -I.. db_read_test.c jsmn_impl.c ../bookmarks.c ../sdstate.c sqlite3_host.o -lpthread -lm -ldl -o $@
+soft_backdrop_test: soft_backdrop_test.c ../tools/diskos_artdec.c
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. soft_backdrop_test.c -lm -lpthread -o $@
+
+# Python tests: the binaries they expect, then all of them, one after another (run_pytests.py)
+pytests: mpd_test
+	$(MAKE) -C .. CROSS= host-render sendspin-host
+	python3 run_pytests.py
+
 .PHONY: run clean
 run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
 	./config_test
@@ -98,7 +129,7 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wif
 	./hitguess_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test $(EXTRA)
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
