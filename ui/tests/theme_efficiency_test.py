@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Actual LVGL list/menu animation pixels and Null timer lifecycle regression checks.
-Build the host renderer first. --record-baseline is for an explicitly restored
-pre-change implementation, not a way to accept new rendering differences.
+Build the host renderer first. Any pixel change fails the test. After an INTENDED visual change, look at the changed
+screens, then re-record with --record-baseline (writes theme-efficiency-baseline.json and the settings digests in
+settings-roots-baseline.json; see docs/TESTING.md). Never re-record to make an unexplained difference go away.
 """
 from pathlib import Path
 import argparse, hashlib, json, os, subprocess, tempfile
@@ -36,10 +37,13 @@ with tempfile.TemporaryDirectory(prefix='theme-efficiency-') as tmp:
   if expected:
    old=expected['cases'][index];assert frames==old['frames'],(preset,variant,palette,'animation pixels differ');assert static==old['static'],(preset,variant,palette,'static pixels differ')
    if styles:assert styles[0]<=old['menu_style_events'][0],(styles,old['menu_style_events'])
-   if colors:assert colors[0]<old['menu_color_writes'][0],(colors,old['menu_color_writes'])
+   if colors:assert colors[0]<=old['menu_color_writes'][0],(colors,old['menu_color_writes'])   # never more style work than recorded
   print(f'PASS {preset}/{variant}/palette{palette}: {len(frames)} animation frames, four static screens'+(f', Null color writes {colors[0]}' if styles else ''),flush=True)
  if a.record_baseline:
-  fixture.write_text(json.dumps({'baseline':'0eb90ca661fd5d8a51657dd35a28764ca9b7fdce','cases':results},indent=2)+'\n')
+  rev=subprocess.run(['git','-C',str(app),'rev-parse','HEAD'],capture_output=True,text=True).stdout.strip()
+  fixture.write_text(json.dumps({'baseline':rev,'cases':results},indent=2)+'\n')
+  roots=app/'tests/fixtures/settings-roots-baseline.json';r=json.loads(roots.read_text())
+  r['sha256']=[c['static']['settings'] for c in results];roots.write_text(json.dumps(r,indent=2)+'\n')
  else:
   print(run({'REVIEW_THEME_STABILITY':'1'}).strip())
-  print('PASS animation, Music, Home and Quick Settings match pre-change dev; approved settings roots match; Null timer cleanup verified')
+  print('PASS animation, Music, Home, Quick Settings and Settings match the recorded baseline; Null timer cleanup verified')

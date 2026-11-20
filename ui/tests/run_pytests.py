@@ -23,9 +23,6 @@ TIMEOUT = int(os.environ.get('DISKOS_TEST_TIMEOUT', '900'))   # seconds per test
 # Tests that fail for a reason that is understood but not fixed yet. Each entry says why; remove it when fixed.
 # A listed test that passes is reported as FIXED and fails the run, so this list cannot go stale.
 KNOWN_FAILURES = {
-    # both already failed in upstream 3.4.1 (1cb1828), the version this fork started from
-    'theme_efficiency_test': 'pixel baseline fixtures/theme-efficiency-baseline.json older than the rendering',
-    'zune_scroll_test': 'pixel baseline fixtures/zune-scroll-3.0.0.txt is from 3.0.0',
 }
 
 # Extra arguments some tests need

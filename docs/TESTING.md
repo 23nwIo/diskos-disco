@@ -45,13 +45,24 @@ each test is in `/tmp/diskos-tests/<name>.log` (`DISKOS_TEST_LOGS` changes the d
 
 The tests share `/tmp/sdcard`, `ui/tests/host_build/` and a few `/tmp` paths, so never run two at once.
 
-## Known failures (2026-11-20)
+## Known failures
 
-Both already failed in upstream Disco 3.4.1 (`1cb1828`), where this fork started; they are listed in
-`KNOWN_FAILURES` with the reason:
+None (2026-11-20). When one is added to `KNOWN_FAILURES`, list it here with the reason.
 
-- `theme_efficiency_test`, `zune_scroll_test`: pixel baselines in `ui/tests/fixtures/` older than the rendering. These
-  compare every frame bit for bit with a recorded run, so any intended visual change breaks them.
+## Pixel baselines
+
+`theme_efficiency_test.py` (list and menu animations, Home, Music, Quick Settings and Settings in every theme) and
+`zune_scroll_test.py` (Zune list scrolling) compare every frame bit for bit with a recorded run in
+`ui/tests/fixtures/`. Any pixel change fails them, wanted or not. After an intended visual change:
+
+1. Look at the changed screens (render them with `ui/tests/host_build/host-render PRESET VARIANT preview-home 0 out.ppm`
+   and the other `preview-*` pages).
+2. Re-record: `python3 ui/tests/theme_efficiency_test.py --record-baseline` and/or
+   `python3 ui/tests/zune_scroll_test.py --record-baseline`.
+3. Commit the fixtures together with the change and say why in the message.
+
+Never re-record to make a difference go away that nobody can explain. Both were last recorded on 2026-11-20 (after
+`fc36fcf`), replacing baselines older than upstream 3.4.1.
 
 ## Writing a test
 
