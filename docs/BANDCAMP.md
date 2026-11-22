@@ -111,6 +111,10 @@ and playing go on meanwhile.
   the file's path (`bc_local_match`: `NN Title.<ext>` as saved from the stream, or Bandcamp's ZIP name
   `Artist - Album - NN Title.<ext>`; flac, mp3, ogg, m4a). A track saved under another name (a title Bandcamp's ZIP
   writes differently) is still streamed.
+  Order (Jo, 2026-11-22): the track that plays next is saved first, then the rest from the first track (checked again
+  before each track, so skipping ahead moves it). A track saved while the release plays is played from the card from
+  its next start: the UI writes the list again with its path (same lines) and the player reads the list again before
+  each track. A free release in the best quality comes as one ZIP, so there is no order.
 
 ## Jukebox guests
 

@@ -594,6 +594,13 @@ static void test_slist(void){
     e_song_ends();                                                /* the last track ended: the list stops */
     CHECK(e_state == ENG_STOP && pb_slist_track() == 2);
     CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PLAY && !strcmp(e_cur, "https://t4.example/stream/3"));   /* Play: again */
+    /* the UI rewrote the list (track 3 saved on the card meanwhile): the next start reads it again */
+    { usleep(20000); FILE *g = fopen(OPL_BC_LIST, "w");
+      if(g){ fputs("181000\thttps://t4.example/stream/1?a=1&b=2\tFirst \"Song\"\tUnicorn Partisans\tRepression\n"
+                   "95000\thttps://t4.example/stream/2\tSecond\tUnicorn Partisans\tRepression\n"
+                   "60000\t/tmp/sdcard/BandcampDownloads/U/R/03 Third.mp3\tThird\tUnicorn Partisans\tRepression\n", g); fclose(g); }
+      CHECK(pb_transport(PL_T_PREV, 0) == 0 && pb_slist_track() == 1 && pb_transport(PL_T_NEXT, 0) == 0 && pb_slist_track() == 2
+            && !strcmp(e_cur, "/tmp/sdcard/BandcampDownloads/U/R/03 Third.mp3")); }
     /* a station replaces the list */
     CHECK(send_station(&c, "Rock", "https://radio.example/rock") == 0 && pb_slist_track() == -1);
     CHECK(pb_transport(PL_T_NEXT, 0) == -1);

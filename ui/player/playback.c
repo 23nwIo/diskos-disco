@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
 static pl_core_t *C;
 static pb_log_fn L;
@@ -94,6 +95,7 @@ typedef struct { long ms; char *url, *title, *artist, *album; } sl_track_t;
 static sl_track_t *g_sl;
 static char *g_sl_text;
 static int g_sl_n, g_sl_cur = -1;
+static struct timespec g_sl_mt;     /* OPL_BC_LIST's time when it was read */
 static void sl_clear(void);
 static int sl_play(int idx);
 static int (*g_rs_mounted_fn)(void);
@@ -1008,6 +1010,7 @@ static int sl_parse(char *text, sl_track_t *out, int max){
 }
 static int sl_load(const char *path){
     sl_clear();
+    { struct stat st; if(stat(path, &st) == 0) g_sl_mt = st.st_mtim; }
     FILE *f = fopen(path, "re");
     if(!f){ L("stream list: open %s: %s", path, strerror(errno)); return -1; }
     size_t cap = 0, len = 0; char *b = NULL; size_t r;
@@ -1030,7 +1033,13 @@ static int sl_load(const char *path){
     if(g_sl_n <= 0){ L("stream list: no tracks in %s", path); sl_clear(); return -1; }
     return 0;
 }
+static int sl_changed(void){
+    struct stat st;
+    return stat(OPL_BC_LIST, &st) == 0 && (st.st_mtim.tv_sec != g_sl_mt.tv_sec || st.st_mtim.tv_nsec != g_sl_mt.tv_nsec);
+}
 static int sl_play(int idx){
+    /* the UI rewrote the list (a track got saved on the card, same lines): read it again before the next track */
+    if(g_stream && g_sl_n > 0 && sl_changed()){ int n = g_sl_n; if(sl_load(OPL_BC_LIST) == 0 && g_sl_n != n) L("stream list: now %d tracks (was %d)", g_sl_n, n); }
     if(!g_stream || idx < 0 || idx >= g_sl_n) return -1;
     const sl_track_t *t = &g_sl[idx];
     g_sl_cur = idx;

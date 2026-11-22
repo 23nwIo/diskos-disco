@@ -125,6 +125,17 @@ int main(void){
     unsetenv("BC_WGET_LOG");
     if(system("rm -rf /tmp/bc_test_card && mkdir /tmp/bc_test_card")) fails++;
     const char *dir = "/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression";
+    /* playing saves the release: the track that plays next first, then the rest from the first (Jo, 2026-11-22); a
+     * track saved meanwhile plays from the card (the list is written again, its lines stay) */
+    { save_played = 1; nsent = 0; nadded = 0;
+      CHECK(bandcamp_play("https://unicornpartisans.bandcamp.com/album/repression-depression", 2, &why) == 0);
+      CHECK(wait_sent(1));
+      for(int i = 0; i < 300 && (bandcamp_downloading() || nadded < 6); i++){ bandcamp_tick(); usleep(20000); }
+      CHECK(nadded == 6 && strstr(added[0], "/04 Soko Linx.mp3") && strstr(added[1], "/01 ") && strstr(added[2], "/02 ") && strstr(added[3], "/03 "));
+      char *l = list_text(); int lines = 0; for(char *c = l; c && *c; c++) lines += *c == '\n';
+      CHECK(l && lines == 6 && strstr(l, "\t/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression/04 Soko Linx.mp3\tSoko Linx\t"));
+      save_played = 0; nadded = 0; nsent = 0;
+      if(system("rm -rf /tmp/bc_test_card && mkdir /tmp/bc_test_card")) fails++; }
     CHECK(bandcamp_download("https://example.com/x", -1, &why) == -1);
     CHECK(bandcamp_download("https://unicornpartisans.bandcamp.com/album/repression-depression", 2, &why) == 0);
     CHECK(bandcamp_download("https://unicornpartisans.bandcamp.com/album/repression-depression", 2, &why) == -1 && !strcmp(why, "That is already being saved"));

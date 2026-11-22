@@ -107,6 +107,7 @@ static bc_release_t g_now;                       /* the release playing */
 static bc_track_t *g_now_t; static int g_now_n;
 static int g_map[BC_MAX_TRACKS], g_lines;        /* list line -> track index */
 static time_t g_retry_at; static int g_retry_line = -1;
+static int g_next_track = -1;                    /* the track index that plays next (bandcamp_tick), -1 none */
 
 /* downloads to the card: their own worker, so a long album doesn't hold up searching and playing */
 enum { D_WAIT = BC_DL_WAITING, D_RUN = BC_DL_SAVING, D_DONE = BC_DL_SAVED, D_FAIL = BC_DL_FAILED, D_CANCEL = BC_DL_STOPPED };
@@ -471,6 +472,24 @@ static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, con
     if(!err) fprintf(stderr, "bandcamp: saved %s in %s (%d files)\n", r->title, enc, *done);
     return err;
 }
+/* The release playing now (caller holds g_mu): is it this one? */
+static int playing_release(const bc_release_t *r, const char *url){
+    return g_now_t && g_pstate_play != P_OFF && g_now.url[0] && (!strcmp(g_now.url, r->url) || !strcmp(g_now.url, url));
+}
+/* Track i of the release playing now is saved: the list plays it from the card from now on (the player reads the list
+ * again before its next track). Only tracks that are in the list already, so its lines stay the same. */
+static void now_saved(const bc_release_t *r, const char *url, int i, const char *path){
+    pthread_mutex_lock(&g_mu);
+    char *text = NULL; size_t len = 0; int lines = -1;
+    if(playing_release(r, url) && i < g_now_n && g_now_t[i].stream[0] && g_now_t[i].stream[0] != '/' && strlen(path) < sizeof g_now_t[i].stream){
+        snprintf(g_now_t[i].stream, sizeof g_now_t[i].stream, "%s", path);
+        size_t cap = (size_t)g_now_n * 1200 + 64;
+        if((text = malloc(cap))) lines = bc_list_format(&g_now, g_now_t, g_now_n, text, cap, NULL, &len);
+        if(lines != g_lines || write_list(text, len)) fprintf(stderr, "bandcamp: the list couldn't take %s\n", path);
+    }
+    pthread_mutex_unlock(&g_mu);
+    free(text);
+}
 static void job_download(const dl_job_t *j){
     bc_release_t r; bc_track_t *t = calloc(BC_MAX_TRACKS, sizeof *t);
     char *h = t ? fetch(j->url, NULL, BC_TMP_DLPAGE, NULL) : NULL;
@@ -524,10 +543,18 @@ static void job_download(const dl_job_t *j){
         if(!why){ best = 1; pthread_mutex_lock(&g_mu); for(int i = 0; i < g_ndl; i++) if(g_dl[i].id == j->id) g_dl[i].total = done; pthread_mutex_unlock(&g_mu); }
         else { fprintf(stderr, "bandcamp: %s: %s - saving the stream\n", j->url, why); done = 0; }
     }
-    for(int i = first; !err && !best && i < last; i++){
-        if(!t[i].stream[0]) continue;
-        pthread_mutex_lock(&g_mu); int stop = g_dl_cancel; pthread_mutex_unlock(&g_mu);
+    char *took = calloc((size_t)(n > 0 ? n : 1), 1);
+    if(!took && !err && !best) err = "Out of memory";
+    while(!err && !best){
+        /* the track that plays next comes first (Jo, 2026-11-22), then the rest from the first */
+        pthread_mutex_lock(&g_mu);
+        int stop = g_dl_cancel, i = -1, nx = playing_release(&r, j->url) ? g_next_track : -1;
+        pthread_mutex_unlock(&g_mu);
         if(stop){ err = "Stopped"; break; }
+        if(nx >= first && nx < last && !took[nx] && t[nx].stream[0]) i = nx;
+        for(int k = first; i < 0 && k < last; k++) if(!took[k] && t[k].stream[0]) i = k;
+        if(i < 0) break;
+        took[i] = 1;
         char name[160], path[PATH_MAX + 168], part[PATH_MAX + 180];
         if(bc_dl_file(&t[i], name, sizeof name)){ err = "The names are too long for the card"; break; }
         snprintf(path, sizeof path, "%s/%s", dir, name);
@@ -535,7 +562,7 @@ static void job_download(const dl_job_t *j){
         struct stat sb;
         if(!sd_io_begin()){ err = "The SD card is not available right now"; break; }
         if(stat(path, &sb) == 0){                                        /* saved before: only into the library */
-            sd_io_end(); lib_push(j, path); dl_set(j->id, -1, ++done, NULL);
+            sd_io_end(); lib_push(j, path); dl_set(j->id, -1, ++done, NULL); now_saved(&r, j->url, i, path);
             fprintf(stderr, "bandcamp: %s is already on the card\n", path);
             continue;
         }
@@ -555,9 +582,9 @@ static void job_download(const dl_job_t *j){
         sd_io_end();
         if(werr){ err = werr; fprintf(stderr, "bandcamp: %s: %s (wget %d)\n", path, werr, rc); break; }
         fprintf(stderr, "bandcamp: saved %s\n", path);
-        lib_push(j, path); dl_set(j->id, -1, ++done, NULL);
+        lib_push(j, path); dl_set(j->id, -1, ++done, NULL); now_saved(&r, j->url, i, path);
     }
-    free(jpg); free(t);
+    free(took); free(jpg); free(t);
     dl_set(j->id, err ? (!strcmp(err, "Stopped") ? D_CANCEL : D_FAIL) : D_DONE, done, err);
     fprintf(stderr, "bandcamp: download %s track %d: %d saved%s%s\n", j->url, j->idx, done, err ? ", " : "", err ? err : "");
 }
@@ -833,6 +860,13 @@ void bandcamp_link_failed(int line){
 }
 void bandcamp_tick(void){
     static unsigned seen;
+    {                                              /* the track after the one playing: saved first (job_download) */
+        int l = bandcamp_active() ? now_line() : -1;
+        pthread_mutex_lock(&g_mu);
+        if(l < 0 && g_pstate_play != P_OFF) l = g_play_line;
+        g_next_track = l >= 0 && l + 1 < g_lines ? g_map[l + 1] : -1;
+        pthread_mutex_unlock(&g_mu);
+    }
     pthread_mutex_lock(&g_mu); int lib = g_nlib; pthread_mutex_unlock(&g_mu);
     if(lib) lib_drain();
     pthread_mutex_lock(&g_mu);
