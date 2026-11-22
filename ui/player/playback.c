@@ -7,6 +7,7 @@
 #include "proto.h"
 #include "queue.h"
 #include "queuedb.h"
+#include "../own_player.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -169,8 +170,35 @@ static int playable(sqlite3 *d, int idx, qd_row_t *r){
 }
 #define PART(r) ((r)->is_cue ? (long)(r)->offset : 0L), ((r)->is_cue ? (long)(r)->duration_ms : 0L)
 
+#ifndef PB_UP_STREAMS
+#define PB_UP_STREAMS OPL_UP_STREAMS
+#endif
+static int is_stream_id(int id){ return (unsigned)id >= OPL_UP_STREAM_ID; }
+/* An up-next stream (own_player.h OPL_UP_STREAMS): its line as a row (path = the stream). 1, 0 not there. */
+static int stream_row(int id, qd_row_t *r){
+    FILE *f = fopen(PB_UP_STREAMS, "re");
+    if(!f){ L("up next: stream %08X: %s: %s", (unsigned)id, PB_UP_STREAMS, strerror(errno)); return 0; }
+    static char line[4096]; int found = 0;
+    char key[10]; snprintf(key, sizeof key, "%08X\t", (unsigned)id);
+    while(!found && fgets(line, sizeof line, f)){
+        if(strncmp(line, key, 9)) continue;
+        char *nl = strchr(line, '\n'); if(nl) *nl = 0;
+        char *fl[6] = { line, NULL, NULL, NULL, NULL, NULL };
+        for(int k = 1; k < 6 && fl[k - 1]; k++){ char *t = strchr(fl[k - 1], '\t'); if(t){ *t = 0; fl[k] = t + 1; } }
+        if(!fl[5] || (strncmp(fl[2], "http://", 7) && strncmp(fl[2], "https://", 8)) || strlen(fl[2]) >= sizeof r->path) continue;
+        memset(r, 0, sizeof *r);
+        r->song_id = id; r->duration_ms = atol(fl[1]);
+        snprintf(r->path, sizeof r->path, "%s", fl[2]); snprintf(r->title, sizeof r->title, "%s", fl[3]);
+        snprintf(r->artist, sizeof r->artist, "%s", fl[4]); snprintf(r->album, sizeof r->album, "%s", fl[5]);
+        found = 1;
+    }
+    fclose(f);
+    if(!found) L("up next: stream %08X is not in %s", (unsigned)id, PB_UP_STREAMS);
+    return found;
+}
+static int up_song(sqlite3 *d, int id, qd_row_t *r){ return is_stream_id(id) ? stream_row(id, r) : qd_song(d, id, r); }
 /* The song playing now: the up-next song g_cur_up, else the list's row Q.cur. 1, 0 gone, -1 error. */
-static int cur_row(sqlite3 *d, qd_row_t *r){ return g_cur_up ? qd_song(d, g_cur_up, r) : qd_row(d, pq_id(&Q, Q.cur), r); }
+static int cur_row(sqlite3 *d, qd_row_t *r){ return g_cur_up ? up_song(d, g_cur_up, r) : qd_row(d, pq_id(&Q, Q.cur), r); }
 /* Up-next song id leaves g_up (it starts, or can't be played): the UI hears it (ad13 <number 8h><SONG.ID 8h>). */
 static void up_take(int id){
     for(int i = 0; i < g_upn; i++) if(g_up[i] == id){ memmove(&g_up[i], &g_up[i + 1], (size_t)(g_upn - i - 1) * sizeof *g_up); g_upn--; break; }
@@ -181,8 +209,8 @@ static void up_take(int id){
     send_lit(f);
 }
 static int playable_song(sqlite3 *d, int id, qd_row_t *r){
-    int x = qd_song(d, id, r);
-    if(x != 1){ L("up next: song %d: %s", id, x == 0 ? "not in the library" : sqlite3_errmsg(d)); return 0; }
+    int x = up_song(d, id, r);
+    if(x != 1){ if(!is_stream_id(id)) L("up next: song %d: %s", id, x == 0 ? "not in the library" : sqlite3_errmsg(d)); return 0; }
     if(r->is_iso){ L("up next: song %d is a SACD ISO track, not supported - skipped", id); return 0; }
     return 1;
 }
@@ -206,6 +234,7 @@ static void queue_next(sqlite3 *d){
         g_next = g_pending = -1;
         while(u && g_upn > 0){
             int id = g_up[0];
+            if(is_stream_id(id) && stream_row(id, u)){ eng_set_next(NULL, 0, 0, 0); g_pend_up = id; break; }   /* a stream: after this one ends, never gapless */
             int x = playable_song(d, id, u) ? eng_set_next(u->path, PART(u), dac_current_rate()) : -1;
             if(x == 0){ g_next_up = id; break; }
             if(x == 1){ g_pend_up = id; L("up next: next song has another sample rate, started after this one (no gapless)"); break; }

@@ -36,6 +36,10 @@ int  queue_add_path(const char *path);   /* 1 added, 0 already there, -1 failed 
 int  queue_add_group(const char *col, const char *val);
 int  queue_add_folder(const char *dir);
 int  queue_add_ids_at(const int *ids, int n, int at, int who);   /* party mode: insert at position at, tagged with guest who */
+/* A stream (own player only): key = its queue path (for "already queued"), the rest for the player. 1 added, -1 full /
+ * failed, -3 not with the stock player. */
+int  queue_add_stream_at(const char *key, const char *url, const char *title, const char *artist, const char *album, long dur_ms,
+                         int at, int who);
 int  queue_item_who(int i);                  /* the guest who queued song i (0 = not a guest) */
 int  queue_item_song(int i);                 /* queued song i's SONG.ID (0 unknown) */
 int  queue_now_who(void);                    /* the guest whose queued song plays now (0 = none) */

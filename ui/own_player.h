@@ -58,6 +58,12 @@
  * writes the list again and sends 0d14 for that track. */
 #define OPL_BC_LIST "/tmp/diskos-stream-list"
 #define OPL_SLIST_MAX 500
+/* Streams in the UI's queue (0d13; Jukebox guests' Bandcamp picks with diskos.conf bc_jukebox_stream=1): an up-next
+ * "SONG.ID" of OPL_UP_STREAM_ID or more is no library song but a line of OPL_UP_STREAMS, which the UI writes before
+ * each 0d13: "<id 8 hex>\t<duration ms>\t<stream url>\t<title>\t<artist>\t<album>". tmpfs. They never play gapless
+ * (their sample rate is only known once MPD has opened them). */
+#define OPL_UP_STREAMS "/tmp/diskos-up-streams"
+#define OPL_UP_STREAM_ID 0x70000000
 
 enum { OPL_OFF = 0, OPL_ON, OPL_NO_BINARY, OPL_GAVE_UP };
 

@@ -724,6 +724,20 @@ static void test_upnext(void){
     CHECK(!pb_tail_active() && !strcmp(e_cur, "/s/b2.flac"));
     c.end_mode = PL_END_STOP; c.end_url[0] = 0;
     CHECK(pl_core_handle(&c, "0d130010000000", 14) == -1);                     /* malformed */
+    /* a stream in the queue (Jukebox guests' Bandcamp picks, own_player.h OPL_UP_STREAMS): after the song, not gapless */
+    { FILE *f = fopen("/tmp/pb_test_up_streams", "w");
+      if(f){ fputs("70000001\t200000\thttps://t4.bcbits.com/stream/x/mp3-128/1?p=0\tSoko Linx\tUnicorn Partisans\tRepression Depression\n", f); fclose(f); }
+      CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0); pb_engine_event();
+      int ids[] = { 0x70000001, 4 }; CHECK(up_frame(&c, 10, 0, ids, 2) == 0);
+      CHECK(e_next[0] == 0);
+      nsent = 0; e_song_ends();
+      CHECK(!strcmp(e_cur, "https://t4.bcbits.com/stream/x/mp3-128/1?p=0") && e_state == ENG_PLAY && sent_count("70000001") == 1);
+      CHECK(!strcmp(e_next, "/s/b2.flac"));                                    /* the library song after it is gapless again */
+      pb_engine_event();
+      CHECK(sent_count("Soko Linx") >= 1);                                       /* the track frame names it */
+      int gone[] = { 0x70000002 }; CHECK(up_frame(&c, 11, 0, gone, 1) == 0);     /* not in the file: skipped, the UI hears it */
+      CHECK(sent_count("70000002") == 1 && !strcmp(e_next, "/s/a2.flac"));     /* then the list goes on */
+      unlink("/tmp/pb_test_up_streams"); }
     /* Repeat One (Hit&Guess) keeps its song: up-next songs wait for Next */
     CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0); pb_engine_event();
     c.play_mode = PQ_REPEAT_ONE;

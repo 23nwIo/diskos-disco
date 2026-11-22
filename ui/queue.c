@@ -226,7 +226,7 @@ static int prune_missing(int *index){
     int k = 0, dropped = 0;
     for(int i = 0; i < g_qn; i++){
         struct stat st;
-        if(stat(g_q[i].path, &st) != 0 && errno == ENOENT){
+        if(g_q[i].path[0] == '/' && stat(g_q[i].path, &st) != 0 && errno == ENOENT){   /* not a stream (no file) */
             fprintf(stderr, "queue: dropped a queued song that is not on the card: %s\n", g_q[i].path);
             if(index && *index == i) *index = -1;
             else if(index && *index > i) (*index)--;
@@ -247,8 +247,10 @@ static int prune_missing(int *index){
     return dropped;
 }
 /* RAM mode: the whole queue to the player (0d13 <ack 8h><party 0/1><SONG.ID 8h>...); songs without an ID are left out. */
+static void qs_write(void);
 static void ram_sync(void){
     static char f[8 + 9 + 8 * QMAX + 1];
+    qs_write();                                    /* the streams in it, for the player (own_player.h OPL_UP_STREAMS) */
     int party = party_on(), n = 0, k = snprintf(f, sizeof f, "0d13LLLL%08X%c", g_up_ack, party ? '1' : '0');
     for(int i = 0; i < g_qn; i++) if(g_q[i].id > 0){ k += snprintf(f + k, sizeof f - (size_t)k, "%08X", (unsigned)g_q[i].id); n++; }
     char len[5]; snprintf(len, sizeof len, "%04X", (unsigned)k); memcpy(f + 4, len, 4);
@@ -337,12 +339,8 @@ int queue_add_ids(const int *ids, int n){
     return r;
 }
 /* Party mode (party.c): exact songs as queue_add_ids, inserted at position at (clamped) and tagged with guest who. */
-int queue_add_ids_at(const int *ids, int n, int at, int who){
-    load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; }
-    int start = g_qn, r = add_ids(ids, n);
-    if(r <= 0) return r;
+static void place_new(int start, int at, int who){       /* the songs from start (at the end) to at, tagged with who */
     for(int i = start; i < g_qn; i++) g_q[i].who = who;
-    queue_log("guest %d added %s - %s at place %d of %d", who, QNAME(&g_q[start]), (at < start ? at : start) + 1, g_qn);
     if(at < 0) at = 0;
     if(at < start){                                           /* rotate the new ones from the end to at */
         static qitem_t tmp[QMAX]; int k = g_qn - start;
@@ -350,8 +348,59 @@ int queue_add_ids_at(const int *ids, int n, int at, int who){
         memmove(&g_q[at + k], &g_q[at], (size_t)(start - at) * sizeof g_q[0]);
         memcpy(&g_q[at], tmp, (size_t)k * sizeof g_q[0]);
     }
+}
+int queue_add_ids_at(const int *ids, int n, int at, int who){
+    load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; }
+    int start = g_qn, r = add_ids(ids, n);
+    if(r <= 0) return r;
+    queue_log("guest %d added %s - %s at place %d of %d", who, QNAME(&g_q[start]), (at < start ? at : start) + 1, g_qn);
+    place_new(start, at, who);
     changed();
     return r;
+}
+/* Streams in the queue (own player, RAM mode only; Jukebox guests' Bandcamp picks with bc_jukebox_stream=1): the
+ * queue item's id is OPL_UP_STREAM_ID + n and its path the caller's key; the stream itself is a line of
+ * OPL_UP_STREAMS, written before every 0d13 (ram_sync). At most QS_MAX at a time. */
+#define QS_MAX 64
+static struct { int id; long dur; char url[640], title[96], artist[96], album[96]; } g_qs[QS_MAX];
+static int g_nqs; static unsigned g_qs_seq;
+static int queued_id(int id){ for(int i = 0; i < g_qn; i++) if(g_q[i].id == id) return 1; return 0; }
+static void qs_compact(void){                             /* the streams no longer queued go */
+    int k = 0;
+    for(int i = 0; i < g_nqs; i++) if(queued_id(g_qs[i].id)) g_qs[k++] = g_qs[i];
+    g_nqs = k;
+}
+static void qs_clean(char *d, size_t cap, const char *s){  /* one field of a line: no tabs or newlines */
+    snprintf(d, cap, "%s", s ? s : "");
+    for(char *c = d; *c; c++) if(*c == '\t' || *c == '\n' || *c == '\r') *c = ' ';
+}
+static void qs_write(void){
+    qs_compact();
+    if(!g_nqs){ if(unlink(OPL_UP_STREAMS) && errno != ENOENT) perror("queue: " OPL_UP_STREAMS); return; }
+    FILE *f = fopen(OPL_UP_STREAMS ".tmp", "we");
+    if(!f){ perror("queue: " OPL_UP_STREAMS); return; }
+    for(int i = 0; i < g_nqs; i++)
+        fprintf(f, "%08X\t%ld\t%s\t%s\t%s\t%s\n", (unsigned)g_qs[i].id, g_qs[i].dur, g_qs[i].url, g_qs[i].title, g_qs[i].artist, g_qs[i].album);
+    if(fclose(f) || rename(OPL_UP_STREAMS ".tmp", OPL_UP_STREAMS)) perror("queue: " OPL_UP_STREAMS);
+}
+int queue_add_stream_at(const char *key, const char *url, const char *title, const char *artist, const char *album, long dur_ms,
+                        int at, int who){
+    if(!ram_mode()) return -3;
+    load(); if(!g_loaded) return -1;
+    if(!url || (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) || strlen(url) >= sizeof g_qs[0].url) return -1;
+    qs_compact();
+    if(g_nqs >= QS_MAX || g_qn >= QMAX) return -1;
+    int id = (int)(OPL_UP_STREAM_ID + 1u + (g_qs_seq++ % 0x0FFFFFFEu));
+    int start = g_qn;
+    if(!add_one(id, key, title, artist, dur_ms)) return -1;
+    g_qs[g_nqs].id = id; g_qs[g_nqs].dur = dur_ms;
+    qs_clean(g_qs[g_nqs].url, sizeof g_qs[0].url, url); qs_clean(g_qs[g_nqs].title, sizeof g_qs[0].title, title);
+    qs_clean(g_qs[g_nqs].artist, sizeof g_qs[0].artist, artist); qs_clean(g_qs[g_nqs].album, sizeof g_qs[0].album, album);
+    g_nqs++;
+    queue_log("guest %d added the stream %s - %s at place %d of %d", who, QNAME(&g_q[start]), (at < start ? at : start) + 1, g_qn);
+    place_new(start, at, who);
+    changed();
+    return 1;
 }
 int queue_item_who(int i){ load(); return i >= 0 && i < g_qn ? g_q[i].who : 0; }
 int queue_now_who(void){ return g_now_who; }
