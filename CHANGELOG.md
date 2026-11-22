@@ -8,6 +8,12 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   red, yellow, orange, pink, purple, blue, green or white), on the system page and on the party page. Not yet tested on
   a Disc.
 
+- Party mode: the queue no longer goes back to the list that played before it. After Hit&Guess that was the whole
+  library, so whenever the queue ran empty the Disc went back to the song after the last game song (the same few songs
+  again and again) instead of **When the queue is empty** (a radio station, for example). The guests' order is never
+  shuffled. With a playing list of more than 4,000 songs, queued songs now also start at the next song change (they
+  waited for Next or the end of the list). `/tmp/diskos-queue.log` says why each song plays. Not yet tested on a Disc.
+
 - Music (Stone and Ring): the blurred cover behind Now Playing is now washed with the theme's background colour just
   enough that title, artist, album and times stay readable over any cover: in light themes a dark or colourful cover
   becomes a light tint of its colour (light Stone showed dark text on a darkened cover before), in dark themes a light

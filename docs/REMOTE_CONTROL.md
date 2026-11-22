@@ -98,6 +98,16 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 | Upload songs to the SD card | off | Guests get **Upload a song…** (Songs tab menu ⋯, and their **You** tab). **Largest file** (MB, default 100) limits each file. See below. |
 | When the queue is empty | — | The same setting as **After the list ends**: stop, random songs from the library, a radio station or a playlist. |
 
+While party mode is on, the queue plays on its own: the guests' (and the host's) queued songs in their order, never
+shuffled, and when it is empty **When the queue is empty** decides what follows. It never goes back to the list that
+was playing before (outside party mode it does: a song queued during an album plays next, then the album goes on).
+
+Why a song plays: `/tmp/diskos-queue.log` (Debug Mode SSH; RAM, gone after a reboot, kept to the last 2 MB) has a line
+for every song change the queue sees and every decision it takes - a guest adding a song and where it went, the queue
+starting (and what follows it), going back to an interrupted list or not, the list ending and After the List Ends, play
+mode changes (Hit&Guess uses Repeat One) and lists started from a screen, the web page or a game.
+`/tmp/diskos-played.log` lists what was heard.
+
 **Guests** lists the guests the Disc has seen, with their names, how many songs each has queued and when they were last
 seen, and below each guest the radio stations they saved in their browser (name and stream URL). The Disc also writes
 those stations to `/tmp/party-stations.txt` (guest, station and URL, tab-separated; in RAM, gone after a restart).

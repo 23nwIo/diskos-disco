@@ -738,6 +738,7 @@ int radio_end_set(int mode, const rc_station_t *s){
  * once nothing else has started meanwhile (the queue going back to a list it interrupted, the user). */
 void radio_end_list_ended(void){
     int m = radio_end_get(NULL);
+    queue_log("list end: the list ended, After the List Ends = %d (0 stop, 1 shuffle all, 2 station, 3 playlist), %d queued", m, queue_count());
     if(queue_count() > 0){                                     /* songs were queued: they come first, then the list end again */
         if(queue_next() <= 0) fprintf(stderr, "list end: the queue didn't start\n");
         return;
@@ -745,7 +746,7 @@ void radio_end_list_ended(void){
     if(m == RADIO_END_SHUFFLE){
         int n = mdb_song_count();
         if(n <= 0){ fprintf(stderr, "list end: no songs to shuffle\n"); return; }
-        fprintf(stderr, "list end: every song, shuffled\n");
+        fprintf(stderr, "list end: every song, shuffled\n"); queue_log("list end: every song, shuffled");
         ui_set_workmode(1);
         ui_play_list(1, "", 1 + rand() % n);
         return;
@@ -760,6 +761,7 @@ void radio_end_list_ended(void){
     if(n <= 0){ fprintf(stderr, "list end: playlist %ld is empty or gone\n", pid); return; }
     int mode = (fl & RADIO_END_PL_SHUFFLE) ? 1 : (fl & RADIO_END_PL_REPEAT) ? 3 : 0;   /* Shuffle, Repeat All, in order */
     fprintf(stderr, "list end: playlist %ld (%d songs, play mode %d)\n", pid, n, mode);
+    queue_log("list end: playlist %ld (%d songs, play mode %d)", pid, n, mode);
     ui_set_workmode(mode);
     ui_play_playlist(pid, mode == 1 ? 1 + rand() % n : 1);
 }

@@ -1491,6 +1491,7 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
         }
     }
     if(sent && !g_q_internal){
+        queue_log("play: list type %d \"%.80s\" from position %d (started from a screen, the web page or a game)", list_type, name, pos1);
         g_ctx_type=list_type; snprintf(g_ctx_name,sizeof g_ctx_name,"%s",name); g_ctx_pid=g_active_pid;
         queue_note_external_play();
     }
@@ -1959,10 +1960,12 @@ static int on_search_play(int id){
 void ui_play_mode_temp(int mode){
     int rc = send_play_mode(mode);
     fprintf(stderr, "workmode %d for now (not saved, rc=%d)\n", mode, rc); fflush(stderr);
+    queue_log("play mode %d for now (not saved; 0 in order, 1 shuffle, 2 repeat one, 3 repeat all)", mode);
 }
 void ui_play_mode_restore(void){
     int m = simple_cfg_get_int("work_mode", 0), rc = send_play_mode(m);
     fprintf(stderr, "workmode %d again (rc=%d)\n", m, rc); fflush(stderr);
+    queue_log("play mode %d again (the saved one)", m);
 }
 void ui_set_workmode(int mode){
     /* LOCAL play-mode setter = command 0102 (class 1): 0102 000C <mode 4hex>.
@@ -2662,7 +2665,8 @@ static int sd_card_ro(void){
  * 2 MB as <log>.1 and starts empty again (the writers append, so they go on at the start). /tmp is a small tmpfs. */
 static const char *const TMP_LOGS[] = { "/tmp/diskos-player.log", OPL_VOLUME_LOG, "/tmp/diskos-mpd/log",
                                         "/tmp/diskos-mpd/bt.log", "/tmp/bluealsa.log", "/tmp/btd.log",
-                                        "/tmp/patchram.log", "/tmp/boomshine.log", PLAYLOG_PATH };
+                                        "/tmp/patchram.log", "/tmp/boomshine.log", PLAYLOG_PATH,
+                                        "/tmp/diskos-queue.log" };
 #define TMP_LOG_LIMIT (2u * 1024 * 1024)
 #define TMP_LOG_EVERY 20                     /* rounds of 30 s */
 static void *log_maintenance(void *unused){

@@ -18,7 +18,9 @@ int modes_output_busy(void){return 0;}
 int ui_local_playback_allowed(void){return local;}
 void ipc_get_state(track_state_t *out){*out=state;}
 int cfg_get_int(const char *key,int fallback){(void)key;return fallback;}
-int simple_cfg_get_int(const char *key,int fallback){return cfg_get_int(key,fallback);}
+static int work_mode,party;
+int simple_cfg_get_int(const char *key,int fallback){return strcmp(key,"work_mode")?cfg_get_int(key,fallback):work_mode;}
+int party_mode(void){return party;}
 #include <time.h>
 static int real_ticks;                                   /* 0: the clock stands at 10000 (most tests); 1: real time */
 static uint32_t mono_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint32_t)(t.tv_sec*1000+t.tv_nsec/1000000);}
@@ -140,16 +142,46 @@ int main(int argc,char **argv){
     assert(queue_add_path("/next.flac")==1);assert(prune_missing(NULL)==0 && queue_count()==1);
     g_card="/tmp/sdcard";g_card_parent="/tmp";queue_clear();
     puts("PASS queued songs that are not on the mounted card are dropped and never block Next");
+    /* Jo 2026-11-22: a library of more than RMAX songs can't be held as "the list after the queue" (here: a row of
+     * the player's list with no song). The queue then waited for Next; now it starts at the next song change, on its
+     * own, and that song comes back after it. In party mode there is no way back (After the List Ends follows). */
+    queue_clear();g_active=0;g_last_id=0;g_prev2=0;g_skip_change=0;g_resume_type=-1;restores=0;memset(&state,0,sizeof state);
+    sql(db,"INSERT INTO LIST_SONG_0 VALUES(4,'/gone.flac',0,0,0,'Gone');");
+    for(party=0;party<2;party++){
+        queue_clear();g_active=0;g_last_id=0;g_prev2=0;g_skip_change=0;g_resume_type=-1;restores=0;
+        state.have_track=1;state.pos_id=1;strcpy(state.path,"/album.flac");strcpy(state.title,"First");state.duration_ms=10000;state.position_ms=0;
+        queue_tick(&state,1);
+        assert(queue_add_path("/next.flac")==1);
+        state.position_ms=9800;queue_tick(&state,1);
+        state.pos_id=2;strcpy(state.title,"Second");state.position_ms=0;old=sends;queue_tick(&state,1);
+        assert(sends==old+1 && queue_count()==0 && g_active && g_nrest==0);
+        assert(party ? g_resume_type==-1 : (g_resume_type==3 && g_resume_pos==2));
+        strcpy(state.path,"/next.flac");strcpy(state.title,"Next");state.pos_id=last_pos;state.duration_ms=14000;state.position_ms=13800;
+        queue_tick(&state,1);queue_tick(&state,0);                 /* the queued song ended and the player stopped */
+        assert(party ? restores==0 : (restores==1 && last_pos==2 && !g_active));
+    }
+    sql(db,"DELETE FROM LIST_SONG_0 WHERE ID=4;");
+    puts("PASS an unreadable (too long) list: the queue starts at the next song change; party mode never goes back");
+    queue_clear();g_active=0;g_last_id=0;memset(&state,0,sizeof state);party=1;work_mode=1;
+    assert(queue_add_path("/next.flac")==1 && queue_add_path("/album.flac")==2);
+    for(int k=0;k<20;k++){assert(queue_next()==1 && queue_count()==2 && g_q[0].id==10 && g_q[1].id==11);
+        queue_clear();g_active=0;assert(queue_add_path("/next.flac")==1 && queue_add_path("/album.flac")==2);}
+    queue_clear();party=0;work_mode=0;
+    puts("PASS party mode keeps the guests' order in the Shuffle play mode");
+    {FILE *f=fopen(QUEUE_LOG,"r");assert(f);char l[400];int way=0,party_line=0;
+     while(fgets(l,sizeof l,f)){if(strstr(l,"way back: list type 3"))way=1;if(strstr(l,"way back: none (party mode"))party_line=1;}
+     fclose(f);assert(way&&party_line);}
+    puts("PASS the decision log says why the queue went back or not");
     assert(!leases);sqlite3_close(db);
     puts("HARNESS COMPLETE");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='diskos-queue-test-') as tmp:
-    root=Path(tmp);db=root/'song.db';qfile=root/'queue.tsv'
+    root=Path(tmp);db=root/'song.db';qfile=root/'queue.tsv';qlog=root/'queue.log'
     (root/'db.c').write_text((app/'musicdb.c').read_text().replace('"/usr/data/fiio/db/song.db"','"'+str(db)+'"'))
     (root/'test.c').write_text(queue+stubs+'\n#include "sqlite3.h"\n'+test)
     exe=root/'test'
-    subprocess.run([os.environ.get('CC','cc'),'-O1','-g','-std=gnu11','-D_GNU_SOURCE','-DLV_CONF_INCLUDE_SIMPLE','-DQUEUE_FILE="'+str(qfile)+'"','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-I'+str(app),str(root/'test.c'),str(root/'db.c'),str(app/'sqlite3.c'),'-pthread','-lm','-ldl','-Wl,--gc-sections','-o',str(exe)],check=True)
+    subprocess.run([os.environ.get('CC','cc'),'-O1','-g','-std=gnu11','-D_GNU_SOURCE','-DLV_CONF_INCLUDE_SIMPLE','-DQUEUE_FILE="'+str(qfile)+'"','-DQUEUE_LOG="'+str(qlog)+'"','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-I'+str(app),str(root/'test.c'),str(root/'db.c'),str(app/'sqlite3.c'),'-pthread','-lm','-ldl','-Wl,--gc-sections','-o',str(exe)],check=True)
     r=subprocess.run([str(exe),str(db)],text=True,capture_output=True,timeout=20)
     print(r.stdout,end='');print(r.stderr,end='')
     assert r.returncode==0 and r.stdout.splitlines()[-1]=='HARNESS COMPLETE'

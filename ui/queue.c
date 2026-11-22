@@ -23,6 +23,7 @@
 #include "config.h"
 #include "theme_kit.h"
 #include "zune_dial.h"
+#include "party.h"
 LV_FONT_DECLARE(font_zune_light_21)
 LV_FONT_DECLARE(font_zune_regular_19)
 LV_FONT_DECLARE(font_zune_regular_16)
@@ -35,6 +36,8 @@ LV_FONT_DECLARE(font_zune_regular_16)
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <stdarg.h>
+#include <time.h>
 
 #define QMAX 400
 #define RMAX 4000
@@ -67,6 +70,28 @@ static int  g_was_playing;
 static int  g_now_who;                            /* the guest whose queued song plays now (0 none) */
 
 static void view_reload(void);
+/* ---------------------------------------------------------------- the decision log
+ * Why each song plays (Jo, 2026-11-22: a party kept coming back to one song): every song change the queue sees and
+ * every decision it takes, one line each, in RAM (/tmp, never the flash; rotated by main.c's log upkeep). */
+#ifndef QUEUE_LOG
+#define QUEUE_LOG "/tmp/diskos-queue.log"
+#endif
+void queue_log(const char *fmt, ...){
+    FILE *f = fopen(QUEUE_LOG, "ae");
+    if(!f) return;
+    char ts[32]; time_t now = time(NULL); struct tm tm;
+    if(!localtime_r(&now, &tm) || !strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", &tm)) snprintf(ts, sizeof ts, "%ld", (long)now);
+    fprintf(f, "%s ", ts);
+    va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+#define QNAME(q) (q)->artist, (q)->title                       /* "%s - %s" of a queued song, for the log (no database) */
+/* Party mode (guests' songs, party.c): the queue never goes back to the list it interrupted - when it is empty, After
+ * the List Ends (Settings > Playback; the party's "queue empty" action) decides what plays (Jo, 2026-11-22: the Disc
+ * kept going back to the song after the last Hit&Guess song instead of the radio). Its order is the guests' (round
+ * robin), never shuffled. */
+static int party_on(void){ return party_mode() == 1; }
 /* ---------------------------------------------------------------- storage */
 /* Version 2 hex-encodes strings, preserving tabs, newlines and UTF-8 bytes. */
 static int queue_hex_write(FILE *f, const char *s){
@@ -262,7 +287,7 @@ static int add_ids(const int *ids, int n){
 int queue_add_ids(const int *ids, int n){
     load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; }
     int r = add_ids(ids, n);
-    if(r > 0) changed();
+    if(r > 0){ queue_log("added %s - %s%s (%d queued)", QNAME(&g_q[g_qn - r]), r > 1 ? " and more" : "", g_qn); changed(); }
     return r;
 }
 /* Party mode (party.c): exact songs as queue_add_ids, inserted at position at (clamped) and tagged with guest who. */
@@ -271,6 +296,7 @@ int queue_add_ids_at(const int *ids, int n, int at, int who){
     int start = g_qn, r = add_ids(ids, n);
     if(r <= 0) return r;
     for(int i = start; i < g_qn; i++) g_q[i].who = who;
+    queue_log("guest %d added %s - %s at place %d of %d", who, QNAME(&g_q[start]), (at < start ? at : start) + 1, g_qn);
     if(at < 0) at = 0;
     if(at < start){                                           /* rotate the new ones from the end to at */
         static qitem_t tmp[QMAX]; int k = g_qn - start;
@@ -299,7 +325,7 @@ int queue_add_group(const char *col, const char *val){        /* fork: Library l
     if(n > 0) changed();
     return n;
 }
-void queue_clear(void){ load(); if(!g_loaded) return; g_qn = 0; changed(); }
+void queue_clear(void){ load(); if(!g_loaded) return; queue_log("cleared (%d songs)", g_qn); g_qn = 0; changed(); }
 int  queue_remove_at(int i){ load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; } if(i < 0 || i >= g_qn) return 0; memmove(&g_q[i], &g_q[i+1], (size_t)(g_qn - i - 1) * sizeof g_q[0]); g_qn--; changed(); return 1; }
 int  queue_move(int from, int to){
     load(); if(!g_loaded){ ui_toast("Queue unavailable - try again"); return 0; } if(from < 0 || from >= g_qn || to < 0 || to >= g_qn || from == to) return 0;
@@ -328,6 +354,7 @@ void queue_path_removed(const char *p){                      /* file / folder de
 }
 /* the user started something else: the queue stays, and re-anchors after the new song */
 void queue_note_external_play(void){
+    if(g_qn || g_active) queue_log("the user started something else: the queue waits for it to end");
     g_active = 0; g_resume_type = -1;                         /* it plays after the song you just started */
     g_skip_change = 1;
 }
@@ -363,6 +390,7 @@ static int play_copy(int first){
             fprintf(stderr, "queue: queued song %d not found in the library (id %d, key %d, track %d, cue %d, iso %d, "
                     "library path %s): %s\n", i, g_q[i].id, g_q[i].have_key, g_q[i].track, g_q[i].cue, g_q[i].iso,
                     g_q[i].id ? path : "-", g_q[i].path);
+            queue_log("start failed: queued song %d not found in the library: %s", i, g_q[i].path);
             ui_toast("Queue song unavailable - choose it again"); return 0;
         }
         if(!g_q[i].have_key){ g_q[i].track=song.track; g_q[i].cue=song.is_cue; g_q[i].iso=song.is_iso; g_q[i].have_key=1; }
@@ -370,8 +398,10 @@ static int play_copy(int first){
     }
     for(int i=0;i<g_nrest;i++) if(idx_of(candidate,n,g_rest[i])<0) candidate[n++]=g_rest[i];
     int pos=mdb_queue_slot_set(candidate,n,g_q[first].id);
-    if(!pos){ fprintf(stderr, "queue: writing the queue to the library failed (%d songs)\n", n); return 0; }
-    if(!ui_play_slot(pos)){ fprintf(stderr, "queue: the player refused the queue (slot %d)\n", pos); return 0; }
+    if(!pos){ fprintf(stderr, "queue: writing the queue to the library failed (%d songs)\n", n); queue_log("start failed: writing the queue to the library failed (%d songs)", n); return 0; }
+    if(!ui_play_slot(pos)){ fprintf(stderr, "queue: the player refused the queue (slot %d)\n", pos); queue_log("start failed: the player refused the queue"); return 0; }
+    queue_log("play: queued %s - %s (guest %d) - %d queued, then %d of the interrupted list%s", QNAME(&g_q[first]), g_q[first].who,
+              g_qn - first, g_nrest, g_nrest ? "" : " (none: the queue plays on its own)");
     memcpy(g_copy,candidate,(size_t)n*sizeof *g_copy);
     g_ncopy=n; g_active=1;
     return 1;
@@ -379,22 +409,28 @@ static int play_copy(int first){
 static void hand_back(int song){                   /* the queue is done: back to your list, at `song` */
     int at = idx_of(g_ctx, g_nctx, song);
     int sent;
+    if(at >= 0) queue_log("queue done: back to list type %d \"%s\" at position %d", g_ctx_type, g_ctx_name, at + 1);
+    else queue_log("queue done: nothing to go back to (only the play mode)");
     if(g_ctx_type >= 0 && at >= 0) sent=ui_play_restore(g_ctx_type, g_ctx_name, g_ctx_pid, at + 1);
     else sent=ui_play_restore(-1, "", 0, 0);
     if(sent) g_active=0;                       /* nothing to return to: just the play mode back */
 }
-static void pop_through(int k){ g_now_who = g_q[k].who; memmove(&g_q[0], &g_q[k+1], (size_t)(g_qn - k - 1) * sizeof g_q[0]); g_qn -= k + 1; g_gen++; save(); ui_queue_changed();
+static void pop_through(int k){ queue_log("started: %s - %s (guest %d)%s", QNAME(&g_q[k]), g_q[k].who, k ? " - queued songs before it skipped" : "");
+                                g_now_who = g_q[k].who; memmove(&g_q[0], &g_q[k+1], (size_t)(g_qn - k - 1) * sizeof g_q[0]); g_qn -= k + 1; g_gen++; save(); ui_queue_changed();
                                 if(screen_current() == SCR_QUEUE) view_reload(); }
 /* Nothing to come back to (nothing loaded, or nothing playing whose song we can identify): the queue is the whole
  * list. Song `first` starts now and the rest follow in order; in the Shuffle play mode the queue is shuffled first.
  * When the queue is done, playback stops - unless remember_resume() kept the list it interrupted (queue_tick). */
-static void remember_resume(const track_state_t *st){
+/* inclusive: the interrupted song itself comes back (it had only just started), else the one after it. */
+static void remember_resume(const track_state_t *st, int inclusive){
     if(g_active && g_resume_type >= 0) return;                    /* a running queue keeps its way back */
     g_resume_type = -1;
+    if(party_on()){ queue_log("way back: none (party mode - After the List Ends follows the queue)"); return; }
     if(!st->have_track || st->pos_id <= 0) return;
     int type = ui_play_context(&g_resume_type, g_resume_name, sizeof g_resume_name, &g_resume_pid);
     if(type < 0 || (type == 5 && g_resume_pid <= 0)){ g_resume_type = -1; return; }   /* a single song, or the queue's own copy */
-    g_resume_pos = st->pos_id + 1;
+    g_resume_pos = st->pos_id + (inclusive ? 0 : 1);
+    queue_log("way back: list type %d \"%s\" at position %d (after the queue)", g_resume_type, g_resume_name, g_resume_pos);
 }
 static int start_fresh(int first){
     if(first < 0 || first >= g_qn) return 0;
@@ -404,7 +440,7 @@ static int start_fresh(int first){
     static qitem_t before[QMAX]; int nbefore = g_qn;
     memcpy(before, g_q, sizeof g_q[0] * (size_t)g_qn);
     if(first > 0){ memmove(&g_q[0], &g_q[first], (size_t)(g_qn - first) * sizeof g_q[0]); g_qn -= first; }
-    if(g_qn > 1 && simple_cfg_get_int("work_mode", 0) == 1)        /* Shuffle play mode: a random order */
+    if(g_qn > 1 && simple_cfg_get_int("work_mode", 0) == 1 && !party_on())   /* Shuffle play mode: a random order */
         for(int i = g_qn - 1; i > 0; i--){ int j = rand() % (i + 1); qitem_t t = g_q[i]; g_q[i] = g_q[j]; g_q[j] = t; }
     g_nctx = 0; g_nrest = 0; g_ctx_type = -1; g_ctx_name[0] = 0; g_ctx_pid = 0; g_ctx_label[0] = 0;
     if(!play_copy(0)){ memcpy(g_q, before, sizeof g_q[0] * (size_t)nbefore); g_qn = nbefore; return -1; }
@@ -424,8 +460,12 @@ int queue_next(void){
     if(!st.have_track) return start_fresh(0);                                /* nothing loaded: the queue is the list */
     if(mdb_is_book_path(st.path)) return 0;
     int current=mdb_queue_current_id(st.path,st.pos_id,st.title);
-    if(!current){ fprintf(stderr, "queue next: playing song not identified - the queue plays on its own\n"); remember_resume(&st); return start_fresh(0); }
-    if(!g_active && !capture_context(current, 0)){ fprintf(stderr, "queue next: list unreadable - the queue plays on its own\n"); remember_resume(&st); return start_fresh(0); }
+    if(!current){ fprintf(stderr, "queue next: playing song not identified - the queue plays on its own\n");
+                  queue_log("next: playing song not identified (%s) - the queue plays on its own", st.path); remember_resume(&st, 0); return start_fresh(0); }
+    if(!g_active && party_on()){ queue_log("next: party mode - the queue plays on its own"); remember_resume(&st, 0); return start_fresh(0); }
+    if(!g_active && !capture_context(current, 0)){ fprintf(stderr, "queue next: list unreadable - the queue plays on its own\n");
+                                                   queue_log("next: the playing list is unreadable (%d rows) - the queue plays on its own", g_nctx);
+                                                   remember_resume(&st, 0); return start_fresh(0); }
     if(!play_copy(0)) return -1;
     g_prev2=current; g_last_id=g_q[0].id;
     pop_through(0);
@@ -443,13 +483,14 @@ void queue_jump(int i){                                       /* play queued son
     if(!g_active) g_resume_type = -1;                            /* a running queue keeps its way back */
     if(!current){
         if(st.have_track) fprintf(stderr, "queue: playing song not identified (%s, pos %d) - starting the queue on its own\n", st.path, st.pos_id);
-        remember_resume(&st);
+        remember_resume(&st, 0);
         if(start_fresh(i) < 0){ fprintf(stderr, "queue: start_fresh failed\n"); ui_toast("Couldn't start queued song - try again"); }
         return;
     }
-    if(!g_active && !capture_context(current, 0)){
+    if(!g_active && (party_on() || !capture_context(current, 0))){
+        queue_log("jump: %s - the queue plays on its own", party_on() ? "party mode" : "the playing list is unreadable");
         fprintf(stderr, "queue: the playing list couldn't be read (song %d, type %d, %d rows) - starting the queue on its own\n", current, g_ctx_type, g_nctx);
-        remember_resume(&st);
+        remember_resume(&st, 0);
         if(start_fresh(i) < 0){ fprintf(stderr, "queue: start_fresh failed\n"); ui_toast("Couldn't start queued song - try again"); }
         return;
     }
@@ -467,6 +508,7 @@ void queue_tick(const track_state_t *st, int playing){
         static uint32_t tried;
         if(tried && lv_tick_elaps(tried) < 3000) return;
         tried = lv_tick_get() | 1;
+        queue_log("the station after the list plays and songs are queued: the queue goes first");
         if(queue_next() <= 0) fprintf(stderr, "queue: the station after the list didn't hand over to the queue\n");
         return;
     }
@@ -492,8 +534,10 @@ void queue_tick(const track_state_t *st, int playing){
         g_prev2=prev;
         g_last_id=current;
         g_last_pos = st->position_ms; g_last_dur = st->duration_ms;
+        queue_log("song change: %s - %s (song %d, list row %d), %d queued, queue %s", st->artist, st->title, current, st->pos_id, g_qn,
+                  g_active ? "playing" : "waiting");
         if(!prev) return;                                  /* the first song we see: nothing to do */
-        if(g_skip_change){ g_skip_change = 0; return; }       /* the user just started this one: the queue waits for it to end */
+        if(g_skip_change){ g_skip_change = 0; if(g_qn) queue_log("  started by the user: the queue waits for it to end"); return; }   /* the user just started this one: the queue waits for it to end */
         if(mdb_is_book_path(st->path)) return;                /* a book plays alone */
         if(g_qn > 0) prune_missing(NULL);                     /* songs no longer on the card never start */
         if(!g_active && g_qn == 0){ g_back_at = 0; return; }   /* no queue at all: no need to work out the direction */
@@ -512,15 +556,23 @@ void queue_tick(const track_state_t *st, int playing){
         int forward = !back;
         if(!g_active){
             if(g_qn == 0) return;
-            if(!forward) return;                              /* Previous: left alone */
-            if(!capture_context(current, 1)) return;                     /* the song the player moved to plays after the queue */
+            if(!forward){ queue_log("  Previous: left alone"); return; }
+            /* The song the player moved to plays after the queue. When its list can't be held (a library of more than
+             * RMAX songs, as Jo's) or in party mode, the queue plays on its own now - it waited for Next before
+             * (Jo, 2026-11-22) - and, outside party mode, that song comes back after it. */
+            if(party_on() || !capture_context(current, 1)){
+                queue_log("  %s - the queue plays on its own", party_on() ? "party mode" : "the playing list is unreadable");
+                remember_resume(st, 1);
+                if(start_fresh(0) < 0) fprintf(stderr, "queue: start_fresh failed\n");
+                return;
+            }
             play_copy(0);                                     /* the first queued song starts now */
             return;
         }
         /* our copy is playing */
         if(g_qn > 0 && current==g_q[0].id){ pop_through(0); return; }   /* the next queued song, as planned */
-        if(!forward) return;                                  /* Previous: left alone */
-        if(g_qn > 0){ play_copy(0); return; }                 /* the copy is out of date (reordered / added / a repeat): the head now */
+        if(!forward){ queue_log("  Previous: left alone"); return; }
+        if(g_qn > 0){ queue_log("  not the next queued song - the queue starts again at its head"); play_copy(0); return; }                 /* the copy is out of date (reordered / added / a repeat): the head now */
         hand_back(idx_of(g_rest, g_nrest, current) >= 0 ? current : (g_nrest ? g_rest[0] : current));   /* queue done */
         return;
     }
@@ -529,6 +581,8 @@ void queue_tick(const track_state_t *st, int playing){
     if(g_active && g_resume_type >= 0 && g_qn == 0 && g_ncopy > 0 && current == g_copy[g_ncopy - 1]
        && was_playing && !playing && g_last_dur > 0 && g_last_pos >= g_last_dur - 2500){
         int type = g_resume_type; g_resume_type = -1;
+        if(party_on()){ queue_log("queue done: party mode - no way back, After the List Ends follows"); g_active = 0; return; }
+        queue_log("queue done: back to the interrupted list type %d \"%s\" at position %d", type, g_resume_name, g_resume_pos);
         if(ui_play_restore(type, g_resume_name, g_resume_pid, g_resume_pos)) g_active = 0;
         else fprintf(stderr, "queue: returning to the interrupted list failed (type %d, pos %d)\n", type, g_resume_pos);
         return;
