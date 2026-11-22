@@ -1884,11 +1884,12 @@ void ui_vinyl_spin(int want)
 /* Now Playing style: 0 = album cover (rounded square), 1 = vinyl disc. */
 static void np_layout(int poster);
 /* WCAG relative luminance of an sRGB colour, and the contrast ratio of two luminances */
-static float np_lum(lv_color_t c){
-    float v[3]={c.red/255.0f,c.green/255.0f,c.blue/255.0f};
+static float np_lum_rgb(float r,float g,float b){   /* channels 0..255; luminance only, never a colour (check-theme) */
+    float v[3]={r/255.0f,g/255.0f,b/255.0f};
     for(int i=0;i<3;i++)v[i]=v[i]<=0.04045f?v[i]/12.92f:powf((v[i]+0.055f)/1.055f,2.4f);
     return 0.2126f*v[0]+0.7152f*v[1]+0.0722f*v[2];
 }
+static float np_lum(lv_color_t c){return np_lum_rgb(c.red,c.green,c.blue);}
 static float np_contrast(float a,float b){return a>b?(a+0.05f)/(b+0.05f):(b+0.05f)/(a+0.05f);}
 /* The blurred cover behind Now Playing is washed with the theme's canvas colour (image recolor). How much: the
  * least that still keeps every text on it (title, artist, album, times) at a contrast of at least 4.5 (WCAG AA)
@@ -1899,11 +1900,12 @@ static void np_backdrop_wash(void){
     if(!backdrop) return;
     lv_color_t canvas=TC(CANVAS);
     float lc=np_lum(canvas);
-    lv_color_t worst=lc>0.18f?lv_color_black():lv_color_white();   /* 0.18: the luminance equally far from black and white */
+    float worst=lc>0.18f?0.0f:255.0f;   /* black or white, per channel; 0.18: the luminance equally far from both */
     lv_obj_t *texts[]={title,artist,album,t_elapsed};
     int opa=LV_OPA_COVER;
     for(int o=0;o<=LV_OPA_COVER;o+=5){
-        float lb=np_lum(lv_color_mix(canvas,worst,(uint8_t)o));
+        float k=o/255.0f;                 /* LVGL's colour mix: o/255 canvas over the worst cover */
+        float lb=np_lum_rgb(canvas.red*k+worst*(1-k),canvas.green*k+worst*(1-k),canvas.blue*k+worst*(1-k));
         int ok=1;
         for(unsigned i=0;i<sizeof texts/sizeof *texts&&ok;i++)
             if(texts[i]&&np_contrast(np_lum(lv_obj_get_style_text_color(texts[i],LV_PART_MAIN)),lb)<4.6f)ok=0;
