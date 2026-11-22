@@ -5,6 +5,7 @@
  * its own, else its album's, else its artist's. */
 #include "ssdb.h"
 #include "sqlite3.h"
+#include "../libdb.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +17,7 @@ static int g_has_stats;                                /* PLAY_STATS exists: pla
 
 static const char *g_lib_path, *g_ss_path;            /* set by ssdb_paths() (mq_ui), else the app's own */
 void ssdb_paths(const char *lib, const char *ss){ g_lib_path = lib; g_ss_path = ss; }
-static const char *lib_path(void){ const char *p = getenv("SS_LIB"); return p ? p : g_lib_path ? g_lib_path : "/usr/data/fiio/db/song.db"; }
+static const char *lib_path(void){ const char *p = getenv("SS_LIB"); return p ? p : g_lib_path ? g_lib_path : libdb_path(); }
 static const char *ss_path(void){ const char *p = getenv("SS_DB"); return p ? p : g_ss_path ? g_ss_path : "/usr/data/apps/songsphere/sphere.db"; }
 
 int ssdb_open(void){
@@ -25,7 +26,7 @@ int ssdb_open(void){
     sqlite3_busy_timeout(g_ss, 1500);
     if(sqlite3_exec(g_ss, "CREATE TABLE IF NOT EXISTS PLACE(KIND INTEGER NOT NULL, KEY TEXT NOT NULL, X REAL NOT NULL, "
                           "Y REAL NOT NULL, AT INTEGER NOT NULL, PRIMARY KEY(KIND, KEY)) WITHOUT ROWID;", 0, 0, 0) != SQLITE_OK) goto fail;
-    if(sqlite3_open_v2(lib_path(), &g_lib, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) goto fail;
+    if(libdb_open_v2(lib_path(), &g_lib, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) goto fail;
     sqlite3_busy_timeout(g_lib, 1500);
     char *q = sqlite3_mprintf("ATTACH %Q AS ss;", ss_path());
     int rc = sqlite3_exec(g_lib, q, 0, 0, 0); sqlite3_free(q);

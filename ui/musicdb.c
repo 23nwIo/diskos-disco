@@ -20,10 +20,9 @@
 #include <errno.h>
 #include <fcntl.h>
 
+#include "libdb.h"
 #ifndef DB_PATH
-#ifndef DB_PATH
-#define DB_PATH "/usr/data/fiio/db/song.db"
-#endif
+#define DB_PATH libdb_path()
 #endif
 
 /* The whole library is held in a dynamically-sized array (no fixed cap): sized to
@@ -93,7 +92,7 @@ static void *mdb_index_worker(void *a){
     for(int attempt = 0; attempt < 4; attempt++){
         if(attempt) sleep(20);
         sqlite3 *d = NULL;
-        if(sqlite3_open_v2(DB_PATH, &d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); continue; }
+        if(libdb_open_v2(DB_PATH, &d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); continue; }
         sqlite3_busy_timeout(d, 3000);
         char *err = NULL;
         int rc = sqlite3_exec(d, "CREATE INDEX IF NOT EXISTS diskos_song_path ON SONG(PATH);", 0, 0, &err);
@@ -120,7 +119,7 @@ static sqlite3 *db(void){
     if(!g_db){
         if(!writer_owner_set){writer_owner=pthread_self();writer_owner_set=1;}
         sqlite3 *tmp = NULL;
-        if(sqlite3_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) == SQLITE_OK){
+        if(libdb_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) == SQLITE_OK){
             sqlite3_busy_timeout(tmp, 4000);
             /* persistent per-song accent cache (computed once from album art, survives reboot).
              * ALTER is idempotent here: harmless error if the column already exists. */
@@ -174,7 +173,7 @@ static sqlite3 *db_w(void){
     pthread_mutex_lock(&g_db_w_mu);
     if(!g_db_w){
         sqlite3 *tmp = NULL;
-        if(sqlite3_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) == SQLITE_OK){
+        if(libdb_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) == SQLITE_OK){
             sqlite3_busy_timeout(tmp, 500);
             g_db_w = tmp;
         } else if(tmp){ sqlite3_close(tmp); }
@@ -201,7 +200,7 @@ static sqlite3*db_read_wait(int wait_ms){
     if(!r){r=calloc(1,sizeof*r);if(!r)return NULL;if(pthread_setspecific(reader_key,r)){free(r);return NULL;}}
     struct stat st;if(stat(DB_PATH,&st))return NULL;
     if(r->d&&(r->dev!=st.st_dev||r->ino!=st.st_ino)){sqlite3_close(r->d);r->d=NULL;}
-    if(!r->d){if(sqlite3_open_v2(DB_PATH,&r->d,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL)!=SQLITE_OK){if(r->d)sqlite3_close(r->d);r->d=NULL;return NULL;}
+    if(!r->d){if(libdb_open_v2(DB_PATH,&r->d,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL)!=SQLITE_OK){if(r->d)sqlite3_close(r->d);r->d=NULL;return NULL;}
         r->dev=st.st_dev;r->ino=st.st_ino;}
     sqlite3_busy_timeout(r->d,wait_ms);   /* set on every call: the connection is shared by all reads on this thread */
     return r->d;
@@ -469,7 +468,7 @@ int mdb_tag_title_by_path(const char *path, char *out, int cap){
     out[0] = 0;
     if(!path || !path[0]) return 0;
     sqlite3 *c = NULL; int found = 0;
-    if(sqlite3_open_v2(DB_PATH, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
+    if(libdb_open_v2(DB_PATH, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
         sqlite3_busy_timeout(c, 50);
         sqlite3_stmt *st;
         if(sqlite3_prepare_v2(c, "SELECT IFNULL(TITLE,''),IFNULL(NAME,'') FROM SONG WHERE PATH=? "
@@ -492,7 +491,7 @@ int mdb_tag_title_by_path(const char *path, char *out, int cap){
 int mdb_track_no_by_path(const char *path){
     if(!path || !path[0]) return 0;
     sqlite3 *c = NULL; int no = 0;
-    if(sqlite3_open_v2(DB_PATH, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
+    if(libdb_open_v2(DB_PATH, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
         sqlite3_busy_timeout(c, 50);
         sqlite3_stmt *st;
         if(sqlite3_prepare_v2(c, "SELECT IFNULL(TRACK,0) FROM SONG WHERE PATH=? AND IFNULL(IS_CUE,0)=0 AND IFNULL(IS_ISO,0)=0 LIMIT 1;",
@@ -1492,7 +1491,7 @@ static void *history_worker(void *unused){
         history_head = (history_head + 1) % HISTORY_CAP; history_count--; history_active = 1;
         pthread_mutex_unlock(&history_mu);
         if(!d){
-            if(sqlite3_open_v2(DB_PATH, &d, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK){
+            if(libdb_open_v2(DB_PATH, &d, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK){
                 if(d) sqlite3_close(d); d = NULL; goto history_done;
             }
             sqlite3_busy_timeout(d, 100);
@@ -2664,7 +2663,7 @@ int mdb_set_peq(int style_preset, double master_gain, const char *params_json, c
     /* Only the EQ save worker calls this. Its private connection cannot join a
      * main-thread transaction or publish shared sqlite3_changes state. */
     sqlite3 *d=NULL;int result=0;
-    if(sqlite3_open_v2(DB_PATH,&d,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
+    if(libdb_open_v2(DB_PATH,&d,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
         sqlite3_busy_timeout(d,500);
         result=mdb_set_peq_transaction(d,style_preset,master_gain,params_json,band_hz);
     }
@@ -3441,7 +3440,7 @@ static sqlite3 *g_qdb;
 static sqlite3 *qdb(void){
     if(!g_qdb){
         sqlite3 *tmp = NULL;
-        if(sqlite3_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
+        if(libdb_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
             sqlite3_busy_timeout(tmp, 200);
             g_qdb = tmp;
         } else if(tmp) sqlite3_close(tmp);
@@ -3743,7 +3742,7 @@ static int mdb_get_peq_ex_leased(int p,double *m,int *g,int *hz,int *ed,double *
 int mdb_get_peq_readonly(int p,double *m,int *g,int *hz,int *ed,double *q){
     if(!sd_io_begin())return -1;
     sqlite3 *d=NULL;int rc=-1;
-    if(sqlite3_open_v2(DB_PATH,&d,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
+    if(libdb_open_v2(DB_PATH,&d,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
         sqlite3_busy_timeout(d,50);rc=mdb_get_peq_on(d,p,m,g,hz,ed,q);
     }
     if(d)sqlite3_close(d);sd_io_end();return rc;
@@ -3751,7 +3750,7 @@ int mdb_get_peq_readonly(int p,double *m,int *g,int *hz,int *ed,double *q){
 int mdb_song_accent_readonly(const char *path){
     if(!path || !*path || !sd_io_begin())return 0;
     sqlite3 *d=NULL;sqlite3_stmt *st=NULL;int rgb=0;
-    if(sqlite3_open_v2(DB_PATH,&d,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
+    if(libdb_open_v2(DB_PATH,&d,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
         sqlite3_busy_timeout(d,50);
         if(sqlite3_prepare_v2(d,"SELECT ACCENT FROM SONG WHERE PATH=? LIMIT 1;",-1,&st,NULL)==SQLITE_OK){
             sqlite3_bind_text(st,1,path,-1,SQLITE_STATIC);
@@ -4171,7 +4170,7 @@ int mdb_queue_current_id(const char *path, int pos, const char *title){
 int mdb_queue_current_id_quick(const char *path, int pos, const char *title){
     if(!path || !sd_io_begin()) return -1;
     sqlite3 *c=NULL; int id=-1, busy=0;
-    if(sqlite3_open_v2(DB_PATH,&c,SQLITE_OPEN_READONLY,NULL)==SQLITE_OK){
+    if(libdb_open_v2(DB_PATH,&c,SQLITE_OPEN_READONLY,NULL)==SQLITE_OK){
         sqlite3_busy_timeout(c,50);
         id=queue_current_id_on(c,path,pos,title,&busy);
         if(busy) id=-1;

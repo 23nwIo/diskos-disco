@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include "shelf.h"
 #include "sqlite3.h"
+#include "../libdb.h"
 #include "sdio.h"
 #include <ctype.h>
 #include <errno.h>
@@ -80,7 +81,7 @@ int shelf_init(const char *conf, char *err, size_t cap) {
   response[0]=0;
   testmode = getenv("SHELF_TEST") != NULL;
   resident_reset();
-  localpath = testmode ? getenv("SHELF_DB") : "/usr/data/fiio/db/song.db";
+  localpath = testmode ? getenv("SHELF_DB") : NULL;   /* NULL: the library in use at build time (libdb_path) */
   if (!ds_config_read(conf, testmode, err, cap))
     return 0;
   if (!shelf_sd_ready()) {
@@ -224,7 +225,7 @@ static void normalize(const char *s, char *out, size_t n) {
   out[i] = 0;
 }
 static int build_local(void) {
-  if (!localpath || sqlite3_open_v2(localpath, &localdb, SQLITE_OPEN_READONLY,
+  if ((testmode && !localpath) || libdb_open_v2(localpath ? localpath : libdb_path(), &localdb, SQLITE_OPEN_READONLY,
                                     NULL) != SQLITE_OK) {
     ds_status_text("Local library unavailable; downloads blocked.");
     return 0;

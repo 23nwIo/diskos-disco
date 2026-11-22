@@ -15,6 +15,7 @@ io=section(eq,'static int apply_now(','/* --------------------------------------
 poll=section(eq,'static void draw_tmr_cb(','/* ------------------------------------------------------------------ edits */')
 prefix=r'''
 #include <sqlite3.h>
+#include "libdb.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

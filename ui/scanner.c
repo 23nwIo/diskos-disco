@@ -37,8 +37,9 @@
 #include "scanner.h"
 #include "musicdb.h"   /* DISKOS_AUDIOBOOKS gate: whether .m4b files are indexed */
 
+#include "libdb.h"
 #ifndef DB_PATH
-#define DB_PATH   "/usr/data/fiio/db/song.db"
+#define DB_PATH   libdb_path()
 #endif
 #ifndef SCAN_ROOT
 #define SCAN_ROOT "/tmp/sdcard"
@@ -1783,7 +1784,7 @@ static void *scan_thread(void *arg){
         sd_io_end();
         return NULL;
     }
-    if(sqlite3_open_v2(DB_PATH,&g_db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
+    if(libdb_open_v2(DB_PATH,&g_db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,NULL)==SQLITE_OK){
         sqlite3_busy_handler(g_db, scan_busy, NULL);   /* up to 8 s, but gives up at once when a cancel/abort lands */
         /* Everything that can change song.db (schema migration, index, scratch tables) runs INSIDE the scan
          * transaction, so a cancelled or failed scan rolls back to a byte-identical file. */
@@ -2012,7 +2013,7 @@ int scanner_add_file(const char *path){
     sd_io_end();
     if(tst == 0) return 0;
     sqlite3 *db = NULL; sqlite3_stmt *st = NULL; int id = -1;
-    if(sqlite3_open_v2(DB_PATH, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK) goto out;
+    if(libdb_open_v2(DB_PATH, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK) goto out;
     sqlite3_busy_timeout(db, 3000);
     if(sqlite3_prepare_v2(db, "SELECT ID FROM SONG WHERE PATH=?1 ORDER BY ID LIMIT 1;", -1, &st, NULL) != SQLITE_OK) goto out;
     sqlite3_bind_text(st, 1, path, -1, SQLITE_TRANSIENT);

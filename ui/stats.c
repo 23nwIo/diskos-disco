@@ -30,8 +30,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "libdb.h"
 #ifndef STATS_DB_PATH
-#define STATS_DB_PATH "/usr/data/fiio/db/song.db"
+#define STATS_DB_PATH libdb_path()
 #endif
 #define COUNT_MS 30000                     /* a play counts after 30 s ... */
 
@@ -262,7 +263,7 @@ static long long g_ra, g_rb;                         /* the loaded period's [fro
 static void stats_load(void){
     memset(&g_s, 0, sizeof g_s); g_s.empty = 1; g_first_at = 0;
     sqlite3 *d = NULL;
-    if(sqlite3_open_v2(STATS_DB_PATH, &d, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); return; }
+    if(libdb_open_v2(STATS_DB_PATH, &d, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); return; }
     sqlite3_busy_timeout(d, 400);
     long long a, b, pa, pb; struct tm f;
     period_range(g_ptype, g_poff, &a, &b, &f); g_ra = a; g_rb = b;
@@ -800,7 +801,7 @@ static void sub_open(int k){
 static void wrap_back_cb(lv_event_t *e){ (void)e; screen_back(); }
 static int artist_covers(const char *artist, char out[3][256], char alb[3][128]){
     sqlite3 *d = NULL; int n = 0;
-    if(sqlite3_open_v2(STATS_DB_PATH, &d, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); return 0; }
+    if(libdb_open_v2(STATS_DB_PATH, &d, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); return 0; }
     sqlite3_stmt *st;
     if(sqlite3_prepare_v2(d, "SELECT MAX(PATH),ALBUM FROM PLAY_LOG WHERE AT>=?1 AND AT<?2 AND IFNULL(ALBUM,'')<>'' AND "
                              "(ARTIST=?3 OR AARTIST=?3 OR (','||REPLACE(REPLACE(ARTIST,', ',','),';',',')||',') LIKE '%,'||?3||',%') "

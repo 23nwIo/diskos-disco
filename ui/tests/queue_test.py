@@ -204,7 +204,7 @@ int main(int argc,char **argv){
 '''
 with tempfile.TemporaryDirectory(prefix='diskos-queue-test-') as tmp:
     root=Path(tmp);db=root/'song.db';qfile=root/'queue.tsv';qlog=root/'queue.log'
-    (root/'db.c').write_text((app/'musicdb.c').read_text().replace('"/usr/data/fiio/db/song.db"','"'+str(db)+'"'))
+    (root/'db.c').write_text((app/'musicdb.c').read_text().replace('#define DB_PATH libdb_path()','#define DB_PATH "'+str(db)+'"'))
     (root/'test.c').write_text(queue+stubs+'\n#include "sqlite3.h"\n'+test)
     exe=root/'test'
     subprocess.run([os.environ.get('CC','cc'),'-O1','-g','-std=gnu11','-D_GNU_SOURCE','-DLV_CONF_INCLUDE_SIMPLE','-DQUEUE_FILE="'+str(qfile)+'"','-DQUEUE_LOG="'+str(qlog)+'"','-DQUEUE_RAM_PROBE=ram_probe()','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-I'+str(app),str(root/'test.c'),str(root/'db.c'),str(app/'sqlite3.c'),'-pthread','-lm','-ldl','-Wl,--gc-sections','-o',str(exe)],check=True)

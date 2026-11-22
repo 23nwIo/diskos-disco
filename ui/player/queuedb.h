@@ -7,7 +7,8 @@
 #define DISKOS_PLAYER_QUEUEDB_H
 #include "../sqlite3.h"
 
-#define QD_SONG_DB      "/usr/data/fiio/db/song.db"
+#include "../libdb.h"
+#define QD_SONG_DB      libdb_path()   /* the library in use (ui/libdb.h) */
 #define QD_SYSCONFIG_DB "/usr/data/fiio/db/sysconfig.db"
 
 /* 0100 list types */

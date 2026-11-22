@@ -23,8 +23,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <utime.h>
+#include "libdb.h"
 #ifndef DB_PATH
-#define DB_PATH "/usr/data/fiio/db/song.db"
+#define DB_PATH libdb_path()
 #endif
 extern char **environ;
 album_t albums[POOL];
@@ -201,7 +202,7 @@ static void artwork(album_t *a,const char *dir,int index){
 static int scan_cancelled(void *unused){(void)unused;return atomic_load(&cancelled);}
 void *prepare_albums(void *unused){
     (void)unused;sqlite3 *db=NULL;sqlite3_stmt *st=NULL;int seen=0,rc=SQLITE_ERROR;
-    if(sqlite3_open_v2(DB_PATH,&db,SQLITE_OPEN_READONLY,NULL)!=SQLITE_OK) goto fail;
+    if(libdb_open_v2(DB_PATH,&db,SQLITE_OPEN_READONLY,NULL)!=SQLITE_OK) goto fail;
     sqlite3_busy_timeout(db,2000);
     sqlite3_exec(db,"PRAGMA cache_size=-512; PRAGMA mmap_size=0",NULL,NULL,NULL);
     sqlite3_progress_handler(db,1000,scan_cancelled,NULL);

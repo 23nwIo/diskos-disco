@@ -24,7 +24,7 @@
 
 sqlite3 *qd_open(const char *path){
     sqlite3 *d = NULL;
-    if(sqlite3_open_v2(path, &d, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK){ if(d) sqlite3_close(d); return NULL; }
+    if(libdb_open_v2(path, &d, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK) return NULL;
     sqlite3_busy_timeout(d, 3000);
     return d;
 }
