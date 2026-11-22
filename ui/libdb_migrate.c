@@ -65,8 +65,24 @@ int libdb_migrate(const char *src, const char *dst, char *err, int cap){
 
     /* the copy keeps the source's settings: switch it to the card's (libdb_setup ran on the empty file) */
     libdb_setup(d, dst, SQLITE_OPEN_READWRITE);
+    /* Does the flash library describe this card? A sample of its card paths: when most are missing (another card),
+     * the copy is marked for a rescan, which the UI starts after the restart (libdb_ui.c). */
+    int seen = 0, here = 0;
+    sqlite3_stmt *sp = NULL;
+    if(sqlite3_prepare_v2(d, "SELECT PATH FROM SONG WHERE PATH LIKE '" LIBDB_CARD_ROOT "/%' ORDER BY random() LIMIT 64;",
+                          -1, &sp, NULL) == SQLITE_OK){
+        while(sqlite3_step(sp) == SQLITE_ROW){
+            const char *p = (const char *)sqlite3_column_text(sp, 0);
+            if(!p) continue;
+            seen++; if(access(p, F_OK) == 0) here++;
+        }
+    }
+    sqlite3_finalize(sp);
+    char meta[96];
+    snprintf(meta, sizeof meta, "INSERT OR REPLACE INTO DISKOS_META(K, V) VALUES('LIBDB_RESCAN', %d);", seen == 0 || here * 2 < seen);
     if(sqlite3_exec(d, "BEGIN IMMEDIATE; DROP TABLE IF EXISTS LIST_SONG_0; DROP TABLE IF EXISTS LIST_SONG_3;", 0, 0, 0)
-       != SQLITE_OK || libdb_card_schema(d) != SQLITE_OK || sqlite3_exec(d, "COMMIT;", 0, 0, 0) != SQLITE_OK){
+       != SQLITE_OK || libdb_card_schema(d) != SQLITE_OK || sqlite3_exec(d, meta, 0, 0, 0) != SQLITE_OK
+       || sqlite3_exec(d, "COMMIT;", 0, 0, 0) != SQLITE_OK){
         code = fail(LIBDB_E_SCHEMA, err, cap, "tables: %s", sqlite3_errmsg(d)); goto out;
     }
 

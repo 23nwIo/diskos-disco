@@ -65,6 +65,7 @@ int main(void){
     assert(one_int(d, "SELECT COUNT(*) FROM MY_LOVE;") == 1);
     assert(one_int(d, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('LIST_SONG_0','LIST_SONG_3');") == 0);
     assert(one_int(d, "SELECT V FROM DISKOS_META WHERE K='LIBDB_VERSION';") == LIBDB_VERSION);
+    assert(one_int(d, "SELECT V FROM DISKOS_META WHERE K='LIBDB_RESCAN';") == 1);   /* its /tmp/sdcard paths aren't here */
     puts("PASS card DB: songs and favourites copied, queue tables dropped, card settings on");
 
     /* SOURCE_ID: unique per source, needs its song, goes with it */

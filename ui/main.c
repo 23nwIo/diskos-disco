@@ -1298,9 +1298,11 @@ static void libdb_watch(void){
     library_ensure_capacity();
     library_refresh();
 }
+void libdb_ui_tick(void);                           /* libdb_ui.c: moving the library to the card */
 static void scanner_poll(lv_timer_t *t){
     (void)t;
     libdb_watch();
+    libdb_ui_tick();
     ui_scan_orbit(scanner_active());   /* fork: the dot runs around the rim while a scan runs (lost in the 1.2.0 merge) */
     if(scanner_take_finished()){
         mdb_load();               /* reload the in-memory library (also invalidates the group caches) */

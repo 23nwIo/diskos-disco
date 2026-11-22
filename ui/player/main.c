@@ -300,6 +300,13 @@ int main(int argc, char **argv){
     core.upnext = core_upnext;
     core.slist = core_slist;
     core.playsong = core_playsong;
+    /* tell the UI that the own player runs this boot, so both use the card's library when there is one (ui/libdb.h) */
+    {
+        char tmp[64]; snprintf(tmp, sizeof tmp, "%s.%ld", LIBDB_OWN_PID, (long)getpid());
+        FILE *pf = fopen(tmp, "w");
+        if(!pf || fprintf(pf, "%ld\n", (long)getpid()) < 0 || fclose(pf) != 0 || rename(tmp, LIBDB_OWN_PID) != 0)
+            logmsg("libdb: %s: %s", LIBDB_OWN_PID, strerror(errno));
+    }
     pb_init(&core, "", QD_SYSCONFIG_DB, logmsg);   /* "": follow libdb_path() on every open */
     /* the key actions are kept in SYSCONFIG like the stock player keeps them; the UI sends them only when changed.
      * Not stored: every press changes the volume. */

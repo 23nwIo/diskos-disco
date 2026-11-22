@@ -21,8 +21,12 @@ Roulette, SongSphere and Disc Shelf.
   `library.db`: the card DB is used.
 - **In every other case**, the flash DB is used, the same as before.
 
-**Status:** the card DB is switched off for now (`LIBDB_CARD_ENABLED 0`), so `libdb_path()` always gives the flash DB.
-It goes on together with the migration screen.
+**Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`), not device-tested. Build with
+`-DLIBDB_CARD_ENABLED=0` to keep the flash DB only.
+
+"The own player runs" means the player process wrote its pid to `/tmp/.diskos_libdb_own_pid` at start (tmpfs) and
+`/proc/<pid>/exe` is `/usr/data/diskos-own/mq_player`. The switch file is not used for this: it names the next boot's
+player, and the stock player may run although it exists (after the own player failed).
 
 ## When the card goes away
 
@@ -91,11 +95,12 @@ On the flash DB there is no `SOURCE_ID` table, and the scanner keeps no IDs ther
 
 ## Moving the library to the card
 
-`libdb_migrate()` in `ui/libdb_migrate.c` does the copy. The UI part around it is still to do:
+`libdb_migrate()` in `ui/libdb_migrate.c` does the copy; `ui/libdb_ui.c` runs it (checked every 5 s from main.c):
 
-1. The migration starts only when the own player runs, the card has no `library.db`, and external power is connected.
-   Without power, a notice asks you to plug it in. Until then, everything stays on the flash DB.
-2. Playback stops. A full-screen overlay says that the migration is running, that the power must stay connected and
+1. The migration starts only when the own player runs, the card is local and writable, no scan runs, the card has no
+   `library.db`, and external power is connected. Without power, a notice asks for it, once per boot. Until then,
+   everything stays on the flash DB.
+2. It waits until nothing plays. A full-screen overlay says that the migration is running, that the power must stay connected and
    that the card must not be removed.
 3. The flash DB is copied with SQLite's backup API, as one consistent snapshot, to `library.db.tmp`.
 4. The stock player's queue tables (`LIST_SONG_0`, `LIST_SONG_3`) are dropped. The own player keeps its list in RAM.
@@ -105,8 +110,9 @@ On the flash DB there is no `SOURCE_ID` table, and the scanner keeps no IDs ther
 
 If anything fails, `library.db.tmp` is removed and the flash DB is untouched, and the next start tries again.
 
-A card whose files are not in the flash DB gets the copy too, so playlists and favourites come along. A rescan then
-brings its library up to date (still to do).
+A card whose files are not in the flash DB gets the copy too, so playlists and favourites come along. The copy checks
+up to 64 random card paths from it; when fewer than half are on this card, it is marked (`DISKOS_META`
+`LIBDB_RESCAN` = 1), and after the restart the UI starts a rescan once.
 
 ### Error codes
 

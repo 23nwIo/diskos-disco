@@ -18,28 +18,48 @@
  * Header-only (like own_player.h) so the player binary and the host tests use it without another source file. */
 #ifndef DISKOS_LIBDB_H
 #define DISKOS_LIBDB_H
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "sqlite3.h"
 
 #define LIBDB_FLASH "/usr/data/fiio/db/song.db"            /* stock player's library, internal NAND */
-#define LIBDB_CARD  "/tmp/sdcard/.diskos/state/library.db" /* own player's library, on the card (not used yet) */
+#define LIBDB_CARD_ROOT "/tmp/sdcard"
+#define LIBDB_CARD  LIBDB_CARD_ROOT "/.diskos/state/library.db" /* own player's library, on the card */
 
-/* Switched off until the UI closes its long-lived connections when the card goes away (USB storage, format,
- * removal): an open card DB would keep the card busy. Until then libdb_path() always answers the flash DB. */
+/* The card library is on (2026-11-23): mq_ui closes its files when the card goes away (libdb_vfs.c), and moves the
+ * library to the card with the overlay (libdb_ui.c). Build with -DLIBDB_CARD_ENABLED=0 to keep the flash DB only. */
 #ifndef LIBDB_CARD_ENABLED
-#define LIBDB_CARD_ENABLED 0
+#define LIBDB_CARD_ENABLED 1
 #endif
-#define LIBDB_OWN_SWITCH "/usr/data/diskos-own-player"      /* = OPL_SWITCH (own_player.h) */
+/* The own player writes its pid here when it starts (player/main.c, tmpfs: gone at reboot). Not the switch file
+ * /usr/data/diskos-own-player: that one names the NEXT boot's player (Settings > Maintenance changes it without a
+ * restart), and the stock player may run although it exists (the own player failed). */
+#define LIBDB_OWN_PID "/tmp/.diskos_libdb_own_pid"
+#define LIBDB_OWN_BIN "/usr/data/diskos-own/mq_player"    /* = OPL_BIN (own_player.h) */
+#include <stdio.h>
+static inline int libdb_own_player_runs(void){
+    char b[32] = "", p[48], x[64];
+    FILE *f = fopen(LIBDB_OWN_PID, "r");
+    if(!f) return 0;
+    int ok = fgets(b, sizeof b, f) != NULL; fclose(f);
+    long pid = ok ? strtol(b, NULL, 10) : 0;
+    if(pid <= 0) return 0;
+    snprintf(p, sizeof p, "/proc/%ld/exe", pid);
+    ssize_t n = readlink(p, x, sizeof x - 1);
+    if(n <= 0) return 0;
+    x[n] = 0;
+    return !strcmp(x, LIBDB_OWN_BIN);
+}
 
-/* The library DB in use now: the card DB when the own player is switched on and the mounted card has one, else the
- * flash DB. A card without library.db (not migrated yet) keeps the flash DB, as before. */
+/* The library DB in use now: the card DB when the own player runs and the mounted card has one, else the flash DB.
+ * A card without library.db (not moved yet) keeps the flash DB, as before. */
 static inline const char *libdb_path(void){
 #if LIBDB_CARD_ENABLED
     struct stat c, p;
-    if(access(LIBDB_OWN_SWITCH, F_OK) == 0 && stat("/tmp/sdcard", &c) == 0 && stat("/tmp", &p) == 0
-       && c.st_dev != p.st_dev && access(LIBDB_CARD, R_OK) == 0)
+    if(stat(LIBDB_CARD_ROOT, &c) == 0 && stat("/tmp", &p) == 0 && c.st_dev != p.st_dev
+       && access(LIBDB_CARD, R_OK) == 0 && libdb_own_player_runs())
         return LIBDB_CARD;
 #endif
     return LIBDB_FLASH;
@@ -103,7 +123,8 @@ static inline int libdb_card_schema(sqlite3 *d){
 
 /* Migration (libdb_migrate.c, mq_ui only): copy src (the flash DB) to dst (the card DB) as one consistent snapshot.
  * Writes dst.tmp, drops the stock player's queue tables (LIST_SONG_0, LIST_SONG_3: the own player keeps its list in
- * RAM), adds the tables above, checks integrity, fsyncs, renames to dst and fsyncs the folder. dst is never
+ * RAM), adds the tables above, marks it for a rescan (DISKOS_META LIBDB_RESCAN = 1) when most of a sample of its
+ * card paths are missing on this card, checks integrity, fsyncs, renames to dst and fsyncs the folder. dst is never
  * half-written: on any failure dst.tmp is removed and src is untouched. 0, or an L1xx code (docs/LIBRARY_DB.md)
  * with err filled. */
 enum { LIBDB_E_OPEN_SRC = 101, LIBDB_E_OPEN_DST = 102, LIBDB_E_COPY = 103, LIBDB_E_SCHEMA = 104,

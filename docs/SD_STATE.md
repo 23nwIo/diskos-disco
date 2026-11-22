@@ -18,7 +18,7 @@ file, fsync, rename).
 | `party.conf` | Remote Control public mode settings (`on` = mode 0 Off, 1 Jukebox (was party mode), 2 Hit&Guess): `key=value` lines (name, on, vol, maxvol, np, queue, skip, total, consec, repeat, radio, names; ui/party.c) | only when the host changes a setting on System > Public or ends it on the Disc | new (2026-11-16) |
 | `hitguess.conf` | Hit&Guess setup: `key=value` lines (dir, pl and the game keys; ui/hitguess.c) | only when the host changes the setup on the game page | new (2026-11-18) |
 | `song-fixes.tsv` | Hit&Guess corrections for the tags: a `#` header, then one tab-separated line per song (path on the card, title, artist, the library's date, right artist, right title, right year, leave out (1), by, when); a newer one replaces the older | when a player or the host corrects a song | new (2026-11-19; replaces `year-fixes.tsv`, which is still read) |
-| `library.db` (+ `library.db-journal`) | the own player's library, a copy of the flash song.db plus SOURCE_ID (docs/LIBRARY_DB.md); never delete the journal | by the scanner, the UI and the own player | new (2026-11-22, not switched on yet) |
+| `library.db` (+ `library.db-journal`) | the own player's library, a copy of the flash song.db plus SOURCE_ID (docs/LIBRARY_DB.md); never delete the journal | by the scanner, the UI and the own player | new (2026-11-23, own player only, not device-tested) |
 
 A different card brings its own files. Paths in `books.tsv` are as the Disc sees them (`/tmp/sdcard/...`).
 
