@@ -25,6 +25,7 @@ static _Atomic uint64_t perf_started, art_interactive_until;
 static uint64_t art_clock_ms(void){return now;}
 static void ui_perf_note(const char *s){(void)s;}
 static int ma_controls(void){return 0;}
+static int bandcamp_active(void){return 0;}   /* Bandcamp is not under test here */
 static void ma_send(const char *s){(void)s;}
 static long g_seek_target_ms,requested_seek;
 static uint32_t g_seek_hold_until;
