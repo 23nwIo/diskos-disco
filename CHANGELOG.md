@@ -4,6 +4,10 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Remote Control: the favourite symbol and its colour are chosen separately (hearts, stars, diamonds, dots or flowers;
+  red, yellow, orange, pink, purple, blue, green or white), on the system page and on the party page. Not yet tested on
+  a Disc.
+
 - Music (Stone and Ring): the blurred cover behind Now Playing is now washed with the theme's background colour just
   enough that title, artist, album and times stay readable over any cover: in light themes a dark or colourful cover
   becomes a light tint of its colour (light Stone showed dark text on a darkened cover before), in dark themes a light

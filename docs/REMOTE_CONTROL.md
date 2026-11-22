@@ -88,7 +88,7 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 | Party name | — | The guests' link: at least 2 letters, digits, `-` or `_` (upper and lower case differ). A new name locks out the old link. **Copy** copies the link. |
 | Change the volume | on | Guests get a volume slider. **Up to N %**: their 100 % is N % of the Disc's volume (scaled, so their slider still goes from 0 to 100). |
 | See what plays now | on | Off: title, artist, cover and position are hidden (for a music quiz), and the queue shows other guests' and the host's songs as "A secret song" (with who queued it); each guest still sees their own songs in full. |
-| See the queue | on | Guests see the song playing now and the queued songs, with who queued them; their own are marked with a heart or a star. The host's own list after the queue (Up next) stays hidden. |
+| See the queue | on | Guests see the song playing now and the queued songs, with who queued them; their own are marked with their favourite symbol. The host's own list after the queue (Up next) stays hidden. |
 | Skip songs | off | Guests get a Next button. |
 | Songs each guest may have in the queue | 3 | A place frees up once one of their songs starts playing. |
 | Songs of one guest in a row | 1 | Guests take turns: a guest's new song joins their next round instead of the end of the queue (Anna, Ben, Anna, Ben, …), never before the host's songs. When it would still play right after the same guest's song, it is refused, unless only that guest's songs are waiting. |
@@ -121,7 +121,7 @@ one at a time; a file in Folders that holds several tracks (a CUE or ISO image) 
 They cannot pause, go back, seek, change the EQ, the outputs, Bluetooth, playlists or favourites, and the system page
 and every other command answer 404 on their link; the host's favourites are not shown. Instead each guest keeps
 favourites of their own in their browser (a song's menu: Add to your favourites; the Favourites tab). Each guest's page
-may pick its own colour and heart or star.
+may pick its own page colour and favourite symbol and colour.
 
 A guest is told apart by a random id their browser keeps; a private window or another browser counts as a new guest.
 The ids, names and who queued what are kept in RAM only and start afresh after a restart. The settings are kept on
@@ -188,7 +188,8 @@ show the same ranking at the top while the game runs; the breakdown comes at the
 ### Page look
 
 Below **Restart the Disc** in the system page's Status tab: **Page colour** (orange, the default, blue, green, purple or red: buttons,
-tabs, sliders and scroll bars) and **Favourites** (red hearts, the default, or yellow stars). Both are kept in the
+tabs, sliders and scroll bars) **Favourites** (hearts, the default, stars, diamonds, dots or flowers) and **Their colour** (red, the default, yellow,
+orange, pink, purple, blue, green or white; a red star is fine). All are kept in the
 browser, so each phone or computer has its own; light and dark mode follow the device.
 
 ### Status
