@@ -28,6 +28,9 @@ int pb_transport(int op, long arg);
 /* 0d13: the UI's queue (Up next, core.h pl_upnext_fn), in RAM: SONG.IDs that play before the list goes on (party: the
  * list ends after them). Replaces the one there; ack leaves out the songs that started before the UI knew. 0 or -1. */
 int pb_up_set(unsigned ack, int party, const int *ids, int n);
+/* 0d15: play library song song_id now, on its own (core.h pl_playsong_fn): the list is let go, nothing is written to
+ * song.db. 0 or -1. */
+int pb_play_song(int song_id);
 /* Pause (the headphones were pulled). */
 void pb_pause(void);
 /* The play mode (0102) changed: rebuild or drop the shuffle order and the queued next song. */

@@ -305,10 +305,14 @@ static void send(rmt_cmd_kind_t k, long arg){
 }
 static int play_song(int id, const char **why){
     rmt_state_t s; remote_state(&s);
-    rmt_cmd_t c; memset(&c, 0, sizeof c); c.kind = RMT_CMD_PLAY_ITEM; c.sub = RMT_I_SONG; c.song_id = id;
-    char *body = NULL;
-    int r = remote_exec(&c, why, &body); free(body);
-    if(r) return -1;
+    /* the own player plays it on its own: no All Songs list rewritten into song.db (flash) for every turn */
+    if(ui_play_song_alone(id)) hlog("player: song %d on its own", id);
+    else {
+        rmt_cmd_t c; memset(&c, 0, sizeof c); c.kind = RMT_CMD_PLAY_ITEM; c.sub = RMT_I_SONG; c.song_id = id;
+        char *body = NULL;
+        int r = remote_exec(&c, why, &body); free(body);
+        if(r) return -1;
+    }
     /* Repeat One until the next song starts (Jo, 2026-11-18): the song never runs out into the next one of the list
      * (a song that ended before the next player had chosen once came with a player crash and reboot on the Disc).
      * Not saved; the user's mode comes back when the game ends (hitguess_tick). */

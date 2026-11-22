@@ -1524,6 +1524,22 @@ int ui_play_restore(int type, const char *name, long pid, int pos){
     }
     g_q_internal=was; return sent;
 }
+/* Own player: library song song_id on its own, without a list (0d15): nothing is written to song.db - a new list makes
+ * the player rewrite LIST_SONG_0 with every row of it (5,000+ for All Songs), on the internal flash. Hit&Guess plays
+ * each song this way (Jo, 2026-11-22). 1 sent; 0 not (no own player, another output, ...): the caller plays it as before. */
+int ui_play_song_alone(int song_id){
+    if(song_id <= 0 || !opl_running()) return 0;
+    radio_yield_local();
+    if(modes_output_busy() || !ui_local_playback_allowed() || play_waits_for_codec()) return 0;
+    char f[24]; snprintf(f, sizeof f, "0d150010%08X", (unsigned)song_id);
+    g_play_sent_gen = ipc_generation();
+    if(ipc_send_cmd(f) != 0) return 0;
+    play_note_sent();
+    g_ctx_type = -1; g_ctx_name[0] = 0; g_ctx_pid = 0;    /* no list to go back to */
+    queue_note_external_play();
+    queue_log("play: song %d on its own (no list, nothing written; Hit&Guess)", song_id);
+    return 1;
+}
 int ui_play_slot(int pos){
     if(modes_output_busy() || !ui_local_playback_allowed()) return 0;
     int was = g_q_internal; g_q_internal = 1;

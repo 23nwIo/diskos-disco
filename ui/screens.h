@@ -63,6 +63,7 @@ int disco_track_overlay_visible(void);
 void dhome_overlay_close(void);
 void shortcuts_config_create(lv_obj_t *root); void shortcuts_config_refresh(void); void shortcut_run(const char *key); void queue_refresh(void);
 int ui_play_slot(int pos);
+int ui_play_song_alone(int song_id);   /* own player: one library song, no list, no song.db write (0d14); 1 sent */
 int ui_play_restore(int type, const char *name, long pid, int pos);
 int  ui_play_context(int *type, char *name, int cap, long *pid);
 long ui_playing_playlist(void);           /* the custom playlist being played, 0 = none */

@@ -32,6 +32,9 @@ static int g_pending = -1;         /* order index to start when the current song
  * Every up-next song that starts (or is skipped as unplayable) leaves g_up and is told to the UI (ad13 with a running
  * number); 0d13 carries the number the UI has seen, so a list sent before the UI heard of a start can't bring it back. */
 static int g_up[PL_UP_MAX], g_upn, g_up_party, g_cur_up, g_next_up, g_pend_up;
+/* g_solo: g_cur_up was started on its own (0d15, Hit&Guess): the list was let go, so nothing of it follows.
+ * g_next_rep: MPD's next song is g_cur_up again (Repeat One; Repeat All for a song on its own). */
+static int g_solo, g_next_rep;
 static unsigned g_up_seq;
 static struct { unsigned seq; int id; } g_up_gone[32];
 static int g_up_ngone;
@@ -134,7 +137,7 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     pq_free(&Q);
     g_bt = 0; g_aux = 1; g_bt_codec = -1; g_bt_mac[0] = 0; g_bt_rate = 0; g_bt_sel[0] = g_bt_avail[0] = 0; g_cs_pid = -1;
     g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
-    g_upn = g_cur_up = g_next_up = g_pend_up = g_up_party = 0; g_up_seq = 0; g_up_ngone = 0;
+    g_upn = g_cur_up = g_next_up = g_pend_up = g_up_party = g_solo = g_next_rep = 0; g_up_seq = 0; g_up_ngone = 0;
 }
 void pb_close(void){ pq_free(&Q); g_next = g_pending = -1; }
 
@@ -187,7 +190,15 @@ static int playable_song(sqlite3 *d, int id, qd_row_t *r){
 /* Queue the song that follows the current one when it ends (by the play mode); skips rows MPD can't take. The UI's
  * up-next songs come first. */
 static void queue_next(sqlite3 *d){
-    g_next_up = g_pend_up = 0;
+    g_next_up = g_pend_up = 0; g_next_rep = 0;
+    if(g_cur_up && (C->play_mode == PQ_REPEAT_ONE || (g_solo && C->play_mode == PQ_REPEAT_ALL))){   /* the same song again */
+        qd_row_t *u = malloc(sizeof *u);
+        g_next = g_pending = -1;
+        if(u && playable_song(d, g_cur_up, u) && eng_set_next(u->path, PART(u), dac_current_rate()) == 0) g_next_rep = 1;
+        else eng_set_next(NULL, 0, 0, 0);
+        free(u);
+        return;
+    }
     /* Repeat One (Hit&Guess loops its song) and Single (a book chapter) keep to the song: the up-next songs wait for
      * Next or another play mode */
     if(g_upn > 0 && C->play_mode != PQ_REPEAT_ONE && C->play_mode != PQ_SINGLE){
@@ -204,7 +215,7 @@ static void queue_next(sqlite3 *d){
         if(g_next_up || g_pend_up) return;
         eng_set_next(NULL, 0, 0, 0);
     }
-    if(g_cur_up && g_up_party){ g_next = g_pending = -1; eng_set_next(NULL, 0, 0, 0); return; }   /* party: the list ends */
+    if(g_cur_up && (g_up_party || g_solo)){ g_next = g_pending = -1; eng_set_next(NULL, 0, 0, 0); return; }   /* party, or no list: it ends */
     int mode = C->play_mode, save = Q.cur;
     if(g_cur_up && mode == PQ_REPEAT_ONE) mode = PQ_REPEAT_ALL;   /* after up-next songs: the list's next song */
     int ni = pq_next(&Q, mode, 1);
@@ -232,7 +243,7 @@ static int start_up(sqlite3 *d){
         int ok = playable_song(d, id, r) && eng_load(r->path, PART(r), 0, 0) == 0;
         up_take(id);
         if(!ok) continue;
-        g_cur_up = id;
+        g_cur_up = id; g_solo = 0;
         L("up next: song %d starts (%s), %d more", id, r->path, g_upn);
         free(r);
         queue_next(d);
@@ -256,7 +267,7 @@ static int start_at(sqlite3 *d, int idx, int dir, long ms, int paused){
     }
     free(r);
     if(ok){ L("queue: nothing in the queue can be played"); return -1; }
-    Q.cur = idx; g_cur_up = 0;
+    Q.cur = idx; g_cur_up = 0; g_solo = 0;
     queue_next(d);
     g_announce = 1; g_announce_t = now_s();
     return 0;
@@ -453,7 +464,8 @@ void pb_engine_event(void){
         return;
     }
     if(eng_advanced(&g_es)){                          /* the queued next song has started */
-        if(g_next_up){ up_take(g_next_up); g_cur_up = g_next_up; L("up next: song %d plays, %d more", g_cur_up, g_upn); }
+        if(g_next_rep){ g_next_rep = 0; L("song %d again", g_cur_up); }
+        else if(g_next_up){ up_take(g_next_up); g_cur_up = g_next_up; g_solo = 0; L("up next: song %d plays, %d more", g_cur_up, g_upn); }
         else { Q.cur = g_next; g_cur_up = 0; }
         sqlite3 *d = db();
         if(d){ queue_next(d); sqlite3_close(d); }
@@ -771,6 +783,27 @@ int pb_transport(int op, long arg){
     return -1;
 }
 
+int pb_play_song(int song_id){
+    if(!eng_ready()){ L("play song: no engine"); return -1; }
+    if(g_stream){ L("play song: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; sl_clear(); }
+    if(g_tail){ L("play song: ends the station after the list"); tail_end(); }
+    sqlite3 *d = db();
+    if(!d) return -1;
+    qd_row_t *r = malloc(sizeof *r);
+    int rc = -1;
+    if(r && playable_song(d, song_id, r) && eng_load(r->path, PART(r), 0, 0) == 0){
+        pq_free(&Q);                                   /* the list is let go: nothing of it follows this song */
+        g_cur_up = song_id; g_solo = 1;
+        L("play song: %d on its own (%s)", song_id, r->path);
+        queue_next(d);
+        g_announce = 1; g_announce_t = now_s();
+        rc = 0;
+    } else L("play song: %d can't be played", song_id);
+    free(r);
+    sqlite3_close(d);
+    return rc;
+}
+
 int pb_up_set(unsigned ack, int party, const int *ids, int n){
     int k = 0;
     for(int i = 0; i < g_up_ngone; i++) if((int)(g_up_gone[i].seq - ack) > 0) g_up_gone[k++] = g_up_gone[i];
@@ -802,7 +835,7 @@ void pb_mode_changed(void){
         if(pq_shuffle(&Q, on, rnd) != 0) L("play mode: out of memory");
         else if(on ? qd_shuffle_write(d, Q.order, Q.n) : qd_shuffle_drop(d)) L("play mode: LIST_SONG_3: %s", sqlite3_errmsg(d));
     } else if(!on) qd_shuffle_drop(d);
-    if(Q.n > 0 && Q.cur >= 0) queue_next(d);
+    if(g_cur_up || (Q.n > 0 && Q.cur >= 0)) queue_next(d);
     sqlite3_close(d);
 }
 

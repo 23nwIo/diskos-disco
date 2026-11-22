@@ -355,6 +355,13 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         if(c->work_mode != PL_WORK_DLNA){ logf_(c, "stream list: not in the radio work mode (0657 0C), ignored"); return -1; }
         if(!c->slist){ logf_(c, "stream list: track %d (no playback here)", v); return 0; }
         return c->slist(c->ctx, v);
+    case 0x0d15: {        /* play SONG.ID (8 hex) now, on its own */
+        char h[9]; long id = -1;
+        if(f.dlen == 8){ memcpy(h, f.data, 8); h[8] = 0; int ok = 1; for(int k = 0; k < 8; k++) ok &= isxdigit((unsigned char)h[k]) != 0; if(ok) id = strtol(h, NULL, 16); }
+        if(id <= 0 || id > 0x7fffffffL){ c->bad_frames++; logf_(c, "play song: bad frame"); return -1; }
+        if(!c->playsong){ logf_(c, "play song %ld (no playback here)", id); return 0; }
+        return c->playsong(c->ctx, (int)id);
+    }
     case 0x0d11:
         if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }
         if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_UI ? "the UI picks" : "station");

@@ -111,6 +111,7 @@ static void on_signal(int s){ (void)s; g_stop = 1; }
 static int core_transport(void *ctx, int op, long arg){ (void)ctx; return pb_transport(op, arg); }
 static int core_play(void *ctx, int type, int pos, const char *name){ (void)ctx; return pb_play_list(type, pos, name); }
 static int core_upnext(void *ctx, unsigned ack, int party, const int *ids, int n){ (void)ctx; return pb_up_set(ack, party, ids, n); }
+static int core_playsong(void *ctx, int song_id){ (void)ctx; return pb_play_song(song_id); }
 /* 0d10 (the core checked the work mode): the radio mode may still be on its way from the main loop, so it is taken here */
 static int core_radio(void *ctx, const char *name, const char *url){
     (void)ctx;
@@ -298,6 +299,7 @@ int main(int argc, char **argv){
     core.radio = core_radio;
     core.upnext = core_upnext;
     core.slist = core_slist;
+    core.playsong = core_playsong;
     pb_init(&core, QD_SONG_DB, QD_SYSCONFIG_DB, logmsg);
     /* the key actions are kept in SYSCONFIG like the stock player keeps them; the UI sends them only when changed.
      * Not stored: every press changes the volume. */

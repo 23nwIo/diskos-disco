@@ -733,6 +733,41 @@ static void test_upnext(void){
     c.play_mode = PQ_IN_ORDER;
     sqlite3_close(d);
 }
+
+/* 0d15 (Hit&Guess, Jo 2026-11-22): a library song on its own, without a list and without a song.db write; Repeat One
+ * plays it again and again; without a repeat it ends the list; up-next songs follow it; a new list ends it */
+static int song_cb(void *ctx, int id){ (void)ctx; return pb_play_song(id); }
+static void test_playsong(void){
+    pl_core_t c;
+    pl_core_init(&c, cap_send, NULL, NULL);
+    c.upnext = up_cb; c.playsong = song_cb;
+    pb_close(); e_cur[0] = 0; e_state = ENG_STOP; e_title[0] = 0;
+    pb_init(&c, dbp, sysp, quiet);
+    c.end_mode = PL_END_UI;
+    CHECK(pb_play_list(QD_ALL, 0, "") == 0); pb_engine_event();
+    sqlite3 *d = qd_open(dbp);
+    char names0[1024]; snprintf(names0, sizeof names0, "%s", queue_names(d));
+    c.play_mode = PQ_REPEAT_ONE;
+    CHECK(pl_core_handle(&c, "0d15001000000005", 16) == 0 && !strcmp(e_cur, "/s/c.flac") && !strcmp(e_next, "/s/c.flac"));
+    nsent = 0; pb_engine_event();
+    CHECK(sent_count("\\\"pos_id\\\":0") == 1);
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/c.flac") && !strcmp(e_next, "/s/c.flac"));          /* again and again */
+    CHECK(!strcmp(queue_names(d), names0));                                       /* nothing written */
+    c.play_mode = PQ_IN_ORDER; pb_mode_changed();
+    CHECK(e_next[0] == 0);
+    nsent = 0; e_song_ends();
+    CHECK(e_state == ENG_STOP && sent_count("ad11000C0000") == 1);                /* no list: it ends */
+    CHECK(pl_core_handle(&c, "0d15001000000005", 16) == 0); pb_engine_event();
+    { int ids[] = { 3 }; CHECK(up_frame(&c, 0, 0, ids, 1) == 0); }
+    CHECK(!strcmp(e_next, "/s/b1.flac"));
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/b1.flac") && e_next[0] == 0);                         /* then nothing of the old list */
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0 && !strcmp(e_cur, "/s/a1.flac") && !strcmp(e_next, "/s/a2.flac"));
+    CHECK(pl_core_handle(&c, "0d14001000000000", 16) == -1 && pl_core_handle(&c, "0d14001000000999", 16) == -1);
+    c.end_mode = PL_END_STOP;
+    sqlite3_close(d);
+}
 int main(void){
     make_db();
     test_queue();
@@ -744,6 +779,7 @@ int main(void){
     test_slist();
     test_list_end();
     test_upnext();
+    test_playsong();
     unlink(dbp); unlink(sysp);
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     printf("playback_test: all checks passed\n");

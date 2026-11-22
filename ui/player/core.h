@@ -46,6 +46,9 @@ typedef int (*pl_upnext_fn)(void *ctx, unsigned ack, int party, const int *ids, 
 /* 0d14: play the stream list the UI wrote to OPL_BC_LIST (Bandcamp, ui/bandcamp.c) from track idx (0-based), in the
  * radio work mode. 0 or -1. */
 typedef int (*pl_slist_fn)(void *ctx, int idx);
+/* 0d15: play library song SONG.ID now, on its own (no list, nothing written to song.db; Hit&Guess). Repeat One and
+ * Repeat All play it again, otherwise the up-next songs (0d13) follow, then the list end (0d11). 0 or -1. */
+typedef int (*pl_playsong_fn)(void *ctx, int song_id);
 
 typedef struct {
     /* applied settings (Step 2 "do") */
@@ -101,6 +104,7 @@ typedef struct {
     pl_radio_fn radio;             /* set after pl_core_init; NULL = 0d10 is only logged */
     pl_upnext_fn upnext;           /* set after pl_core_init; NULL = 0d13 is only logged */
     pl_slist_fn slist;             /* set after pl_core_init; NULL = 0d14 is only logged */
+    pl_playsong_fn playsong;       /* set after pl_core_init; NULL = 0d15 is only logged */
 } pl_core_t;
 
 void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx);
