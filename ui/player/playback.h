@@ -25,6 +25,9 @@ void pb_close(void);
 int pb_play_list(int type, int pos, const char *name);
 /* 0201 / 0103: PL_T_TOGGLE, PL_T_NEXT, PL_T_PREV, PL_T_SEEK (arg = ms). */
 int pb_transport(int op, long arg);
+/* 0d13: the UI's queue (Up next, core.h pl_upnext_fn), in RAM: SONG.IDs that play before the list goes on (party: the
+ * list ends after them). Replaces the one there; ack leaves out the songs that started before the UI knew. 0 or -1. */
+int pb_up_set(unsigned ack, int party, const int *ids, int n);
 /* Pause (the headphones were pulled). */
 void pb_pause(void);
 /* The play mode (0102) changed: rebuild or drop the shuffle order and the queued next song. */

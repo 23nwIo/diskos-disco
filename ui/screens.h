@@ -44,6 +44,7 @@ void queue_touched(void);
 void queue_open(void);
 void queue_tick(const track_state_t *st, int playing);
 void queue_note_external_play(void);
+void queue_sync(void);                       /* own player (re)started: it gets the queue again (RAM mode, 0d13) */
 void queue_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));   /* /tmp/diskos-queue.log: why each song plays */
 int  queue_next(void);
 void queue_note_prev(void);                  /* the Previous button was pressed */                       /* Next with songs queued: play the first of them (1 = handled) */        /* the user started something: the queue re-anchors after it */

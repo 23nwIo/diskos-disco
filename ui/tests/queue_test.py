@@ -21,6 +21,11 @@ int cfg_get_int(const char *key,int fallback){(void)key;return fallback;}
 static int work_mode,party;
 int simple_cfg_get_int(const char *key,int fallback){return strcmp(key,"work_mode")?cfg_get_int(key,fallback):work_mode;}
 int party_mode(void){return party;}
+static int ram,nframes;static char frame[4000],frames[16][4000];
+int ram_probe(void){return ram;}
+int ipc_send_cmd(const char *f){snprintf(frame,sizeof frame,"%s",f);if(nframes<16)snprintf(frames[nframes],sizeof frames[0],"%s",f);nframes++;return 0;}
+static unsigned up_seq[8];static int up_id[8],up_n;
+int ipc_up_taken(unsigned *seq,int *id){if(!up_n)return 0;*seq=up_seq[0];*id=up_id[0];memmove(up_seq,up_seq+1,sizeof up_seq-sizeof *up_seq);memmove(up_id,up_id+1,sizeof up_id-sizeof *up_id);up_n--;return 1;}
 #include <time.h>
 static int real_ticks;                                   /* 0: the clock stands at 10000 (most tests); 1: real time */
 static uint32_t mono_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint32_t)(t.tv_sec*1000+t.tv_nsec/1000000);}
@@ -172,6 +177,27 @@ int main(int argc,char **argv){
      while(fgets(l,sizeof l,f)){if(strstr(l,"way back: list type 3"))way=1;if(strstr(l,"way back: none (party mode"))party_line=1;}
      fclose(f);assert(way&&party_line);}
     puts("PASS the decision log says why the queue went back or not");
+    /* RAM mode (own player, Jo 2026-11-22): the queue goes to the player as SONG.IDs (0d13), nothing is written - not
+     * the queue file, not the slot in song.db; a start the player reports (ad13) takes the song off; Next and a tap on
+     * a queued song are the player's Next. */
+    queue_clear();g_active=0;g_last_id=0;g_prev2=0;memset(&state,0,sizeof state);ram=1;g_ram=-1;party=0;
+    {FILE *f=fopen(QUEUE_FILE,"w");fputs("#diskos-queue-v2\n",f);fclose(f);}
+    sqlite3_stmt *cs;int slot0;assert(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM CUSTOM_PLAYLIST;",-1,&cs,0)==SQLITE_OK);sqlite3_step(cs);slot0=sqlite3_column_int(cs,0);sqlite3_finalize(cs);
+    nframes=0;old=sends;
+    assert(queue_add_path("/next.flac")==1 && !strcmp(frame,"0d13001900000000" "0" "00000014") && access(QUEUE_FILE,F_OK)!=0);
+    {int two[]={10,11};assert(queue_add_ids_at(two,2,0,7)==2 && !strcmp(frame,"0d13002900000000" "0" "0000000A0000000B00000014"));}
+    party=1;state.have_track=1;strcpy(state.path,"/album.flac");strcpy(state.title,"First");state.pos_id=1;
+    nframes=0;queue_tick(&state,1);assert(nframes==1 && frame[16]=='1');                 /* party switched on: sent again */
+    nframes=0;assert(queue_next()==1 && nframes==2 && !strcmp(frames[1],"0201000C0001") && sends==old);
+    up_seq[0]=1;up_id[0]=10;up_n=1;nframes=0;queue_tick(&state,1);
+    assert(queue_count()==2 && g_q[0].id==11 && queue_now_who()==7 && g_up_ack==1);
+    state.pos_id=0;strcpy(state.title,"Second");queue_tick(&state,1);assert(queue_now_who()==7);  /* its song change keeps who */
+    nframes=0;queue_jump(1);assert(queue_count()==1 && g_q[0].id==20 && !strcmp(frames[0],"0d13001900000001" "1" "00000014") && !strcmp(frames[1],"0201000C0001"));
+    assert(sends==old && restores==0);
+    assert(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM CUSTOM_PLAYLIST;",-1,&cs,0)==SQLITE_OK);sqlite3_step(cs);assert(sqlite3_column_int(cs,0)==slot0);sqlite3_finalize(cs);
+    assert(access(QUEUE_FILE,F_OK)!=0);
+    queue_clear();ram=0;g_ram=-1;party=0;
+    puts("PASS RAM mode: the own player gets the queue, nothing is written, its starts take songs off");
     assert(!leases);sqlite3_close(db);
     puts("HARNESS COMPLETE");
 }
@@ -181,7 +207,7 @@ with tempfile.TemporaryDirectory(prefix='diskos-queue-test-') as tmp:
     (root/'db.c').write_text((app/'musicdb.c').read_text().replace('"/usr/data/fiio/db/song.db"','"'+str(db)+'"'))
     (root/'test.c').write_text(queue+stubs+'\n#include "sqlite3.h"\n'+test)
     exe=root/'test'
-    subprocess.run([os.environ.get('CC','cc'),'-O1','-g','-std=gnu11','-D_GNU_SOURCE','-DLV_CONF_INCLUDE_SIMPLE','-DQUEUE_FILE="'+str(qfile)+'"','-DQUEUE_LOG="'+str(qlog)+'"','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-I'+str(app),str(root/'test.c'),str(root/'db.c'),str(app/'sqlite3.c'),'-pthread','-lm','-ldl','-Wl,--gc-sections','-o',str(exe)],check=True)
+    subprocess.run([os.environ.get('CC','cc'),'-O1','-g','-std=gnu11','-D_GNU_SOURCE','-DLV_CONF_INCLUDE_SIMPLE','-DQUEUE_FILE="'+str(qfile)+'"','-DQUEUE_LOG="'+str(qlog)+'"','-DQUEUE_RAM_PROBE=ram_probe()','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-I'+str(app),str(root/'test.c'),str(root/'db.c'),str(app/'sqlite3.c'),'-pthread','-lm','-ldl','-Wl,--gc-sections','-o',str(exe)],check=True)
     r=subprocess.run([str(exe),str(db)],text=True,capture_output=True,timeout=20)
     print(r.stdout,end='');print(r.stderr,end='')
     assert r.returncode==0 and r.stdout.splitlines()[-1]=='HARNESS COMPLETE'

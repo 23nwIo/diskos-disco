@@ -58,6 +58,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d10 | `0d10<len 4h><name len 4h><name><url>` | diskOS, own player only, in work mode 12: play the Radio app's station (`http://` / `https://`); a new one replaces it; no name and no URL (`0d10000C0000`) = stop | radio.c (`rc_station_frame`) | do (MPD) |
 | 0d11 | `0d11000C000v` | diskOS, own player only: after the list ends (the last song of the list played and nothing follows): 0 stop, 1 the UI picks (the player stops and sends `ad11`; Shuffle All and a playlist), 2 the station of `0d12` (none: stop) | radio.c (`radio_end_sync`: at the player start and after a change) | do |
 | 0d12 | `0d12<len 4h><name len 4h><name><url>` | diskOS, own player only: the station for `0d11` 2, as `0d10`; no URL = none | radio.c (`radio_end_sync`, `rc_station_frame_tag`) | do (stored) |
+| 0d13 | `0d13<len 4h><ack 8h><party 0/1><SONG.ID 8h>...` | diskOS, own player only: the UI's Queue (at most 400 songs), kept in the player's RAM only: they play after the current song, before the list goes on (party 1: then the list ends, `0d11`). Natural ends wait in Repeat One and Single; Next starts the first at once, also on the station after the list. Each song that starts or can't be played leaves it and is told with `ad13`; ack = the last `ad13` number the UI has taken, so a list sent before the UI heard of a start doesn't bring that song back. An up-next song's track frame has `pos_id` 0 | queue.c (`ram_sync`: every change of the queue, party on/off, the player start) | do |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
 | 0713 | `0713000C<v 4h>` | Balance: 0 centre, `00NN` one side, `01NN` the other, N 1..10 | main.c `ui_set_balance` | do |
@@ -82,6 +83,7 @@ example `BT_STATUS`, `MAX_VOL`).
 | `a2` LEN `<json>` | State JSON: `state` (number), `playing_num`, `work_mode`, `love` (bool), `song` = a JSON object **as a string** with `song_name`, `song_artist_name`, `song_album_name`, `song_file_path` (required for a track to count), `song_duration_time` (ms), `song_sample_rate`, `is_dsd`, `pos_id`. `song` as an empty string = no current track. Partial frames (only `state`) are allowed | ipc.c `parse_a2_frame` |
 | `a714000C00<VV 2h>...` | Volume level 0..120 (hex chars 10-11) | ipc.c |
 | `ad11000C0000` | diskOS, own player only: the list ended and `0d11` was 1; the UI starts what follows (ui/radio.c `radio_end_list_ended`) | ipc.c, main.c |
+| `ad130018<n 8h><SONG.ID 8h>` | diskOS, own player only: up-next song SONG.ID (`0d13`) started, or was skipped as unplayable; n counts them from the player's start. The UI takes it off its queue (ui/queue.c `ram_taken`) | ipc.c (`ipc_up_taken`), queue.c |
 | `a607000C<mode 4h>` | Work mode, announced after a `0657` change (8 = local playback) | ipc.c |
 
 ### Measured on a live stream (protocol capture, stock player, 2026-11-15)

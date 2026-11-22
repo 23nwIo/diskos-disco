@@ -111,6 +111,10 @@ page" (the rule is in `ui/party.h`).
 | Upload songs to the SD card | off | Guests get **Upload a song…** (Songs tab menu ⋯, and their **You** tab). **Largest file** (MB, default 100) limits each file. See below. |
 | When the queue is empty | — | The same setting as **After the list ends**: stop, random songs from the library, a radio station or a playlist. |
 
+With the own player the queue lives in the player's RAM: nothing is written to the internal flash for it (no copy of the
+list in song.db, no `/usr/data/diskos_queue.tsv`), and it is empty again after a restart. With the stock player it is
+kept in that file and handed over as a copy of the playing list (up to 4,000 songs).
+
 While the Jukebox is on, the queue plays on its own: the guests' (and the host's) queued songs in their order, never
 shuffled, and when it is empty **When the queue is empty** decides what follows. It never goes back to the list that
 was playing before (outside the Jukebox it does: a song queued during an album plays next, then the album goes on).

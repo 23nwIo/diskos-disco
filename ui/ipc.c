@@ -18,6 +18,16 @@
 
 static mqd_t g_rx=(mqd_t)-1, g_tx=(mqd_t)-1;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+/* ad13 (own player): up-next songs that left the player's queue, not yet taken by queue.c */
+static struct { unsigned seq; int id; } g_up_ring[64];
+static int g_up_n;
+int ipc_up_taken(unsigned *seq, int *id){
+    pthread_mutex_lock(&g_mu);
+    int got = g_up_n > 0;
+    if(got){ *seq = g_up_ring[0].seq; *id = g_up_ring[0].id; memmove(&g_up_ring[0], &g_up_ring[1], (size_t)(g_up_n - 1) * sizeof *g_up_ring); g_up_n--; }
+    pthread_mutex_unlock(&g_mu);
+    return got;
+}
 static track_state_t g_state;
 
 /* ---- player-restart recovery ---------------------------
@@ -317,6 +327,16 @@ static void parse_frame(const char*buf,int n){
         if(!all_hex(h,2)) return;    /* malformed -> keep last volume, don't reset to 0 */
         int v=(int)strtol(h,0,16);
         pthread_mutex_lock(&g_mu); g_state.volume=v; g_state.volume_seq++; pthread_mutex_unlock(&g_mu);
+    } else if(buf[0]=='a'&&buf[1]=='d'&&buf[2]=='1'&&buf[3]=='3' && n>=24){
+        /* "ad130018<seq 8h><SONG.ID 8h>" - diskOS, own player only: an up-next song of the queue (0d13) started or was
+         * skipped as unplayable; queue.c takes it off the queue (ipc_up_taken) */
+        char h1[9], h2[9]; memcpy(h1, buf+8, 8); h1[8]=0; memcpy(h2, buf+16, 8); h2[8]=0;
+        if(!all_hex(h1,8) || !all_hex(h2,8)) return;
+        pthread_mutex_lock(&g_mu);
+        if(g_up_n < (int)(sizeof g_up_ring / sizeof *g_up_ring)){
+            g_up_ring[g_up_n].seq=(unsigned)strtoul(h1,0,16); g_up_ring[g_up_n].id=(int)strtol(h2,0,16); g_up_n++;
+        }
+        pthread_mutex_unlock(&g_mu);
     } else if(buf[0]=='a'&&buf[1]=='d'&&buf[2]=='1'&&buf[3]=='1'){
         /* "ad11000C0000" - diskOS, own player only: the list ended and 0d11 said the UI picks what follows */
         pthread_mutex_lock(&g_mu); g_state.list_end_seq++; pthread_mutex_unlock(&g_mu);

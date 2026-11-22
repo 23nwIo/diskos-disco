@@ -589,6 +589,82 @@ static void test_list_end(void){
     CHECK(!pb_tail_active() && e_state == ENG_STOP && sent_count("ad11000C0000") == 1);
     CHECK(pl_core_handle(&c, "0d11000C0000", 12) == 0 && c.end_mode == PL_END_STOP);
 }
+
+/* The UI's queue in RAM (0d13 / ad13, Jo 2026-11-22): up-next songs play before the list goes on, nothing is written
+ * to song.db for them, a start the UI has not heard of yet never comes back, party mode ends the list after them. */
+static int up_cb(void *ctx, unsigned ack, int party, const int *ids, int n){ (void)ctx; return pb_up_set(ack, party, ids, n); }
+static int up_frame(pl_core_t *c, unsigned ack, int party, const int *ids, int n){
+    char f[512]; int k = snprintf(f, sizeof f, "0d13%04X%08X%c", 8 + 9 + 8 * n, ack, party ? '1' : '0');
+    for(int i = 0; i < n; i++) k += snprintf(f + k, sizeof f - (size_t)k, "%08X", (unsigned)ids[i]);
+    return pl_core_handle(c, f, k);
+}
+static void test_upnext(void){
+    pl_core_t c;
+    pl_core_init(&c, cap_send, NULL, NULL);
+    c.upnext = up_cb;
+    pb_close(); e_cur[0] = 0; e_state = ENG_STOP; e_title[0] = 0;
+    pb_init(&c, dbp, sysp, quiet);
+    c.end_mode = PL_END_STOP;
+    /* SONG.IDs: 1 a2, 2 a1, 3 b1, 4 b2, 5 c, 8 m2-96k; album Alpha = a1, a2, c */
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0); pb_engine_event();
+    sqlite3 *d = qd_open(dbp);
+    int changes0 = count(d, "SELECT COUNT(*) FROM CUSTOM_PLAYLIST;");
+    char names0[1024]; snprintf(names0, sizeof names0, "%s", queue_names(d));
+    { int ids[] = { 3, 4 }; CHECK(up_frame(&c, 0, 0, ids, 2) == 0); }
+    CHECK(!strcmp(e_cur, "/s/a1.flac") && !strcmp(e_next, "/s/b1.flac"));     /* the playing song is never cut */
+    nsent = 0;
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/b1.flac") && sent_count("ad13001800000001" "00000003") == 1 && !strcmp(e_next, "/s/b2.flac"));
+    pb_engine_event();
+    CHECK(sent_count("\\\"pos_id\\\":0") == 1);                               /* an up-next song has no list row */
+    { int ids[] = { 3, 4 }; CHECK(up_frame(&c, 0, 0, ids, 2) == 0); }         /* sent before the UI heard of b1 */
+    CHECK(!strcmp(e_next, "/s/b2.flac"));                                        /* b1 does not come back */
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/b2.flac") && sent_count("ad13001800000002" "00000004") == 1);
+    CHECK(up_frame(&c, 2, 0, NULL, 0) == 0);
+    CHECK(!strcmp(e_next, "/s/a2.flac"));                                        /* then the list goes on after a1 */
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/a2.flac"));
+    CHECK(count(d, "SELECT COUNT(*) FROM CUSTOM_PLAYLIST;") == changes0 && !strcmp(queue_names(d), names0));
+    /* party: after the up-next songs the list ends (here: the UI picks, ad11) */
+    { int ids[] = { 3 }; CHECK(up_frame(&c, 2, 1, ids, 1) == 0); }
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/b1.flac") && e_next[0] == 0);
+    c.end_mode = PL_END_UI; nsent = 0;
+    e_song_ends();
+    CHECK(e_state == ENG_STOP && sent_count("ad11000C0000") == 1);
+    /* another sample rate: started when the song ends (no gapless) */
+    c.end_mode = PL_END_STOP;
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0); pb_engine_event();
+    { int ids[] = { 8 }; CHECK(up_frame(&c, 3, 0, ids, 1) == 0); }
+    CHECK(e_next[0] == 0);
+    e_song_ends();
+    CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && e_state == ENG_PLAY);
+    /* Next plays the first up-next song at once; with nothing loaded Play does */
+    { int ids[] = { 4 }; CHECK(up_frame(&c, 4, 0, ids, 1) == 0); }
+    CHECK(pb_transport(PL_T_NEXT, 0) == 0 && !strcmp(e_cur, "/s/b2.flac"));
+    pb_close(); e_cur[0] = 0; e_state = ENG_STOP;
+    pb_init(&c, dbp, sysp, quiet);
+    { int ids[] = { 5 }; CHECK(up_frame(&c, 0, 0, ids, 1) == 0); }
+    CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && !strcmp(e_cur, "/s/c.flac"));
+    /* the station after the list gives way to the up-next songs */
+    c.end_mode = PL_END_STATION; snprintf(c.end_url, sizeof c.end_url, "https://fm4.example/live"); snprintf(c.end_name, sizeof c.end_name, "FM4");
+    CHECK(pb_play_list(QD_ALBUM, 2, "Alpha") == 0); pb_engine_event();
+    e_song_ends();
+    CHECK(pb_tail_active());
+    { int ids[] = { 4 }; CHECK(up_frame(&c, 1, 0, ids, 1) == 0); }
+    CHECK(!pb_tail_active() && !strcmp(e_cur, "/s/b2.flac"));
+    c.end_mode = PL_END_STOP; c.end_url[0] = 0;
+    CHECK(pl_core_handle(&c, "0d130010000000", 14) == -1);                     /* malformed */
+    /* Repeat One (Hit&Guess) keeps its song: up-next songs wait for Next */
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0); pb_engine_event();
+    c.play_mode = PQ_REPEAT_ONE;
+    { int ids[] = { 3 }; CHECK(up_frame(&c, 9, 0, ids, 1) == 0); }
+    CHECK(!strcmp(e_next, "/s/a1.flac"));
+    CHECK(pb_transport(PL_T_NEXT, 0) == 0 && !strcmp(e_cur, "/s/b1.flac"));
+    c.play_mode = PQ_IN_ORDER;
+    sqlite3_close(d);
+}
 int main(void){
     make_db();
     test_queue();
@@ -598,6 +674,7 @@ int main(void){
     test_resume();
     test_radio();
     test_list_end();
+    test_upnext();
     unlink(dbp); unlink(sysp);
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     printf("playback_test: all checks passed\n");

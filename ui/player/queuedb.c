@@ -223,6 +223,7 @@ static void col_(sqlite3_stmt *st, int i, char *out, size_t cap){
     snprintf(out, cap, "%s", t ? (const char *)t : "");
 }
 
+static int row_love(sqlite3 *d, qd_row_t *r);
 int qd_row(sqlite3 *d, int id, qd_row_t *r){
     memset(r, 0, sizeof *r);
     sqlite3_stmt *st;
@@ -254,6 +255,39 @@ int qd_row(sqlite3 *d, int id, qd_row_t *r){
     sqlite3_finalize(st);
     if(rc == SQLITE_DONE) return 0;
     if(rc != SQLITE_ROW) return -1;
+    return row_love(d, r);
+}
+int qd_song(sqlite3 *d, int song_id, qd_row_t *r){
+    memset(r, 0, sizeof *r);
+    sqlite3_stmt *st;
+    if(sqlite3_prepare_v2(d,
+        "SELECT ID, PATH, COALESCE(TITLE, NAME), ARTIST, ALBUM, GENRE, IFNULL(TRACK,0), IFNULL(IS_CUE,0),"
+        " IFNULL(IS_ISO,0), 0, '', IFNULL(OFFSET,0), IFNULL(DURATION,0)"   /* IS_M3U/M3U_PATH: not in every SONG schema */
+        " FROM SONG WHERE ID=?1;", -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, song_id);
+    int rc = sqlite3_step(st);
+    if(rc == SQLITE_ROW){
+        r->song_id = sqlite3_column_int(st, 0);
+        col_(st, 1, r->path, sizeof r->path);
+        col_(st, 2, r->title, sizeof r->title);
+        col_(st, 3, r->artist, sizeof r->artist);
+        col_(st, 4, r->album, sizeof r->album);
+        col_(st, 5, r->genre, sizeof r->genre);
+        r->track = sqlite3_column_int(st, 6);
+        r->is_cue = sqlite3_column_int(st, 7);
+        r->is_iso = sqlite3_column_int(st, 8);
+        r->is_m3u = sqlite3_column_int(st, 9);
+        col_(st, 10, r->m3u_path, sizeof r->m3u_path);
+        r->offset = sqlite3_column_int64(st, 11);
+        r->duration_ms = sqlite3_column_int64(st, 12);
+    }
+    sqlite3_finalize(st);
+    if(rc == SQLITE_DONE) return 0;
+    if(rc != SQLITE_ROW) return -1;
+    return row_love(d, r);
+}
+static int row_love(sqlite3 *d, qd_row_t *r){
+    sqlite3_stmt *st;
     /* favourite: MY_LOVE is keyed by (PATH, TRACK); a missing table only means "no favourites" */
     if(sqlite3_prepare_v2(d, "SELECT 1 FROM MY_LOVE WHERE PATH=?1 AND IFNULL(TRACK,0)=?2 LIMIT 1;", -1, &st, NULL) == SQLITE_OK){
         sqlite3_bind_text(st, 1, r->path, -1, SQLITE_STATIC);

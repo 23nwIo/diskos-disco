@@ -14,6 +14,11 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   shuffled. With a playing list of more than 4,000 songs, queued songs now also start at the next song change (they
   waited for Next or the end of the list). `/tmp/diskos-queue.log` says why each song plays. Not yet tested on a Disc.
 
+- Queue with the own player: the player keeps the queue in its memory and plays it before its list goes on (party
+  mode: then After the List Ends), so queuing no longer writes to the internal flash (no copy of the playing list in
+  the music database per queued song, no queue file) and works with libraries of any size. The queue is empty after a
+  restart. Repeat One and Single keep their song until Next. Not yet tested on a Disc.
+
 - Music (Stone and Ring): the blurred cover behind Now Playing is now washed with the theme's background colour just
   enough that title, artist, album and times stay readable over any cover: in light themes a dark or colourful cover
   becomes a light tint of its colour (light Stone showed dark text on a darkened cover before), in dark themes a light

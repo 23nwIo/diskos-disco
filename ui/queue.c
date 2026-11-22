@@ -24,6 +24,7 @@
 #include "theme_kit.h"
 #include "zune_dial.h"
 #include "party.h"
+#include "own_player.h"
 LV_FONT_DECLARE(font_zune_light_21)
 LV_FONT_DECLARE(font_zune_regular_19)
 LV_FONT_DECLARE(font_zune_regular_16)
@@ -92,6 +93,21 @@ void queue_log(const char *fmt, ...){
  * kept going back to the song after the last Hit&Guess song instead of the radio). Its order is the guests' (round
  * robin), never shuffled. */
 static int party_on(void){ return party_mode() == 1; }
+/* RAM mode (own player; Jo, 2026-11-22): the queue goes to the player as it is (0d13: SONG.IDs), the player keeps it in
+ * RAM and plays it before its list goes on (in party mode: then the list ends). No copy of the list in song.db, no
+ * /usr/data/diskos_queue.tsv - both are on the internal flash; the queue is lost at a reboot (Jo: fine). The player
+ * tells each song that left its queue (ad13, ipc_up_taken); it leaves this one then. The stock player keeps the copy. */
+#ifndef QUEUE_RAM_PROBE
+#define QUEUE_RAM_PROBE opl_running()
+#endif
+static int g_ram = -1; static uint32_t g_ram_at;
+static int ram_mode(void){
+    if(g_ram < 0 || lv_tick_elaps(g_ram_at) > 5000){ g_ram = QUEUE_RAM_PROBE ? 1 : 0; g_ram_at = lv_tick_get() | 1; }   /* a /proc scan: not every frame */
+    return g_ram;
+}
+static unsigned g_up_ack;                          /* the last ad13 number taken */
+static int g_up_sent_party = -1;
+static void ram_sync(void);
 /* ---------------------------------------------------------------- storage */
 /* Version 2 hex-encodes strings, preserving tabs, newlines and UTF-8 bytes. */
 static int queue_hex_write(FILE *f, const char *s){
@@ -117,6 +133,11 @@ static int queue_number(const char *s, long *v){
 }
 static void save(void){
     if(!g_loaded){ ui_toast("Queue unavailable - try again"); return; }
+    if(ram_mode()){                                /* RAM only: an old file must not bring a stale queue back */
+        static int gone;
+        if(!gone && (unlink(QUEUE_FILE) == 0 || errno == ENOENT)) gone = 1;
+        return;
+    }
     char tmp[sizeof(QUEUE_FILE) + 16];
     snprintf(tmp, sizeof tmp, "%s.XXXXXX", QUEUE_FILE);
     int fd = mkstemp(tmp);
@@ -187,6 +208,7 @@ unsigned queue_generation(void){ return g_gen; }
 static void changed(void){                         /* the queue's content changed */
     g_gen++;
     save();
+    if(ram_mode()) ram_sync();
     ui_queue_changed();                            /* the Now Playing badge */
     /* nothing else: the song that's playing is left alone; the queue is applied when it ends */
     if(screen_current() == SCR_QUEUE) view_reload();
@@ -224,6 +246,30 @@ static int prune_missing(int *index){
     }
     return dropped;
 }
+/* RAM mode: the whole queue to the player (0d13 <ack 8h><party 0/1><SONG.ID 8h>...); songs without an ID are left out. */
+static void ram_sync(void){
+    static char f[8 + 9 + 8 * QMAX + 1];
+    int party = party_on(), n = 0, k = snprintf(f, sizeof f, "0d13LLLL%08X%c", g_up_ack, party ? '1' : '0');
+    for(int i = 0; i < g_qn; i++) if(g_q[i].id > 0){ k += snprintf(f + k, sizeof f - (size_t)k, "%08X", (unsigned)g_q[i].id); n++; }
+    char len[5]; snprintf(len, sizeof len, "%04X", (unsigned)k); memcpy(f + 4, len, 4);
+    if(ipc_send_cmd(f) < 0){ queue_log("up next: the player didn't take the queue (%d songs)", n); g_up_sent_party = -1; return; }
+    g_up_sent_party = party;
+}
+void queue_sync(void){ if(ram_mode()){ load(); ram_sync(); } }   /* the player (re)started: it has no queue */
+static int g_now_song;                              /* RAM mode: the SONG.ID of the queued song playing now */
+/* RAM mode: the player started up-next song id (or skipped it as unplayable): it leaves the queue. */
+static void ram_taken(unsigned seq, int id){
+    g_up_ack = seq;
+    for(int i = 0; i < g_qn; i++) if(g_q[i].id == id){
+        queue_log("started: %s - %s (guest %d)%s", QNAME(&g_q[i]), g_q[i].who, i ? " - it was not first here" : "");
+        g_now_who = g_q[i].who; g_now_song = id;
+        memmove(&g_q[i], &g_q[i + 1], (size_t)(g_qn - i - 1) * sizeof g_q[0]); g_qn--;
+        g_gen++; ui_queue_changed();
+        if(screen_current() == SCR_QUEUE) view_reload();
+        return;
+    }
+    queue_log("the player started song %d of an older queue (no longer queued here)", id);
+}
 int queue_count(void){ load(); return g_qn; }
 /* MPD server (mpd.c): read one queued song. 1 = filled. */
 int queue_item(int i, char *path, int pcap, char *title, int tcap, char *artist, int acap, long *dur_ms){
@@ -234,7 +280,7 @@ int queue_item(int i, char *path, int pcap, char *title, int tcap, char *artist,
     if(dur_ms) *dur_ms = g_q[i].dur;
     return 1;
 }
-int queue_active(void){ return g_active; }          /* the player plays our copy (queued songs follow the current one in it) */
+int queue_active(void){ return g_active && !ram_mode(); }          /* the player plays our copy (queued songs follow the current one in it) */
 static int add_one(int id, const char *path, const char *title, const char *artist, long dur){
     if(g_qn >= QMAX || !path || !path[0]) return 0;
     size_t pl = strlen(path); if(pl > 4 && !strcasecmp(path + pl - 4, ".m4b")) return 0;   /* never an audiobook */
@@ -455,6 +501,12 @@ int queue_next(void){
     if(g_qn > 0) prune_missing(NULL);
     if(g_qn == 0) return 0;                                       /* nothing (left) queued: the player's own Next */
     if(!ui_local_playback_allowed() || modes_output_busy()) return -1;
+    if(ram_mode()){                                               /* the player has the queue: its Next starts it */
+        ram_sync();
+        if(ipc_send_cmd("0201000C0001") < 0) return -1;
+        queue_log("next: the player starts the first queued song (%s - %s)", QNAME(&g_q[0]));
+        return 1;
+    }
     track_state_t st; ipc_get_state(&st);
     if(!g_active) g_resume_type = -1;                            /* a running queue keeps its way back */
     if(!st.have_track) return start_fresh(0);                                /* nothing loaded: the queue is the list */
@@ -475,6 +527,12 @@ void queue_jump(int i){                                       /* play queued son
     if(!ui_local_playback_allowed() || modes_output_busy()) return;
     load(); if(i < 0 || i >= g_qn) return;
     prune_missing(&i); if(i < 0 || i >= g_qn) return;           /* the tapped song itself is not on the card */
+    if(ram_mode()){
+        if(i > 0){ queue_log("jump: %d queued songs before %s - %s skipped", i, QNAME(&g_q[i])); memmove(&g_q[0], &g_q[i], (size_t)(g_qn - i) * sizeof g_q[0]); g_qn -= i; changed(); }
+        else ram_sync();
+        if(ipc_send_cmd("0201000C0001") < 0) ui_toast("Couldn't start queued song - try again");
+        return;
+    }
     track_state_t st; ipc_get_state(&st);
     int current = st.have_track ? mdb_queue_current_id(st.path,st.pos_id,st.title) : 0;
     /* The queued song always starts. If the playing song can't be found in the library, or the list it plays from
@@ -499,12 +557,18 @@ void queue_jump(int i){                                       /* play queued son
 }
 void queue_tick(const track_state_t *st, int playing){
     int was_playing = g_was_playing; g_was_playing = playing;
+    if(ram_mode()){
+        load();
+        unsigned seq; int id;
+        while(ipc_up_taken(&seq, &id)) ram_taken(seq, id);
+        if(g_up_sent_party != party_on() && g_loaded) ram_sync();      /* party on/off, or a failed send: again */
+    }
     if(!st || !st->have_track || !ui_local_playback_allowed() || modes_output_busy()) return;
     load();
     /* The station after the list (own player, Settings > Playback > After the List Ends) plays as one endless song:
      * songs queued meanwhile start at once (queue_next: the queue plays on its own), and the station comes back when
      * they have ended. */
-    if(g_qn > 0 && playing && mdb_is_stream_path(st->path)){
+    if(!ram_mode() && g_qn > 0 && playing && mdb_is_stream_path(st->path)){
         static uint32_t tried;
         if(tried && lv_tick_elaps(tried) < 3000) return;
         tried = lv_tick_get() | 1;
@@ -527,6 +591,12 @@ void queue_tick(const track_state_t *st, int playing){
     int current = k_id;
     if(!current) return;  /* unverified subtrack metadata never advances the editable queue */
     if(current != g_last_id){                        /* a new song began */
+        if(ram_mode()){                              /* the player plays the queue itself */
+            if(current != g_now_song){ g_now_who = 0; g_now_song = 0; }
+            queue_log("song change: %s - %s (song %d, list row %d), %d queued", st->artist, st->title, current, st->pos_id, g_qn);
+            g_prev2 = g_last_id; g_last_id = current; g_last_pos = st->position_ms; g_last_dur = st->duration_ms;
+            return;
+        }
         g_now_who = 0;                               /* pop_through() below sets it when it is a queued one */
         int prev=g_last_id;
         int before=g_prev2;

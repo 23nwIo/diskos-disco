@@ -3,6 +3,7 @@
 #include "core.h"
 #include "proto.h"
 #include <stdarg.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -329,6 +330,25 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         memcpy(c->end_url, f.data + 4 + nl, (size_t)ul); c->end_url[ul] = 0;
         logf_(c, "end station: \"%s\" %s", c->end_name, c->end_url[0] ? c->end_url : "(none)");
         return 0;
+    }
+    case 0x0d13: {        /* the UI's queue: ack (8 hex), party (1 char), then one SONG.ID per 8 hex */
+        if(f.dlen < 9 || (f.dlen - 9) % 8 || (f.data[8] != '0' && f.data[8] != '1') || (f.dlen - 9) / 8 > PL_UP_MAX){
+            c->bad_frames++; logf_(c, "up next: bad frame (%d chars)", f.dlen); return -1;
+        }
+        int n = (f.dlen - 9) / 8, ids[PL_UP_MAX];
+        char h[9]; h[8] = 0;
+        memcpy(h, f.data, 8);
+        for(int k = 0; k < 8; k++) if(!isxdigit((unsigned char)h[k])){ c->bad_frames++; logf_(c, "up next: bad ack"); return -1; }
+        unsigned ack = (unsigned)strtoul(h, NULL, 16);
+        for(int i = 0; i < n; i++){
+            memcpy(h, f.data + 9 + 8 * i, 8);
+            for(int k = 0; k < 8; k++) if(!isxdigit((unsigned char)h[k])){ c->bad_frames++; logf_(c, "up next: bad song id"); return -1; }
+            long id = strtol(h, NULL, 16);
+            if(id <= 0 || id > 0x7fffffffL){ c->bad_frames++; logf_(c, "up next: bad song id"); return -1; }
+            ids[i] = (int)id;
+        }
+        if(!c->upnext){ logf_(c, "up next: %d songs (no playback here)", n); return 0; }
+        return c->upnext(c->ctx, ack, f.data[8] == '1', ids, n);
     }
     case 0x0d11:
         if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }

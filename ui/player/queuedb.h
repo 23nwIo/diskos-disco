@@ -49,6 +49,8 @@ typedef struct {
 } qd_row_t;
 /* Row id of LIST_SONG_0. 1 found, 0 not there, -1 error. */
 int qd_row(sqlite3 *db, int id, qd_row_t *r);
+/* The same for a library song (SONG.ID, the UI's queue): r->id is 0 (no queue row). 1 found, 0 not there, -1 error. */
+int qd_song(sqlite3 *db, int song_id, qd_row_t *r);
 
 /* MEMORY_PLAY, the resume bookmark (one row, ID 1; the stock player's statements, `strings mq_player`):
  * MUSIC_ID = SONG.ID, POSITION in ms. qd_memory_get: 1 and the values, 0 no row, -1 error (no table). */
