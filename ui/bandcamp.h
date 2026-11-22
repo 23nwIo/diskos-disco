@@ -29,6 +29,12 @@ void bandcamp_stop(void);                       /* back to local playback */
  * tags and the cover inside, plus cover.jpg; each file goes into the library once it is saved. One download at a time,
  * on its own worker; the rest wait. 0 queued, -1 refused (*why). */
 int  bandcamp_download(const char *url, int idx, const char **why);
+/* The quality of downloads (diskos.conf bc_quality, Jo: the best unless chosen otherwise): free / name-your-price
+ * releases come from Bandcamp's own download in that format; everything else, and when that fails, is the stream. */
+enum { BC_Q_BEST, BC_Q_V0, BC_Q_320, BC_Q_STREAM };
+int  bandcamp_quality(void);
+void bandcamp_set_quality(int q);
+const char *bandcamp_quality_name(int q);
 void bandcamp_download_cancel(void);            /* the waiting ones go, the running one stops after its track */
 int  bandcamp_downloading(void);                /* downloads waiting or running */
 /* All of it as JSON for GET api/bandcamp (malloc'd): {"search":{...},"page":{...},"now":{...},"downloads":[...]} */

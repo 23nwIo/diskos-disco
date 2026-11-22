@@ -396,6 +396,8 @@ static void test_core(void){
     r = req("POST", p("/api/bandcamp"), "action=download&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_DOWNLOAD && r.cmd.pos == -1);
     r = req("POST", p("/api/bandcamp"), "action=download&url=https%3A%2F%2Fa.bandcamp.com%2Ftrack%2Fy&track=0"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_DOWNLOAD && r.cmd.pos == 0);
     r = req("POST", p("/api/bandcamp"), "action=stop_downloads"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_DL_STOP);
+    r = req("POST", p("/api/bandcamp"), "action=quality&q=2"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_QUALITY && r.cmd.pos == 2);
+    CHECK(req("POST", p("/api/bandcamp"), "action=quality&q=4").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/bandcamp"), "action=play").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/bandcamp"), "action=stop"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_STOP);
     CHECK(req("POST", p("/api/bandcamp"), "action=dance").kind == RMT_R_BAD_PARAM && req("PUT", p("/api/bandcamp"), NULL).kind == RMT_R_BAD_METHOD);

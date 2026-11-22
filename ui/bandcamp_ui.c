@@ -49,7 +49,7 @@ static char g_play_state[16];
 #define ROW_W 268
 #define ROW_H TH_ROW_H
 /* the action rows (ids < 0); items are ids >= 0 */
-enum { A_SEARCH = -1, A_DOWNLOADS = -2, A_STOP = -3, A_RESULTS = -4, A_PLAYALL = -5, A_SAVEALL = -6, A_DLSTOP = -7 };
+enum { A_SEARCH = -1, A_DOWNLOADS = -2, A_STOP = -3, A_RESULTS = -4, A_PLAYALL = -5, A_SAVEALL = -6, A_DLSTOP = -7, A_QUALITY = -8 };
 
 static view_t *top(void){ return g_depth ? &g_st[g_depth - 1] : NULL; }
 static void view_free(view_t *v){ free(v->items); free(v->tracks); v->items = NULL; v->tracks = NULL; v->n = 0; }
@@ -158,6 +158,7 @@ static void rebuild(void){
         if(bandcamp_active()) add_row(A_STOP, LV_SYMBOL_CLOSE, "Stop Bandcamp", "Back to your music", 1, 0);
         int st; bc_item_t one; if(g_query[0] && (bandcamp_hits(&one, 1, &st) > 0 || st == BC_BUSY))
             add_row(A_RESULTS, LV_SYMBOL_LIST, "Last search", g_query, 1, 0);
+        add_row(A_QUALITY, LV_SYMBOL_SETTINGS, "Download quality", bandcamp_quality_name(bandcamp_quality()), 1, 0);
         if(!opl_running()) note("Bandcamp plays with the diskOS player", "Settings > About > Player");
     } else if(v->v == V_HITS){
         title("Results");
@@ -175,7 +176,7 @@ static void rebuild(void){
             if(plays){
                 add_row(A_PLAYALL, LV_SYMBOL_PLAY, "Play all", v->rel.artist, 1, 0);
                 add_row(A_SAVEALL, LV_SYMBOL_DOWNLOAD, v->rel.type == 't' ? "Save to the SD card" : "Save the album",
-                        "To the SD card, 128 kbit/s", 1, 0);
+                        v->rel.free_dl[0] && bandcamp_quality() != BC_Q_STREAM ? "To the SD card, free download" : "To the SD card, 128 kbit/s", 1, 0);
             }
             if(!v->n) note("No tracks", NULL);
             else if(!plays) note("The artist doesn't let these be streamed", NULL);
@@ -262,6 +263,7 @@ static void row_cb(lv_event_t *e){
     case A_RESULTS: { view_t *h = push(V_HITS, "Results"); fill_hits(h); rebuild(); if(h->state == BC_BUSY) poll_start(); return; }
     case A_PLAYALL: play(v->rel.url, -1); return;
     case A_SAVEALL: save(v->rel.url, -1, v->rel.title); return;
+    case A_QUALITY: bandcamp_set_quality((bandcamp_quality() + 1) % (BC_Q_STREAM + 1)); rebuild(); return;   /* tap: the next one */
     case A_DLSTOP: bandcamp_download_cancel(); ui_toast("The downloads stop after this track"); rebuild(); return;
     }
     if(id < 0 || id >= v->n) return;

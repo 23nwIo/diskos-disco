@@ -526,3 +526,61 @@ unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total,
     *len = o;
     return out;
 }
+
+/* ================================================================ Bandcamp's own download */
+int bc_parse_dlpage(const char *html, const char *const *prefs, char *enc, size_t en, char *url, size_t un, char *type, size_t tn,
+                    long long *bytes){
+    *bytes = 0;
+    char *js = bc_html_attr(html, "data-blob");
+    if(!js) return -1;
+    jsmntok_t *t; int nt = parse(js, strlen(js), &t), got = -1;
+    if(nt > 0){
+        int items = obj_get(js, t, nt, 0, "digital_items");
+        int it = items >= 0 && t[items].type == JSMN_ARRAY && t[items].size > 0 ? items + 1 : -1;
+        int dl = obj_get(js, t, nt, it, "downloads");
+        for(int p = 0; dl >= 0 && prefs[p] && got < 0; p++){
+            int f = obj_get(js, t, nt, dl, prefs[p]);
+            char v[BC_URL_LEN]; get_str(js, t, nt, f, "url", v, sizeof v);
+            if(f >= 0 && bc_url_ok(v)){
+                snprintf(url, un, "%s", v); snprintf(enc, en, "%s", prefs[p]);
+                get_str(js, t, nt, it, "download_type_str", type, tn);
+                if(!type[0]) get_str(js, t, nt, it, "type", type, tn);
+                get_str(js, t, nt, f, "size_mb", v, sizeof v);
+                char *e = NULL; double x = strtod(v, &e);
+                if(e && x > 0) *bytes = (long long)(x * (!strncmp(e, "GB", 2) ? 1e9 : !strncmp(e, "KB", 2) ? 1e3 : 1e6));
+                got = 0;
+            }
+        }
+        free(t);
+    }
+    free(js);
+    return got;
+}
+int bc_stat_url(const char *url, unsigned rnd, char *out, size_t n){
+    const char *d = strstr(url, "/download/");
+    if(!d || !bc_url_ok(url)) return -1;
+    int w = snprintf(out, n, "%.*s/statdownload/%s&.vrs=1&.rand=%u", (int)(d - url), url, d + 10, rnd);
+    return w < 0 || (size_t)w >= n ? -1 : 0;
+}
+int bc_parse_stat(const char *text, char *url, size_t n){
+    const char *a = strstr(text, "statResult"), *b = NULL;
+    a = strchr(a ? a : text, '{');
+    if(!a) return -1;
+    int depth = 0, str = 0;                                   /* the object's end: braces outside strings */
+    for(const char *c = a; *c && !b; c++){
+        if(str){ if(*c == '\\' && c[1]) c++; else if(*c == '"') str = 0; }
+        else if(*c == '"') str = 1;
+        else if(*c == '{') depth++;
+        else if(*c == '}' && --depth == 0) b = c;
+    }
+    if(!b) return -1;
+    size_t len = (size_t)(b - a + 1);
+    jsmntok_t *t; int nt = parse(a, len, &t), r = -1;
+    if(nt <= 0) return -1;
+    char res[16], v[BC_URL_LEN];
+    get_str(a, t, nt, 0, "result", res, sizeof res);
+    if(!strcmp(res, "ok")){ get_str(a, t, nt, 0, "download_url", v, sizeof v); if(bc_url_ok(v)){ snprintf(url, n, "%s", v); r = 1; } }
+    else { get_str(a, t, nt, 0, "retry_url", v, sizeof v); if(bc_url_ok(v)){ snprintf(url, n, "%s", v); r = 0; } }
+    free(t);
+    return r;
+}

@@ -176,8 +176,34 @@ static void test_download(void){
     free(h);
 }
 
+static void test_free(void){
+    char *h = slurp("free-album.html", NULL);
+    bc_release_t r; static bc_track_t t[BC_MAX_TRACKS];
+    CHECK(h && bc_parse_release(h, &r, t, BC_MAX_TRACKS) == 2 && !strcmp(r.date, "2026-11-21")
+          && !strcmp(r.free_dl, "https://bandcamp.com/download?fsig=455733ef057f87a839d54fae6ed122ff&id=3404045742&ts=1795384497.4001988189&type=album"));
+    free(h);
+    h = slurp("free-download.html", NULL);
+    char enc[16], url[BC_URL_LEN], type[16]; long long bytes = 0;
+    static const char *const best[] = { "flac", "mp3-v0", "mp3-320", NULL }, *const odd[] = { "nope", "mp3-320", NULL }, *const none[] = { "nope", NULL };
+    CHECK(h && bc_parse_dlpage(h, best, enc, sizeof enc, url, sizeof url, type, sizeof type, &bytes) == 0 && !strcmp(enc, "flac") && !strcmp(type, "album") && bytes == 118000000
+          && !strcmp(url, "https://popplers5.bandcamp.com/download/album?enc=flac&fsig=c615db790b6950ede8ad6194843ae181&id=3404045742&ts=1795384585.0"));
+    CHECK(h && bc_parse_dlpage(h, odd, enc, sizeof enc, url, sizeof url, type, sizeof type, &bytes) == 0 && !strcmp(enc, "mp3-320") && bytes == 64400000 && strstr(url, "enc=mp3-320&"));
+    CHECK(h && bc_parse_dlpage(h, none, enc, sizeof enc, url, sizeof url, type, sizeof type, &bytes) == -1);
+    free(h);
+    char s[BC_URL_LEN];
+    CHECK(bc_stat_url("https://popplers5.bandcamp.com/download/album?enc=flac&fsig=ab&id=1&ts=2.0", 7, s, sizeof s) == 0
+          && !strcmp(s, "https://popplers5.bandcamp.com/statdownload/album?enc=flac&fsig=ab&id=1&ts=2.0&.vrs=1&.rand=7"));
+    CHECK(bc_stat_url("https://x.bandcamp.com/album/y", 7, s, sizeof s) == -1);
+    /* the reply as the Disc got it (2026-11-22): expired, with a fresh link */
+    const char *err = "if ( window.Downloads ) { Downloads.statResult( {\"result\":\"err\",\"retry_url\":\"https://popplers5.bandcamp.com/download/album?enc=flac&fsig=b9781d84ed440deb95e8fd9060031d9a&id=3404045742&ts=1795384667.3599804522\",\"errortype\":\"ExpiredFreeDownloadError\",\"date\":\"2026-11-22 21:57:47 UTC\",\"url\":\"popplers5.bandcamp.com/statdownload/album?enc=flac\",\"host\":\"scruffycentral-b1hb-2\"} ) };";
+    CHECK(bc_parse_stat(err, s, sizeof s) == 0 && !strcmp(s, "https://popplers5.bandcamp.com/download/album?enc=flac&fsig=b9781d84ed440deb95e8fd9060031d9a&id=3404045742&ts=1795384667.3599804522"));
+    CHECK(bc_parse_stat("Downloads.statResult( {\"result\":\"ok\",\"download_url\":\"https://p4.bcbits.com/download/album/x/y.zip?a=1\"} )", s, sizeof s) == 1 && !strcmp(s, "https://p4.bcbits.com/download/album/x/y.zip?a=1"));
+    CHECK(bc_parse_stat("<html>busy</html>", s, sizeof s) == -1);
+}
+
 int main(void){
     test_urls();
+    test_free();
     test_download();
     test_search();
     test_album();

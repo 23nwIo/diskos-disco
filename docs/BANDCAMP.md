@@ -14,7 +14,8 @@ Previous / Next / seek work.
 
 On the Disc: the app **Bandcamp** (Apps, `builtin:bandcamp`, `ui/bandcamp_ui.c`, SCR_BANDCAMP), a plain list in the
 Radio screen's look:
-- **Search Bandcamp** (the keyboard), **Downloads**, **Stop Bandcamp** (while it plays), **Last search**.
+- **Search Bandcamp** (the keyboard), **Downloads**, **Download quality**, **Stop Bandcamp** (while it plays),
+  **Last search**.
 - Results: an artist or album opens its page; a track plays (hold: save it).
 - An artist: the releases. A release: **Play all**, **Save the album**, the tracks (tap: play from it, hold: save it).
 - Downloads: waiting / saving n/N / saved / failed with the reason, **Stop the downloads**.
@@ -69,16 +70,23 @@ and playing go on meanwhile.
 - Where: `<card>/BandcampDownloads/<Artist>/<Album>/NN Title.mp3` and `cover.jpg` (1200 px, `a<art_id>_10.jpg`). A
   track page without an album uses the track's title as the folder. Names are made safe for FAT32 and ext4
   (`bc_safe_name`: no `/ \ : * ? " < > |`, at most 100 bytes). A file already there is not downloaded again.
-- What: the 128 kbit/s stream (Jo: "Variante B", also for paid releases), its own ID3 tag (if any) replaced by an
-  ID3v2.4 tag (UTF-8) with title, artist, album, album artist, track n/N, the release date and the cover (APIC).
+- Quality (Jo: the best unless chosen otherwise): **Download quality** on the Disc's Bandcamp screen (tap: the next
+  one) or the Remote page's menu; diskos.conf `bc_quality` 0 Best (FLAC, else MP3 V0 / 320 / Vorbis / AAC), 1 MP3 V0,
+  2 MP3 320, 3 Stream. A free / name-your-price release (the page's `freeDownloadPage`) comes from Bandcamp's own
+  download in that format: the download page's `data-blob` `digital_items[0].downloads[enc].url`, then
+  `/statdownload/...&.vrs=1&.rand=N` - its first answer is always `ExpiredFreeDownloadError` with a `retry_url`, the
+  next one `"result":"ok"` with `download_url` (checked on the Disc 2026-11-22) - then that URL: a ZIP for an album
+  (`application/zip`, Bandcamp's own names "Artist - Album - NN Title.flac", tags and cover inside), the file for a
+  track. The ZIP is unpacked with `unzip -n` (BusyBox) into the album's folder and deleted; nothing there is
+  overwritten. One track of a free album uses its track page's own free download.
+- Everything else (paid releases, Jo: "Variante B"), the Stream setting, and whenever the free download fails: the
+  128 kbit/s stream, its own ID3 tag (if any) replaced by an ID3v2.4 tag (UTF-8) with title, artist, album, album
+  artist, track n/N, the release date and the cover (APIC).
 - Then: each saved file goes into the library at once (`scanner_add_file`, as the party uploads); while a scan runs
   they wait for it.
 - The card: the SD lease (`sd_io_begin`) is held while a track downloads and is written, as for an upload; at least
   64 MB stay free. wget writes to `.bandcamp-download` in the folder, the tagged file is written as `<name>.part`
   and renamed.
-- Not yet: the best quality for free / name-your-price releases (`freeDownloadPage`, FLAC or MP3 V0 from Bandcamp's
-  own download page). Its pages were not available to check yet, so every download is the stream for now; the page's
-  `freeDownloadPage` is already parsed (`bc_release_t.free_dl`).
 
 ## Files
 
@@ -93,7 +101,5 @@ and playing go on meanwhile.
 
 ## Next
 
-- Downloads in the best quality for free / name-your-price releases (Bandcamp's own download, a ZIP for albums), with
-  a quality choice; needs a free download page fetched on the Disc to check the format.
 - Step 2: a login (the `identity` cookie, kept in `/usr/data`, never on the card) for the collection and purchased
   music in full quality.

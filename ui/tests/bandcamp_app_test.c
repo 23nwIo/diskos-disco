@@ -31,6 +31,9 @@ static int card_ok = 1, scanning; static char added[16][512]; static int nadded;
 int  sd_io_begin(void){ return card_ok; }
 void sd_io_end(void){}
 int  scanner_active(void){ return scanning; }
+static int cfg_q = 0;
+int  cfg_get_int(const char *k, int def){ (void)def; return !strcmp(k, "bc_quality") ? cfg_q : def; }
+int  cfg_set_int(const char *k, int v){ if(!strcmp(k, "bc_quality")) cfg_q = v; return 0; }
 int  scanner_add_file(const char *p){ if(nadded < 16) snprintf(added[nadded++], sizeof added[0], "%s", p); return nadded; }
 static char *file_text(const char *p, size_t *len){
     FILE *f = fopen(p, "rb"); if(!f) return NULL;
@@ -143,6 +146,20 @@ int main(void){
     CHECK(wait_dl("The SD card is not available right now"));
     card_ok = 1;
     CHECK(bandcamp_downloading() == 0);
+    /* the best quality: a free album comes as Bandcamp's FLAC ZIP (the first stat answer: expired, then ok) */
+    bandcamp_set_quality(BC_Q_BEST); CHECK(cfg_q == BC_Q_BEST && bandcamp_quality() == BC_Q_BEST);
+    nadded = 0;
+    CHECK(bandcamp_download("https://skycolourgirl.bandcamp.com/album/ambulocetus", -1, &why) == 0);
+    CHECK(wait_dl("\"state\":\"done\",\"track\":-1,\"done\":2,\"total\":2"));
+    for(int i = 0; i < 20 && nadded < 2; i++){ bandcamp_tick(); usleep(10000); }
+    { const char *fd = "/tmp/bc_test_card/BandcampDownloads/Skycolourgirl/Ambulocetus";
+      char p[600]; size_t len;
+      snprintf(p, sizeof p, "%s/Skycolourgirl - Ambulocetus - 01 Ambulocetus.flac", fd); char *b = file_text(p, &len);
+      CHECK(b && len >= 4 && !memcmp(b, "fLaC", 4));
+      CHECK(nadded == 2 && (strstr(added[0], ".flac") && strstr(added[1], ".flac")));
+      snprintf(p, sizeof p, "%s/cover.jpg", fd); b = file_text(p, &len);
+      CHECK(b && len == 9 && !memcmp(b, "\377\330\377\340cover", 9));   /* ours was there first: theirs isn't written over */
+      snprintf(p, sizeof p, "%s/.bandcamp-download", fd); CHECK(access(p, F_OK) != 0); }
     if(system("rm -rf /tmp/bc_test_card")) fails++;
 
     /* stop: back to local playback */

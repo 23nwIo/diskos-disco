@@ -533,6 +533,7 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
             }
             else if(!strcmp(a, "stop")){ rt.cmd.sub = RMT_BC_STOP; ok = 1; }
             else if(!strcmp(a, "stop_downloads")){ rt.cmd.sub = RMT_BC_DL_STOP; ok = 1; }
+            else if(!strcmp(a, "quality")){ long q = -1; rt.cmd.sub = RMT_BC_QUALITY; ok = param(r, "q", &q) == 0 && q >= 0 && q <= 3; rt.cmd.pos = q; }
         }
         if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
         rt.kind = RMT_R_CMD;

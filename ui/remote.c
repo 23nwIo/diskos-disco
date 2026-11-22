@@ -1115,6 +1115,7 @@ static int bandcamp_cmd(const rmt_cmd_t *c, const char **why, char **body){
     case RMT_BC_DL_STOP:
         if(!bandcamp_downloading()){ *why = "Nothing is being saved"; return -1; }
         bandcamp_download_cancel(); return 0;
+    case RMT_BC_QUALITY: bandcamp_set_quality((int)c->pos); return 0;
     }
     *why = "Unknown command"; return -1;
 }

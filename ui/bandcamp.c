@@ -15,7 +15,10 @@
 #include "remote_core.h"     /* rmt_buf_t: the JSON for the Remote Control page */
 #include "scanner.h"
 #include "sdio.h"
+#include "config.h"
+#include <dirent.h>
 #include <fcntl.h>
+#include <strings.h>
 #include <sys/statvfs.h>
 #include <errno.h>
 #include <pthread.h>
@@ -97,6 +100,7 @@ typedef struct {
     char url[BC_URL_LEN]; int idx;          /* the release, the track (-1 all) */
     char title[BC_NAME_LEN], artist[BC_NAME_LEN];
     int state, done, total;                 /* tracks saved (or already there) of total */
+    int q;                                  /* BC_Q_* */
     char err[96];
     unsigned id;
 } dl_job_t;
@@ -316,6 +320,107 @@ static const char *write_tagged(const char *src, const char *dst, const unsigned
     if(bad || rename(tmp, dst)){ unlink(tmp); return "Couldn't write to the SD card"; }
     return NULL;
 }
+/* ---- the best quality: Bandcamp's own download (free / name-your-price releases; bandcamp_core.h steps 1-3) */
+static const char *const Q_PREFS[][6] = {
+    [BC_Q_BEST] = { "flac", "mp3-v0", "mp3-320", "vorbis", "aac-hi", NULL },
+    [BC_Q_V0]   = { "mp3-v0", "mp3-320", NULL },
+    [BC_Q_320]  = { "mp3-320", "mp3-v0", NULL },
+};
+static const char *enc_ext(const char *enc){
+    return !strcmp(enc, "flac") ? ".flac" : !strncmp(enc, "mp3", 3) ? ".mp3" : !strcmp(enc, "vorbis") ? ".ogg" : ".m4a";
+}
+static int audio_name(const char *n){
+    const char *d = strrchr(n, '.');
+    return d && n[0] != '.' && (!strcasecmp(d, ".flac") || !strcasecmp(d, ".mp3") || !strcasecmp(d, ".ogg") || !strcasecmp(d, ".m4a"));
+}
+#define BC_DL_FILE_S 3600                     /* a whole album in FLAC may take this long */
+/* free_dl -> the file's address (follows retry_url, Bandcamp's first answer is "expired"); 0 ok */
+static int best_url(const char *free_dl, int q, char *url, size_t un, char *enc, size_t en, char *type, size_t tn, long long *bytes){
+    char *h = fetch(free_dl, NULL, BC_TMP_DLPAGE, NULL);
+    int r = h ? bc_parse_dlpage(h, Q_PREFS[q], enc, en, url, un, type, tn, bytes) : -1;
+    free(h);
+    if(r) return -1;
+    for(int k = 1; k <= 5; k++){
+        char su[BC_URL_LEN + 40];
+        if(bc_stat_url(url, (unsigned)time(NULL) % 100000u + (unsigned)k, su, sizeof su)) return -1;
+        char *st = fetch(su, NULL, BC_TMP_DLPAGE, NULL);
+        int ok = st ? bc_parse_stat(st, url, un) : -1;
+        free(st);
+        if(ok == 1) return 0;
+        if(ok < 0) return -1;
+    }
+    return -1;
+}
+/* NULL: saved in the best quality (*done files); else why not (the caller saves the stream instead) */
+static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, const bc_track_t *t, int n, const char *dir, int *done){
+    char free_dl[BC_URL_LEN];
+    snprintf(free_dl, sizeof free_dl, "%s", r->free_dl);
+    if(j->idx >= 0 && r->type != 't'){                        /* one track of an album: its own page's download */
+        free_dl[0] = 0;
+        if(j->idx < n && t[j->idx].page[0]){
+            bc_release_t tr; bc_track_t *tt = calloc(4, sizeof *tt);
+            char *h = tt ? fetch(t[j->idx].page, NULL, BC_TMP_DLPAGE, NULL) : NULL;
+            if(h && bc_parse_release(h, &tr, tt, 4) >= 0) snprintf(free_dl, sizeof free_dl, "%s", tr.free_dl);
+            free(h); free(tt);
+        }
+    }
+    if(!free_dl[0]) return "not a free download";
+    char url[BC_URL_LEN], enc[16], type[16]; long long bytes = 0;
+    if(best_url(free_dl, q, url, sizeof url, enc, sizeof enc, type, sizeof type, &bytes)) return "Bandcamp didn't give the download";
+    int album = !strcmp(type, "album");
+    long long need = 0;
+    for(int i = 0; i < n; i++) need += (j->idx < 0 || i == j->idx) ? (t[i].ms / 1000 + 1) * (!strcmp(enc, "flac") ? 110000 : 40000) : 0;
+    if(bytes > need) need = bytes;                            /* the size the download page names */
+    if(album) need *= 2;                                      /* the ZIP and its files, for a moment */
+    if(!sd_io_begin()) return "The SD card is not available right now";
+    const char *err = NULL;
+    char part[PATH_MAX + 40]; snprintf(part, sizeof part, "%s/.bandcamp-download", dir);
+    if(!room_for(dir, need)) err = "Not enough room on the SD card";
+    if(!err){
+        unlink(part);
+        char *argv[] = { "wget", "-q", "-T", "30", "-t", "2", "-O", part, url, NULL };
+        int rc = command_wait(argv, BC_DL_FILE_S * 1000);
+        if(rc) { err = "Bandcamp didn't send the download"; fprintf(stderr, "bandcamp: %s: wget %d\n", url, rc); }
+    }
+    if(!err && album){
+        /* the ZIP into the folder: the tracks (Bandcamp's names and tags) and the cover; nothing there is overwritten */
+        DIR *d = opendir(dir); char **had = NULL; int nhad = 0;
+        struct dirent *e;
+        while(d && (e = readdir(d))) if(audio_name(e->d_name)){ char **g = realloc(had, sizeof *had * (size_t)(nhad + 1)); if(g){ had = g; had[nhad++] = strdup(e->d_name); } }
+        if(d) closedir(d);
+        char *argv[] = { "unzip", "-n", "-q", part, "-d", (char *)dir, NULL };
+        int rc = command_wait(argv, 600000);
+        if(rc){ err = "Couldn't unpack the download"; fprintf(stderr, "bandcamp: unzip %s: %d\n", part, rc); }
+        d = opendir(dir);
+        while(d && (e = readdir(d))){
+            if(!audio_name(e->d_name)) continue;
+            int old = 0; for(int i = 0; i < nhad && !old; i++) old = had[i] && !strcmp(had[i], e->d_name);
+            char p[PATH_MAX + 300]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+            lib_push(p);
+            if(!old) (*done)++;
+        }
+        if(d) closedir(d);
+        for(int i = 0; i < nhad; i++) free(had[i]);
+        free(had);
+        if(!err && !*done) err = "The download had no music";
+    } else if(!err){
+        char name[160], path[PATH_MAX + 168];
+        bc_track_t x = j->idx >= 0 && j->idx < n ? t[j->idx] : t[0];
+        if(bc_dl_file(&x, name, sizeof name)) err = "The names are too long for the card";
+        else {
+            char *dot = strrchr(name, '.'); if(dot) snprintf(dot, sizeof name - (size_t)(dot - name), "%s", enc_ext(enc));
+            snprintf(path, sizeof path, "%s/%s", dir, name);
+            struct stat sb;
+            if(stat(path, &sb) == 0) fprintf(stderr, "bandcamp: %s is already on the card\n", path);
+            else if(rename(part, path)) err = "Couldn't write to the SD card";
+            if(!err){ lib_push(path); (*done)++; }
+        }
+    }
+    unlink(part);
+    sd_io_end();
+    if(!err) fprintf(stderr, "bandcamp: saved %s in %s (%d files)\n", r->title, enc, *done);
+    return err;
+}
 static void job_download(const dl_job_t *j){
     bc_release_t r; bc_track_t *t = calloc(BC_MAX_TRACKS, sizeof *t);
     char *h = t ? fetch(j->url, NULL, BC_TMP_DLPAGE, NULL) : NULL;
@@ -363,8 +468,13 @@ static void job_download(const dl_job_t *j){
             sd_io_end();
         }
     }
-    int done = 0;
-    for(int i = first; !err && i < last; i++){
+    int done = 0, best = 0;
+    if(!err && j->q != BC_Q_STREAM){                             /* the best quality when Bandcamp gives it away */
+        const char *why = job_best(j, j->q, &r, t, n, dir, &done);
+        if(!why){ best = 1; pthread_mutex_lock(&g_mu); for(int i = 0; i < g_ndl; i++) if(g_dl[i].id == j->id) g_dl[i].total = done; pthread_mutex_unlock(&g_mu); }
+        else { fprintf(stderr, "bandcamp: %s: %s - saving the stream\n", j->url, why); done = 0; }
+    }
+    for(int i = first; !err && !best && i < last; i++){
         if(!t[i].stream[0]) continue;
         pthread_mutex_lock(&g_mu); int stop = g_dl_cancel; pthread_mutex_unlock(&g_mu);
         if(stop){ err = "Stopped"; break; }
@@ -468,6 +578,10 @@ int bandcamp_play(const char *url, int idx, const char **why){
     pthread_mutex_unlock(&g_mu);
     return 0;
 }
+static int g_quality = -1;                       /* BC_Q_*, -1 not read yet */
+int bandcamp_quality(void){ if(g_quality < 0){ g_quality = cfg_get_int("bc_quality", BC_Q_BEST); if(g_quality < 0 || g_quality > BC_Q_STREAM) g_quality = BC_Q_BEST; } return g_quality; }
+void bandcamp_set_quality(int q){ if(q < 0 || q > BC_Q_STREAM) return; g_quality = q; cfg_set_int("bc_quality", q); }
+const char *bandcamp_quality_name(int q){ static const char *n[] = { "Best (FLAC)", "MP3 V0", "MP3 320", "Stream (128 kbit/s)" }; return q >= 0 && q <= BC_Q_STREAM ? n[q] : ""; }
 int bandcamp_download(const char *url, int idx, const char **why){
     char u[BC_URL_LEN];
     if(bc_url_join(NULL, url, u, sizeof u) || !is_release_url(u)){ *why = "That is not a Bandcamp album or track"; return -1; }
@@ -483,7 +597,7 @@ int bandcamp_download(const char *url, int idx, const char **why){
     }
     dl_job_t *j = &g_dl[g_ndl++];
     memset(j, 0, sizeof *j);
-    snprintf(j->url, sizeof j->url, "%s", u); j->idx = idx; j->state = D_WAIT; j->id = ++g_dl_id;
+    snprintf(j->url, sizeof j->url, "%s", u); j->idx = idx; j->state = D_WAIT; j->id = ++g_dl_id; j->q = bandcamp_quality();
     snprintf(j->title, sizeof j->title, "%.127s", u);
     if(!g_dl_worker){
         pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
@@ -662,9 +776,9 @@ static void release_json(rmt_buf_t *b, const bc_release_t *r, const bc_track_t *
 static const char *sname(int s){ return s == S_BUSY ? "busy" : s == S_DONE ? "done" : s == S_FAIL ? "failed" : "idle"; }
 char *bandcamp_json(void){
     rmt_buf_t b = { 0 };
-    int line = bandcamp_active() ? now_line() : -1;
+    int line = bandcamp_active() ? now_line() : -1, quality = bandcamp_quality();
     pthread_mutex_lock(&g_mu);
-    rmt_buf_printf(&b, "{\"ok\":true,\"own_player\":%s,\"search\":{\"state\":\"%s\",\"q\":", BC_OPL_RUNNING() ? "true" : "false", sname(g_sstate));
+    rmt_buf_printf(&b, "{\"ok\":true,\"own_player\":%s,\"quality\":%d,\"search\":{\"state\":\"%s\",\"q\":", BC_OPL_RUNNING() ? "true" : "false", quality, sname(g_sstate));
     rmt_buf_str(&b, g_sq);
     rmt_buf_put(&b, ",\"items\":[");
     for(int i = 0; i < g_nhits; i++){ if(i) rmt_buf_put(&b, ","); item_json(&b, &g_hits[i]); }

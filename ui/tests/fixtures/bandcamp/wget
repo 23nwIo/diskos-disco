@@ -20,6 +20,13 @@ case "$url" in
   https://aphextwin.bandcamp.com/music) f=artist-music.html ;;
   https://unicornpartisans.bandcamp.com/album/repression-depression) f=album.html ;;
   https://unicornpartisans.bandcamp.com/track/soko-linx) f=track.html ;;
+  https://skycolourgirl.bandcamp.com/album/ambulocetus) f=free-album.html ;;
+  https://bandcamp.com/download\?fsig=*) f=free-download.html ;;
+  https://popplers5.bandcamp.com/statdownload/album\?enc=flac\&fsig=c615*)   # Bandcamp's first answer: expired, a fresh link
+    printf 'if ( window.Downloads ) { Downloads.statResult( {"result":"err","retry_url":"https://popplers5.bandcamp.com/download/album?enc=flac&fsig=fresh&id=3404045742&ts=2.0","errortype":"ExpiredFreeDownloadError"} ) };' > "$out"; exit 0 ;;
+  https://popplers5.bandcamp.com/statdownload/album\?enc=flac\&fsig=fresh*)
+    printf 'if ( window.Downloads ) { Downloads.statResult ( {"result":"ok","download_url":"https://p4.bcbits.com/download/album/x/flac/3404045742?fsig=z&id=3404045742&token=t"} ) };' > "$out"; exit 0 ;;
+  https://p4.bcbits.com/download/album/*) f=ambulocetus-flac.zip ;;
   https://t4.bcbits.com/stream/*) printf 'ID3\003\000\000\000\000\000\002xx\377\373\220\000audio' > "$out"; exit 0 ;;   # its own tag (2 bytes) + a frame
   https://f4.bcbits.com/img/*_10.jpg) printf '\377\330\377\340cover' > "$out"; exit 0 ;;
   *) exit 8 ;;
