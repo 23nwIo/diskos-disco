@@ -1,7 +1,7 @@
 # Bandcamp
 
-diskOS can search Bandcamp and play what artists let anyone stream, without an account (step 1, 2026-11-22). Step 2,
-a login for purchased music, and downloads to the SD card are planned (see "Next" below).
+diskOS can search Bandcamp and play what artists let anyone stream, without an account (step 1, 2026-11-22), and save
+releases or single tracks to the SD card ("Downloads" below). Step 2, a login for purchased music, is planned (see "Next").
 
 Bandcamp plays only with the **diskOS player** (Settings > About > Player, docs/MQ_PLAYER_REPLACEMENT.md); the stock
 player is not supported (Jo, 2026-11-22: new features need not support it).
@@ -51,6 +51,28 @@ Any local play, the radio or another working mode ends Bandcamp (as with the rad
 - Artists can cap how often a fan may stream a track (`play_cap_data`); diskOS doesn't count plays.
 - Without an account the quality is 128 kbit/s MP3.
 
+## Downloads
+
+On the Remote Control page: an album or track page's menu (⋯ at the top) > **Save the album / track to the SD card**,
+or a track's ⋯ > **Save to the SD card**; menu > **Downloads…** shows what is waiting, saving, saved or failed and
+stops the rest. They run on the Disc one at a time on their own worker (`ui/bandcamp.c` `job_download`), so searching
+and playing go on meanwhile.
+
+- Where: `<card>/BandcampDownloads/<Artist>/<Album>/NN Title.mp3` and `cover.jpg` (1200 px, `a<art_id>_10.jpg`). A
+  track page without an album uses the track's title as the folder. Names are made safe for FAT32 and ext4
+  (`bc_safe_name`: no `/ \ : * ? " < > |`, at most 100 bytes). A file already there is not downloaded again.
+- What: the 128 kbit/s stream (Jo: "Variante B", also for paid releases), its own ID3 tag (if any) replaced by an
+  ID3v2.4 tag (UTF-8) with title, artist, album, album artist, track n/N, the release date and the cover (APIC).
+- Then: each saved file goes into the library at once (`scanner_add_file`, as the party uploads); while a scan runs
+  they wait for it.
+- The card: the SD lease (`sd_io_begin`) is held while a track downloads and is written, as for an upload; at least
+  64 MB stay free. wget writes to `.bandcamp-download` in the folder, the tagged file is written as `<name>.part`
+  and renamed.
+- Not yet: the best quality for free / name-your-price releases (`freeDownloadPage`, FLAC or MP3 V0 from Bandcamp's
+  own download page). Its pages were not available to check yet, so every download is the stream for now; the page's
+  `freeDownloadPage` is already parsed (`bc_release_t.free_dl`). The Disc's own screens for it come with the Disc's
+  Bandcamp screens.
+
 ## Files
 
 - `ui/bandcamp_core.[ch]`: the pure part (URLs, search reply, release page, music page, the player's list). Host test
@@ -63,9 +85,8 @@ Any local play, the radio or another working mode ends Bandcamp (as with the rad
 
 ## Next
 
-- Downloads to the card (Jo, 2026-11-22): `BandcampDownloads/<Artist>/<Album>/` with the cover, then a library
-  rescan, also from the Disc. The best quality available unless chosen otherwise: Bandcamp's own download for free /
-  name-your-price releases, otherwise the 128 kbit/s stream with tags written by diskOS.
-- The Disc's own Bandcamp screens.
+- Downloads in the best quality for free / name-your-price releases (Bandcamp's own download, a ZIP for albums), with
+  a quality choice; needs a free download page fetched on the Disc to check the format.
+- The Disc's own Bandcamp screens, downloads included.
 - Step 2: a login (the `identity` cookie, kept in `/usr/data`, never on the card) for the collection and purchased
   music in full quality.

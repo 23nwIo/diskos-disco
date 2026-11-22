@@ -520,18 +520,19 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
         rt.cmd.kind = RMT_CMD_BANDCAMP;
         if(get){ rt.kind = RMT_R_CMD; rt.cmd.sub = RMT_BC_STATE; return rt; }
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
-        char a[8]; int ok = 0;
+        char a[16]; int ok = 0;
         rt.kind = RMT_R_BAD_PARAM;
         if(!param_str(r, "action", a, sizeof a)){
             if(!strcmp(a, "search")){ rt.cmd.sub = RMT_BC_SEARCH; ok = !param_str(r, "q", rt.cmd.q, sizeof rt.cmd.q) && rt.cmd.q[0]; }
             else if(!strcmp(a, "open")){ rt.cmd.sub = RMT_BC_OPEN; ok = !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name) && !strncmp(rt.cmd.name, "https://", 8); }
-            else if(!strcmp(a, "play")){
+            else if(!strcmp(a, "play") || !strcmp(a, "download")){
                 long t = -1; int pt = param(r, "track", &t);
-                rt.cmd.sub = RMT_BC_PLAY; rt.cmd.pos = pt == 0 ? t : -1;
+                rt.cmd.sub = a[0] == 'p' ? RMT_BC_PLAY : RMT_BC_DOWNLOAD; rt.cmd.pos = pt == 0 ? t : -1;
                 ok = !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name) && !strncmp(rt.cmd.name, "https://", 8)
                      && pt != -2 && (pt != 0 || (t >= 0 && t < 10000));
             }
             else if(!strcmp(a, "stop")){ rt.cmd.sub = RMT_BC_STOP; ok = 1; }
+            else if(!strcmp(a, "stop_downloads")){ rt.cmd.sub = RMT_BC_DL_STOP; ok = 1; }
         }
         if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
         rt.kind = RMT_R_CMD;

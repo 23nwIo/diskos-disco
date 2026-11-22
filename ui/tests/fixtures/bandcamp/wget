@@ -20,6 +20,8 @@ case "$url" in
   https://aphextwin.bandcamp.com/music) f=artist-music.html ;;
   https://unicornpartisans.bandcamp.com/album/repression-depression) f=album.html ;;
   https://unicornpartisans.bandcamp.com/track/soko-linx) f=track.html ;;
+  https://t4.bcbits.com/stream/*) printf 'ID3\003\000\000\000\000\000\002xx\377\373\220\000audio' > "$out"; exit 0 ;;   # its own tag (2 bytes) + a frame
+  https://f4.bcbits.com/img/*_10.jpg) printf '\377\330\377\340cover' > "$out"; exit 0 ;;
   *) exit 8 ;;
 esac
 cat "$d/$f" > "$out"

@@ -3,8 +3,9 @@
 /* Bandcamp without an account (docs/BANDCAMP.md): search, an artist's releases, a release's tracks, and playing them
  * in the own player (only that one, Jo 2026-11-22). The Disc switches to source mode 7 ("Bandcamp", the same player work
  * mode as the web radio, 0657 0C), writes the release's streams to own_player.h OPL_BC_LIST and sends 0d14 with the
- * track to start at. Downloads (wget, HTTPS) run on a worker thread; everything else is main thread only. Nothing is
- * written to the internal flash: the list and the downloads live in /tmp. */
+ * track to start at. Downloads (wget, HTTPS) run on worker threads; everything else is main thread only. Nothing is
+ * written to the internal flash: the list and the pages live in /tmp, saved music goes to the SD card (its library
+ * row into song.db, as any new file). */
 #ifndef BANDCAMP_H
 #define BANDCAMP_H
 #include "bandcamp_core.h"
@@ -24,7 +25,13 @@ int  bandcamp_open(const char *url, const char **why);         /* an artist's si
  * is downloaded again for fresh stream links unless it was just opened. */
 int  bandcamp_play(const char *url, int idx, const char **why);
 void bandcamp_stop(void);                       /* back to local playback */
-/* All of it as JSON for GET api/bandcamp (malloc'd): {"search":{...},"page":{...},"now":{...}} */
+/* Save a release (idx -1) or one track of it to the card: <card>/BandcampDownloads/<artist>/<album>/NN Title.mp3 with
+ * tags and the cover inside, plus cover.jpg; each file goes into the library once it is saved. One download at a time,
+ * on its own worker; the rest wait. 0 queued, -1 refused (*why). */
+int  bandcamp_download(const char *url, int idx, const char **why);
+void bandcamp_download_cancel(void);            /* the waiting ones go, the running one stops after its track */
+int  bandcamp_downloading(void);                /* downloads waiting or running */
+/* All of it as JSON for GET api/bandcamp (malloc'd): {"search":{...},"page":{...},"now":{...},"downloads":[...]} */
 char *bandcamp_json(void);
 
 /* main.c */

@@ -102,8 +102,9 @@ typedef enum { RMT_G_STATE = 0, RMT_G_JOIN, RMT_G_PICK, RMT_G_RANDOM, RMT_G_RERO
                                               * out): the player whose turn it is, or the host (pos = the turn, -1 the one now) */
 /* Bandcamp (own player only): GET api/bandcamp = search results, the page opened and what plays (JSON);
  * POST api/bandcamp action=search q= | open url= (an artist's site, an album or track page) | play url= [track=N, the
- * track's index on the page; absent = the first that plays] | stop. The downloads run on the Disc; the page polls. */
-typedef enum { RMT_BC_STATE = 0, RMT_BC_SEARCH, RMT_BC_OPEN, RMT_BC_PLAY, RMT_BC_STOP } rmt_bc_t;
+ * track's index on the page; absent = the first that plays] | stop | download url= [track=N; absent = the whole
+ * release] (to the SD card) | stop_downloads. The downloads run on the Disc; the page polls. */
+typedef enum { RMT_BC_STATE = 0, RMT_BC_SEARCH, RMT_BC_OPEN, RMT_BC_PLAY, RMT_BC_STOP, RMT_BC_DOWNLOAD, RMT_BC_DL_STOP } rmt_bc_t;
 typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR, RMT_Q_ADD } rmt_queue_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;

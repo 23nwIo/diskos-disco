@@ -136,8 +136,49 @@ static void test_music(void){
     free(h);
 }
 
+static void test_download(void){
+    char o[256];
+    CHECK(bc_safe_name("AC/DC: Live?  ", NULL, o, sizeof o) == 12 && !strcmp(o, "AC_DC_ Live_"));
+    CHECK(bc_safe_name(" ..hidden. ", NULL, o, sizeof o) == 6 && !strcmp(o, "hidden"));
+    CHECK(bc_safe_name("", "Unknown", o, sizeof o) == 7 && !strcmp(o, "Unknown"));
+    CHECK(bc_safe_name("a\tb\x7f<c>|\"", NULL, o, sizeof o) == 9 && !strcmp(o, "a_b__c___"));
+    { char lng[300]; memset(lng, 'x', 99); strcpy(lng + 99, "\xc3\xa4yyy");   /* an a-umlaut across the 100-byte cut */
+      CHECK(bc_safe_name(lng, NULL, o, sizeof o) == 99 && o[98] == 'x'); }
+    { char small[6]; CHECK(bc_safe_name("abcdefgh", NULL, small, sizeof small) == 5 && !strcmp(small, "abcde")); }
+
+    char *h = slurp("album.html", NULL);
+    bc_release_t r; static bc_track_t t[BC_MAX_TRACKS];
+    int n = h ? bc_parse_release(h, &r, t, BC_MAX_TRACKS) : -1;
+    CHECK(n == 6 && !strcmp(r.date, "2022-03-27") && !r.free_dl[0] && strstr(r.cover, "_10.jpg") && !strncmp(r.cover, "https://f4.bcbits.com/img/a", 27));
+    CHECK(bc_dl_dir("/tmp/sdcard", &r, o, sizeof o) == 0 && !strcmp(o, "/tmp/sdcard/BandcampDownloads/Unicorn Partisans/Repression Depression"));
+    CHECK(bc_dl_file(&t[2], o, sizeof o) == 0 && !strcmp(o, "03 Everybody is arrested.mp3"));
+    { bc_track_t x = t[0]; x.num = 0; CHECK(bc_dl_file(&x, o, sizeof o) == 0 && !strcmp(o, "Computer kaputt.mp3")); }
+    CHECK(bc_dl_dir("/tmp/sdcard", &r, o, 20) == -1);
+
+    /* the tag: v2.4, UTF-8 text frames, the cover */
+    const unsigned char jpg[] = { 0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3 };
+    size_t len = 0; unsigned char *tag = bc_id3_tag(&r, &t[2], r.ntracks, jpg, sizeof jpg, &len);
+    CHECK(tag && len > 10 && !memcmp(tag, "ID3\4\0\0", 6) && bc_id3_skip(tag, len) == len);
+    if(tag){
+        CHECK(memmem(tag, len, "TIT2", 4) && memmem(tag, len, "\3Everybody is arrested", 22) && memmem(tag, len, "\3""3/6", 4)
+              && memmem(tag, len, "\3""2022-03-27", 11) && memmem(tag, len, "\3Repression Depression", 22) && memmem(tag, len, "TPE2", 4));
+        unsigned char *ap = memmem(tag, len, "APIC", 4);
+        CHECK(ap && !memcmp(ap + 10, "\0image/jpeg\0\3\0", 14) && !memcmp(ap + 24, jpg, sizeof jpg) && ap + 24 + sizeof jpg == tag + len);
+    }
+    free(tag);
+    tag = bc_id3_tag(&r, &t[0], 0, NULL, 0, &len);
+    CHECK(tag && !memmem(tag, len, "APIC", 4) && memmem(tag, len, "\3""1", 2) && !memmem(tag, len, "1/", 2));
+    free(tag);
+    const unsigned char none[] = "\xFF\xFB\x90\x00 frame";
+    CHECK(bc_id3_skip(none, sizeof none) == 0);
+    const unsigned char big[10] = { 'I', 'D', '3', 3, 0, 0, 0, 0, 2, 0 };   /* 256 bytes of tag, only 10 here */
+    CHECK(bc_id3_skip(big, 10) == 0 && bc_id3_skip(big, 1000) == 266);
+    free(h);
+}
+
 int main(void){
     test_urls();
+    test_download();
     test_search();
     test_album();
     test_track();

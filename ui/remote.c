@@ -1111,6 +1111,10 @@ static int bandcamp_cmd(const rmt_cmd_t *c, const char **why, char **body){
     case RMT_BC_STOP:
         if(!bandcamp_active() && !strcmp(bandcamp_state(), "off")){ *why = "Bandcamp is not playing"; return -1; }
         bandcamp_stop(); return 0;
+    case RMT_BC_DOWNLOAD: return bandcamp_download(c->name, (int)c->pos, why);
+    case RMT_BC_DL_STOP:
+        if(!bandcamp_downloading()){ *why = "Nothing is being saved"; return -1; }
+        bandcamp_download_cancel(); return 0;
     }
     *why = "Unknown command"; return -1;
 }

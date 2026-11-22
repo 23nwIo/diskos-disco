@@ -27,6 +27,19 @@ void ui_loop_wake(void){}
 int  ipc_send_cmd(const char *f){ if(nsent < 16) snprintf(sent[nsent++], sizeof sent[0], "%s", f); return 0; }
 void ipc_get_state(track_state_t *o){ *o = state; }
 int  test_opl_running(void){ return 1; }
+static int card_ok = 1, scanning; static char added[16][512]; static int nadded;
+int  sd_io_begin(void){ return card_ok; }
+void sd_io_end(void){}
+int  scanner_active(void){ return scanning; }
+int  scanner_add_file(const char *p){ if(nadded < 16) snprintf(added[nadded++], sizeof added[0], "%s", p); return nadded; }
+static char *file_text(const char *p, size_t *len){
+    FILE *f = fopen(p, "rb"); if(!f) return NULL;
+    static char b[4096]; size_t n = fread(b, 1, sizeof b, f); fclose(f); *len = n; return b;
+}
+static int wait_dl(const char *key){
+    for(int i = 0; i < 300; i++){ bandcamp_tick(); char *j = bandcamp_json(); int ok = j && strstr(j, key); free(j); if(ok) return 1; usleep(20000); }
+    fprintf(stderr, "timeout waiting for %s\n", key); return 0;
+}
 
 static int wait_for(const char *what, const char *key){     /* polls bandcamp_json until key shows up */
     for(int i = 0; i < 200; i++){
@@ -97,6 +110,40 @@ int main(void){
     bandcamp_tick();
     CHECK(!strcmp(bandcamp_state(), "error") && !strcmp(bandcamp_last_error(), "Couldn't reach Bandcamp") && nsent == 3);
     unsetenv("BC_WGET_FAIL");
+
+    /* downloads: the album into BandcampDownloads with tags and the cover, each file into the library */
+    unsetenv("BC_WGET_LOG");
+    if(system("rm -rf /tmp/bc_test_card && mkdir /tmp/bc_test_card")) fails++;
+    const char *dir = "/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression";
+    CHECK(bandcamp_download("https://example.com/x", -1, &why) == -1);
+    CHECK(bandcamp_download("https://unicornpartisans.bandcamp.com/album/repression-depression", 2, &why) == 0);
+    CHECK(bandcamp_download("https://unicornpartisans.bandcamp.com/album/repression-depression", 2, &why) == -1 && !strcmp(why, "That is already being saved"));
+    CHECK(wait_dl("\"state\":\"done\",\"track\":2,\"done\":1,\"total\":1"));
+    for(int i = 0; i < 20 && nadded < 1; i++){ bandcamp_tick(); usleep(10000); }
+    { char p[600]; size_t len = 0; snprintf(p, sizeof p, "%s/03 Everybody is arrested.mp3", dir);
+      char *b = file_text(p, &len);
+      CHECK(b && len > 20 && !memcmp(b, "ID3\4", 4) && memmem(b, len, "\3Everybody is arrested", 22) && memmem(b, len, "\377\330\377\340cover", 9));
+      CHECK(b && len > 14 && !memcmp(b + len - 9, "\377\373\220\000audio", 9) && !memmem(b, len, "xx", 2));   /* its own tag went */
+      CHECK(nadded == 1 && !strcmp(added[0], p));
+      snprintf(p, sizeof p, "%s/cover.jpg", dir); b = file_text(p, &len);
+      CHECK(b && len == 9 && !memcmp(b, "\377\330\377\340cover", 9));
+      snprintf(p, sizeof p, "%s/.bandcamp-download", dir); CHECK(access(p, F_OK) != 0); }
+    /* the whole album: the track saved before stays, the rest come; a scan running holds them back from the library */
+    scanning = 1;
+    CHECK(bandcamp_download("https://unicornpartisans.bandcamp.com/album/repression-depression", -1, &why) == 0);
+    CHECK(wait_dl("\"state\":\"done\",\"track\":-1,\"done\":6,\"total\":6"));
+    CHECK(nadded == 1);
+    scanning = 0;
+    for(int i = 0; i < 20 && nadded < 7; i++){ bandcamp_tick(); usleep(10000); }
+    CHECK(nadded == 7 && strstr(added[6], "/06 "));
+    { char p[600]; snprintf(p, sizeof p, "%s/01 Computer kaputt.mp3", dir); CHECK(access(p, F_OK) == 0); }
+    /* the card not available: failed, with the reason */
+    card_ok = 0;
+    CHECK(bandcamp_download("https://unicornpartisans.bandcamp.com/track/soko-linx", -1, &why) == 0);
+    CHECK(wait_dl("The SD card is not available right now"));
+    card_ok = 1;
+    CHECK(bandcamp_downloading() == 0);
+    if(system("rm -rf /tmp/bc_test_card")) fails++;
 
     /* stop: back to local playback */
     bandcamp_stop();

@@ -82,7 +82,7 @@ songs:['Songs',function(s){return song(s,{kind:'song',song_id:s.id})},{kind:'all
 folder:['Folders',null,{kind:'folder',path:''}],
 radio:['Radio favourites',function(x){return station(x,'radio')},null,['Find stations',function(){open('radio_search',{},'Find stations',null,function(x){return station(x,'radio_hit')})}],
 function(){return[['Add a stream URL…',function(){askurl(function(n,u){cmd('radio_fav_add',enc({kind:'stream',name:n,url:u})).then(function(ok){if(ok){load(0);setTimeout(function(){say('Saved to favourites',1)},600)}})})}]]}]};
-ROOT.bandcamp=['Bandcamp',bcrow,null];
+ROOT.bandcamp=['Bandcamp',bcrow,null,null,function(){return[['Downloads…',bcdls]]}];
 function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},
 {f:!!x.fav,fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}},x.url]}
 function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},[{f:!!s.fav,fn:function(b){var on=!s.fav;cmd('favorite',enc({on:on?1:0,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=on;star(b,on);say(on?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]]}
@@ -123,8 +123,15 @@ if(j.ok&&j.search==='failed'){$('list').textContent='The station directory did n
 var BT={b:'Artist',a:'Album',t:'Track'};
 function bcrow(x){var sub=[BT[x.type]||'',x.artist,x.album].filter(Boolean).join(' · ');
 return[x.name,sub,x.type==='t'?function(){bcplay(x.url,-1,x.name)}:function(){open('bc_page',{url:x.url},x.name,null,bcrow)},x.type==='t'?[{g:'&#8943;',a:'More',fn:function(){
-sheet(x.name,[['Play this track',function(){bcplay(x.url,-1,x.name)}],['Open the track page',function(){open('bc_page',{url:x.url},x.name,null,bcrow)}]])}}]:null]}
+sheet(x.name,[['Play this track',function(){bcplay(x.url,-1,x.name)}],['Save to the SD card',function(){bcdl(x.url,-1,x.name)}],['Open the track page',function(){open('bc_page',{url:x.url},x.name,null,bcrow)}]])}}]:null]}
 function bcplay(url,i,name){var o={action:'play',url:url};if(i>=0)o.track=i;cmd('bandcamp',enc(o)).then(function(ok){if(ok)say('Starting '+(name||'Bandcamp')+'…',1)})}
+function bcdl(url,i,name){var o={action:'download',url:url};if(i>=0)o.track=i;cmd('bandcamp',enc(o)).then(function(ok){if(ok)say('Saving “'+(name||'it')+'” to the SD card (menu: Downloads)',1)})}
+var BCD={waiting:'waiting',saving:'saving',done:'saved',failed:'failed',stopped:'stopped'};
+function bcdls(){bcget().then(function(j){var d=j.downloads||[],run=0,a=d.map(function(x){if(x.state==='waiting'||x.state==='saving')run=1;
+return[x.title+(x.artist?' · '+x.artist:'')+' – '+BCD[x.state]+(x.total?' '+x.done+'/'+x.total:'')+(x.error&&x.state!=='stopped'?': '+x.error:''),function(){}]});
+if(!d.length)a.push(['Nothing saved yet. Open an album: menu > Save the album',function(){}]);
+if(run)a.push(['Stop the downloads',function(){cmd('bandcamp',enc({action:'stop_downloads'})).then(function(ok){if(ok)say('Stops after the current track',1)})}]);
+sheet('Saved to BandcampDownloads',a)}).catch(function(){say('Player not reachable')})}
 function bcget(){return fetch('api/bandcamp',{cache:'no-store'}).then(function(r){return r.json()})}
 function bcsearch(v){var g=v.gen=(v.gen||0)+1,q=$('q').value.trim();$('mo').classList.add('hide');
 if(q.length<2){render(v,{ok:true,items:[],total:0},0);return}$('list').textContent='Searching Bandcamp…';
@@ -140,8 +147,10 @@ function bcshow(v,p){var f=$('q').value.toLowerCase(),m=function(t){return!f||t.
 if(p.kind==='artist'){v.t=p.name||v.t;$('ti').textContent=v.t;render(v,{ok:true,items:p.items.filter(function(x){return m(x.name)}),total:p.items.length},0);return}
 var r=p.release;v.art=r.art;$('bcv').src=r.art;$('bcv').classList.toggle('hide',!r.art);v.t=r.title;$('ti').textContent=r.title;
 v.act=['Play all',function(){bcplay(r.url,-1,r.title)}];$('pa').textContent='Play all';$('pa').classList.remove('hide');
+v.menu=function(){return[['Save '+(r.type==='t'?'the track':'the album')+' to the SD card',function(){bcdl(r.url,-1,r.title)}],['Downloads…',bcdls]]};$('hm').classList.remove('hide');
 v.row=function(t){return[(t.num?t.num+'. ':'')+t.title,[t.artist!==r.artist?t.artist:'',t.ms?fm(t.ms):'',t.plays?'':'not streamable'].filter(Boolean).join(' · '),
-t.plays?function(){bcplay(r.url,t.i,t.title)}:function(){say('The artist doesn\u2019t let this track be streamed')}]};
+t.plays?function(){bcplay(r.url,t.i,t.title)}:function(){say('The artist doesn\u2019t let this track be streamed')},
+t.plays?[{g:'&#8943;',a:'More',fn:function(){sheet(t.title,[['Play from here',function(){bcplay(r.url,t.i,t.title)}],['Save to the SD card',function(){bcdl(r.url,t.i,t.title)}]])}}]:null]};
 var ts=r.tracks.map(function(t,i){t.i=i;return t}).filter(function(t){return m(t.title)});render(v,{ok:true,items:ts,total:ts.length},0);
 if(!r.tracks.length)$('list').textContent='This release has no tracks to play'}
 var bca='',bcat=0;function bcnow(s){var k=s.title+'|'+s.album;if(k===bca&&Date.now()-bcat<60000)return;bca=k;bcat=Date.now();bcget().then(function(j){var n=j.now||{};

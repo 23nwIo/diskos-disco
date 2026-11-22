@@ -43,6 +43,9 @@ typedef struct {
     char album[BC_NAME_LEN];      /* a track page: its album ("" none / unknown) */
     char url[BC_URL_LEN];         /* the page itself */
     char art[BC_URL_LEN];         /* the cover, 350 px */
+    char cover[BC_URL_LEN];       /* the same cover, 1200 px (downloads), "" none */
+    char date[16];                /* the release date, "YYYY-MM-DD", "" unknown */
+    char free_dl[BC_URL_LEN];     /* the free download page (name your price / free), "" none */
     int  ntracks;                 /* all tracks, streamable or not */
 } bc_release_t;
 
@@ -70,4 +73,20 @@ int  bc_parse_music(const char *html, const char *base, bc_item_t *out, int max,
 /* The own player's stream list (own_player.h OPL_BC_LIST) for the streamable tracks of r. map[k] = the track index of
  * line k (may be NULL). Returns the number of lines, -1 when it did not fit; *len = the text's length. */
 int  bc_list_format(const bc_release_t *r, const bc_track_t *t, int n, char *out, size_t cap, int *map, size_t *len);
+
+/* ---- downloads to the SD card (docs/BANDCAMP.md "Downloads") */
+#define BC_DL_DIR "BandcampDownloads"
+/* s as one file or folder name that FAT32 and ext4 both take: no / \ : * ? " < > | or control characters (they
+ * become '_'), no leading or trailing dots and spaces, at most 100 bytes (cut on a UTF-8 boundary). "" becomes
+ * fallback. Returns the length. */
+int  bc_safe_name(const char *s, const char *fallback, char *out, size_t n);
+/* "<root>/BandcampDownloads/<artist>/<album>" for r (a track page without an album: the track's title). 0, -1 too long. */
+int  bc_dl_dir(const char *root, const bc_release_t *r, char *out, size_t n);
+/* The file name of track t: "NN Title.mp3" (NN = its number, two digits; no number: "Title.mp3"). 0, -1 too long. */
+int  bc_dl_file(const bc_track_t *t, char *out, size_t n);
+/* The size of an ID3v2 tag at the start of buf (header, footer and all), 0 when there is none. */
+size_t bc_id3_skip(const unsigned char *buf, size_t len);
+/* An ID3v2.4 tag (UTF-8) for track t of r (total = the release's track count): TIT2, TPE1, TALB, TPE2, TRCK "n/N",
+ * TDRC, and the cover as APIC when jpg is not NULL. malloc'd, *len its size; NULL out of memory. */
+unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total, const unsigned char *jpg, size_t jlen, size_t *len);
 #endif

@@ -245,9 +245,20 @@ char *bc_html_attr(const char *html, const char *name){
     }
     return NULL;
 }
-static void art_url(long long id, char *out, size_t n){
-    if(id > 0) snprintf(out, n, "https://f4.bcbits.com/img/a%010lld_2.jpg", id);
+static void art_url_size(long long id, int size, char *out, size_t n){
+    if(id > 0) snprintf(out, n, "https://f4.bcbits.com/img/a%010lld_%d.jpg", id, size);   /* 2 = 350 px, 10 = 1200 px */
     else if(n) out[0] = 0;
+}
+static void art_url(long long id, char *out, size_t n){ art_url_size(id, 2, out, n); }
+/* "27 Mar 2022 00:00:00 GMT" -> "2022-03-27"; "" when it isn't one */
+static void bc_date(const char *in, char *out, size_t n){
+    static const char mon[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    int d = 0, y = 0; char m[4] = "";
+    if(n) out[0] = 0;
+    if(sscanf(in, "%2d %3s %4d", &d, m, &y) != 3 || d < 1 || d > 31 || y < 1000 || y > 2999) return;
+    const char *p = strstr(mon, m);
+    if(!p || strlen(m) != 3 || (p - mon) % 3) return;
+    snprintf(out, n, "%04u-%02u-%02u", (unsigned)y % 10000u, (unsigned)(p - mon) / 3u % 100u + 1u, (unsigned)d % 100u);
 }
 /* the JSON-LD block's inAlbum name (a track page's album), "" none */
 static void ld_album(const char *html, char *out, size_t n){
@@ -279,6 +290,11 @@ int bc_parse_release(const char *html, bc_release_t *r, bc_track_t *out, int max
         get_str(js, t, nt, 0, "artist", r->artist, sizeof r->artist); trim(r->artist);
         get_str(js, t, nt, 0, "art_id", v, sizeof v);
         art_url(atoll(v), r->art, sizeof r->art);
+        art_url_size(atoll(v), 10, r->cover, sizeof r->cover);
+        get_str(js, t, nt, cur, "release_date", v, sizeof v); bc_date(v, r->date, sizeof r->date);
+        if(!r->date[0]){ get_str(js, t, nt, 0, "album_release_date", v, sizeof v); bc_date(v, r->date, sizeof r->date); }
+        get_str(js, t, nt, 0, "freeDownloadPage", v, sizeof v);
+        if(bc_url_ok(v)) snprintf(r->free_dl, sizeof r->free_dl, "%s", v);
         if(r->type == 't') ld_album(html, r->album, sizeof r->album);
         else snprintf(r->album, sizeof r->album, "%s", r->title);
         got = 0;
@@ -434,4 +450,79 @@ int bc_list_format(const bc_release_t *r, const bc_track_t *t, int n, char *out,
     out[o] = 0;
     if(len) *len = o;
     return lines;
+}
+
+/* ================================================================ downloads */
+int bc_safe_name(const char *s, const char *fallback, char *out, size_t n){
+    if(!n) return 0;
+    size_t o = 0, cap = n - 1 < 100 ? n - 1 : 100;
+    while(*s == ' ' || *s == '.') s++;
+    for(; *s && o < cap; s++){
+        unsigned char c = (unsigned char)*s;
+        out[o++] = c < 0x20 || c == 0x7f || strchr("/\\:*?\"<>|", c) ? '_' : (char)c;
+    }
+    if(((unsigned char)*s & 0xC0) == 0x80){                               /* cut inside a character: it goes */
+        while(o && ((unsigned char)out[o - 1] & 0xC0) == 0x80) o--;
+        if(o) o--;
+    }
+    while(o && (out[o - 1] == ' ' || out[o - 1] == '.')) o--;
+    out[o] = 0;
+    if(!o && fallback && fallback != out) return bc_safe_name(fallback, NULL, out, n);
+    return (int)o;
+}
+int bc_dl_dir(const char *root, const bc_release_t *r, char *out, size_t n){
+    char a[104], b[104];
+    bc_safe_name(r->artist, "Unknown Artist", a, sizeof a);
+    bc_safe_name(r->album[0] ? r->album : r->title, "Unknown Album", b, sizeof b);
+    int w = snprintf(out, n, "%s/%s/%s/%s", root, BC_DL_DIR, a, b);
+    return w < 0 || (size_t)w >= n ? -1 : 0;
+}
+int bc_dl_file(const bc_track_t *t, char *out, size_t n){
+    char x[104]; bc_safe_name(t->title, "Track", x, sizeof x);
+    int w = t->num > 0 ? snprintf(out, n, "%02d %s.mp3", t->num, x) : snprintf(out, n, "%s.mp3", x);
+    return w < 0 || (size_t)w >= n ? -1 : 0;
+}
+size_t bc_id3_skip(const unsigned char *b, size_t len){
+    if(len < 10 || memcmp(b, "ID3", 3) || b[3] == 0xFF || b[4] == 0xFF || ((b[6] | b[7] | b[8] | b[9]) & 0x80)) return 0;
+    size_t sz = ((size_t)b[6] << 21) | ((size_t)b[7] << 14) | ((size_t)b[8] << 7) | b[9];
+    sz += 10 + ((b[5] & 0x10) ? 10 : 0);                                  /* header, and the v2.4 footer */
+    return sz <= len ? sz : 0;
+}
+static void syncsafe(unsigned char *p, size_t v){ p[0] = (v >> 21) & 0x7f; p[1] = (v >> 14) & 0x7f; p[2] = (v >> 7) & 0x7f; p[3] = v & 0x7f; }
+/* the header of a frame at o whose len-byte body is already in place after it */
+static size_t frame(unsigned char *out, size_t o, const char *id, size_t len){
+    memcpy(out + o, id, 4); syncsafe(out + o + 4, len); out[o + 8] = out[o + 9] = 0;
+    return o + 10 + len;
+}
+static size_t text_frame(unsigned char *out, size_t o, const char *id, const char *text){
+    size_t l = strlen(text);
+    if(!l) return o;
+    out[o + 10] = 3;                                                      /* UTF-8 */
+    memcpy(out + o + 11, text, l);
+    return frame(out, o, id, l + 1);
+}
+unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total, const unsigned char *jpg, size_t jlen, size_t *len){
+    char trck[24] = "";
+    if(t->num > 0) snprintf(trck, sizeof trck, total > 0 ? "%d/%d" : "%d", t->num, total);
+    const char *album = r->album[0] ? r->album : r->type == 't' ? "" : r->title;
+    size_t cap = 10 + 6 * (11 + BC_NAME_LEN) + 32 + (jpg ? 10 + 32 + jlen : 0);
+    unsigned char *out = malloc(cap);
+    if(!out) return NULL;
+    size_t o = 10;
+    o = text_frame(out, o, "TIT2", t->title);
+    o = text_frame(out, o, "TPE1", t->artist[0] ? t->artist : r->artist);
+    o = text_frame(out, o, "TALB", album);
+    o = text_frame(out, o, "TPE2", r->artist);
+    o = text_frame(out, o, "TRCK", trck);
+    o = text_frame(out, o, "TDRC", r->date);
+    if(jpg && jlen){                                                      /* enc 0, "image/jpeg", type 3 (front cover), no description */
+        static const unsigned char head[] = "\0image/jpeg\0\3";
+        unsigned char *body = out + o + 10;
+        memcpy(body, head, sizeof head);                                  /* the string's own NUL is the empty description */
+        memcpy(body + sizeof head, jpg, jlen);
+        o = frame(out, o, "APIC", sizeof head + jlen);
+    }
+    memcpy(out, "ID3\4\0\0", 6); syncsafe(out + 6, o - 10);
+    *len = o;
+    return out;
 }
