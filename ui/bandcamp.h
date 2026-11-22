@@ -34,6 +34,18 @@ int  bandcamp_downloading(void);                /* downloads waiting or running 
 /* All of it as JSON for GET api/bandcamp (malloc'd): {"search":{...},"page":{...},"now":{...},"downloads":[...]} */
 char *bandcamp_json(void);
 
+/* For the Disc's Bandcamp screen (bandcamp_ui.c), main thread. States: */
+enum { BC_IDLE, BC_BUSY, BC_DONE, BC_FAILED };                     /* a search or a page */
+enum { BC_DL_WAITING, BC_DL_SAVING, BC_DL_SAVED, BC_DL_FAILED, BC_DL_STOPPED };
+unsigned bandcamp_gen(void);                    /* changes whenever something finished: look again */
+int  bandcamp_hits(bc_item_t *out, int max, int *state);           /* the last search's results (count); its state */
+/* The page opened last: *state; when done, *kind 'b' (an artist's releases: *items malloc'd, the count returned,
+ * name = the artist) or 'r' (a release: *rel, *tracks malloc'd, the track count returned). Free what you get. */
+int  bandcamp_page(char *url, size_t ulen, int *state, int *kind, char *name, size_t nlen, bc_item_t **items,
+                   bc_release_t *rel, bc_track_t **tracks);
+typedef struct { char title[BC_NAME_LEN], artist[BC_NAME_LEN], err[96]; int state, done, total; } bc_dl_info_t;
+int  bandcamp_downloads(bc_dl_info_t *out, int max);              /* newest first; the count */
+
 /* main.c */
 void bandcamp_mode_leaving(void);               /* another source takes over */
 void bandcamp_restart(void);                    /* the output was re-initialised: start the track again */

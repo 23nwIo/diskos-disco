@@ -58,7 +58,7 @@ int BC_OPL_RUNNING(void);
 
 /* ================================================================ shared state (g_mu) */
 enum { J_SEARCH = 1, J_OPEN = 2, J_PLAY = 4 };
-enum { S_IDLE, S_BUSY, S_DONE, S_FAIL };
+enum { S_IDLE = BC_IDLE, S_BUSY = BC_BUSY, S_DONE = BC_DONE, S_FAIL = BC_FAILED };
 enum { P_OFF, P_STARTING, P_PLAYING, P_ERROR };
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
@@ -92,7 +92,7 @@ static int g_map[BC_MAX_TRACKS], g_lines;        /* list line -> track index */
 static time_t g_retry_at; static int g_retry_line = -1;
 
 /* downloads to the card: their own worker, so a long album doesn't hold up searching and playing */
-enum { D_WAIT, D_RUN, D_DONE, D_FAIL, D_CANCEL };
+enum { D_WAIT = BC_DL_WAITING, D_RUN = BC_DL_SAVING, D_DONE = BC_DL_SAVED, D_FAIL = BC_DL_FAILED, D_CANCEL = BC_DL_STOPPED };
 typedef struct {
     char url[BC_URL_LEN]; int idx;          /* the release, the track (-1 all) */
     char title[BC_NAME_LEN], artist[BC_NAME_LEN];
@@ -595,6 +595,45 @@ void bandcamp_tick(void){
     }
     pthread_mutex_lock(&g_mu); g_pstate_play = P_PLAYING; pthread_mutex_unlock(&g_mu);
     send_line(line);
+}
+
+/* ================================================================ for the Disc's screen */
+unsigned bandcamp_gen(void){ pthread_mutex_lock(&g_mu); unsigned g = g_wake_bump; pthread_mutex_unlock(&g_mu); return g; }
+int bandcamp_hits(bc_item_t *out, int max, int *state){
+    pthread_mutex_lock(&g_mu);
+    int n = g_nhits < max ? g_nhits : max;
+    if(n > 0) memcpy(out, g_hits, sizeof out[0] * (size_t)n);
+    *state = g_sstate;
+    pthread_mutex_unlock(&g_mu);
+    return n;
+}
+int bandcamp_page(char *url, size_t ulen, int *state, int *kind, char *name, size_t nlen, bc_item_t **items,
+                  bc_release_t *rel, bc_track_t **tracks){
+    int n = 0;
+    *items = NULL; *tracks = NULL; *kind = 0;
+    pthread_mutex_lock(&g_mu);
+    snprintf(url, ulen, "%s", g_purl); *state = g_pstate;
+    if(g_pstate == S_DONE && g_pkind == 'b' && g_nrel > 0 && (*items = malloc(sizeof **items * (size_t)g_nrel))){
+        memcpy(*items, g_rel, sizeof **items * (size_t)g_nrel); n = g_nrel; *kind = 'b';
+        snprintf(name, nlen, "%s", g_artist_name);
+    } else if(g_pstate == S_DONE && g_pkind == 'r'){
+        *rel = g_page_rel; *kind = 'r'; snprintf(name, nlen, "%s", g_page_rel.title);
+        if(g_page_n > 0 && (*tracks = malloc(sizeof **tracks * (size_t)g_page_n))){ memcpy(*tracks, g_page_t, sizeof **tracks * (size_t)g_page_n); n = g_page_n; }
+    } else if(g_pstate == S_DONE) *state = S_FAIL;                     /* out of memory */
+    pthread_mutex_unlock(&g_mu);
+    return n;
+}
+int bandcamp_downloads(bc_dl_info_t *out, int max){
+    pthread_mutex_lock(&g_mu);
+    int n = 0;
+    for(int i = g_ndl - 1; i >= 0 && n < max; i--, n++){
+        bc_dl_info_t *o = &out[n];
+        snprintf(o->title, sizeof o->title, "%s", g_dl[i].title); snprintf(o->artist, sizeof o->artist, "%s", g_dl[i].artist);
+        snprintf(o->err, sizeof o->err, "%s", g_dl[i].err);
+        o->state = g_dl[i].state; o->done = g_dl[i].done; o->total = g_dl[i].total;
+    }
+    pthread_mutex_unlock(&g_mu);
+    return n;
 }
 
 /* ================================================================ JSON for the Remote Control page */

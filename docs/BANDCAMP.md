@@ -8,9 +8,17 @@ player is not supported (Jo, 2026-11-22: new features need not support it).
 
 ## Using it
 
-For now on the Remote Control page (docs/REMOTE_CONTROL.md, tab **Bandcamp**): search, open an artist or a release,
-tap a track or **Play all**. The Disc's own screens show the track like any other (title, artist, album, time) and
-its Previous / Next / seek work; the Disc's own Bandcamp screens follow after the first device tests (Jo, 2026-11-22).
+On the Remote Control page (docs/REMOTE_CONTROL.md, tab **Bandcamp**): search, open an artist or a release, tap a
+track or **Play all**. The Disc's own screens show the track like any other (title, artist, album, time) and its
+Previous / Next / seek work.
+
+On the Disc: the app **Bandcamp** (Apps, `builtin:bandcamp`, `ui/bandcamp_ui.c`, SCR_BANDCAMP), a plain list in the
+Radio screen's look:
+- **Search Bandcamp** (the keyboard), **Downloads**, **Stop Bandcamp** (while it plays), **Last search**.
+- Results: an artist or album opens its page; a track plays (hold: save it).
+- An artist: the releases. A release: **Play all**, **Save the album**, the tracks (tap: play from it, hold: save it).
+- Downloads: waiting / saving n/N / saved / failed with the reason, **Stop the downloads**.
+- Back goes one view up; pages already seen are kept. Playing opens Now Playing once it starts.
 
 ## How it works
 
@@ -70,8 +78,7 @@ and playing go on meanwhile.
   and renamed.
 - Not yet: the best quality for free / name-your-price releases (`freeDownloadPage`, FLAC or MP3 V0 from Bandcamp's
   own download page). Its pages were not available to check yet, so every download is the stream for now; the page's
-  `freeDownloadPage` is already parsed (`bc_release_t.free_dl`). The Disc's own screens for it come with the Disc's
-  Bandcamp screens.
+  `freeDownloadPage` is already parsed (`bc_release_t.free_dl`).
 
 ## Files
 
@@ -82,11 +89,11 @@ and playing go on meanwhile.
 - `ui/player/playback.c` `pb_slist_*`, `core.c` `0d14`: the player's side. Host test `ui/tests/playback_test.c`
   `test_slist`.
 - `ui/remote_page/remote.html`: the Bandcamp tab.
+- `ui/bandcamp_ui.[ch]`: the Disc's screen. Host renders: `host-render <preset> 0 preview-bandcamp|preview-bandcamp-results|preview-bandcamp-release 0 out.ppm`.
 
 ## Next
 
 - Downloads in the best quality for free / name-your-price releases (Bandcamp's own download, a ZIP for albums), with
   a quality choice; needs a free download page fetched on the Disc to check the format.
-- The Disc's own Bandcamp screens, downloads included.
 - Step 2: a login (the `identity` cookie, kept in `/usr/data`, never on the card) for the collection and purchased
   music in full quality.

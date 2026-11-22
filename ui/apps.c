@@ -60,6 +60,7 @@ static void scan_apps(void){
     }
     {app_t*a=&g_apps[g_napps++];md5_hex("disc-shelf",10,a->id);snprintf(a->name,sizeof a->name,"Disc Shelf");snprintf(a->exec,sizeof a->exec,"%s",APP_BUILTIN_SHELF);}
     {app_t*a=&g_apps[g_napps++];md5_hex("builtin:radio",13,a->id);snprintf(a->name,sizeof a->name,"Radio");snprintf(a->exec,sizeof a->exec,"%s",APP_BUILTIN_RADIO);}   /* Web radio (radio.c) */
+    {app_t*a=&g_apps[g_napps++];md5_hex("builtin:bandcamp",16,a->id);snprintf(a->name,sizeof a->name,"Bandcamp");snprintf(a->exec,sizeof a->exec,"%s",APP_BUILTIN_BANDCAMP);}   /* Bandcamp (bandcamp_ui.c) */
     DIR *d = opendir(APPS_DIR);
     if(!d) return;
     struct dirent *de;
@@ -173,7 +174,7 @@ void shortcut_run(const char *key){
 static const char *app_glyph(int i){
     if(i < 0) return LV_SYMBOL_FILE;
     if(!strcmp(g_apps[i].exec, APP_BUILTIN_SHELF)) return "@shelf";
-    if(!strcmp(g_apps[i].exec, APP_BUILTIN_RADIO)) return LV_SYMBOL_AUDIO;
+    if(!strcmp(g_apps[i].exec, APP_BUILTIN_RADIO) || !strcmp(g_apps[i].exec, APP_BUILTIN_BANDCAMP)) return LV_SYMBOL_AUDIO;
     if(th_braun2() && !strcmp(g_apps[i].exec, APP_BUILTIN_STATS)) return "@stats";
     if(th_braun2() && !strcmp(g_apps[i].exec, APP_BUILTIN_BOOMSHINE)) return "@boom";
     return LV_SYMBOL_FILE;

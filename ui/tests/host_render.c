@@ -2,6 +2,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Render actual LVGL screens without starting diskOS's hardware main loop. */
 #include "md5.h"
+#include "bandcamp.h"
 #include "zune_dial.h"
 #include "curvelist.h"
 #include "null_menu.h"
@@ -1452,6 +1453,17 @@ int main(int argc, char **argv){
             else {radio_test_favorites(rs,!strcmp(page,"radio-empty")?0:3);scr=SCR_RADIO;radio_open();}
             if(!strcmp(page,"radio-results"))radio_test_results(rs,4,0);
             if(!strcmp(page,"radio-fail"))radio_test_results(rs,-1,1);}
+        else if(!strncmp(page,"bandcamp",8)){   /* the Disc's Bandcamp screen: home, results, a release */
+            void bandcamp_ui_open(void);scr=SCR_BANDCAMP;bandcamp_ui_open();
+            static bc_item_t bi[3]={{'b',"Unicorn Partisans","","","https://unicornpartisans.bandcamp.com",""},
+                {'a',"Repression Depression","Unicorn Partisans","","https://unicornpartisans.bandcamp.com/album/repression-depression",""},
+                {'t',"Soko Linx","Unicorn Partisans","Repression Depression","https://unicornpartisans.bandcamp.com/track/soko-linx",""}};
+            static bc_release_t br={'a',"Repression Depression","Unicorn Partisans","Repression Depression","https://unicornpartisans.bandcamp.com/album/repression-depression","","","2022-03-27","",3};
+            static bc_track_t bt[3]={{"Computer kaputt","Unicorn Partisans","https://t4.bcbits.com/stream/x","",499803,1},
+                {"Go away","Unicorn Partisans","https://t4.bcbits.com/stream/y","",159000,2},{"Everybody is arrested","Guest Singer","","",0,3}};
+            void bandcamp_ui_test_hits(const bc_item_t*,int); void bandcamp_ui_test_release(const bc_release_t*,const bc_track_t*,int);
+            if(!strcmp(page,"bandcamp-results"))bandcamp_ui_test_hits(bi,3);
+            if(!strcmp(page,"bandcamp-release"))bandcamp_ui_test_release(&br,bt,3);}
         else if(!strcmp(page,"battery")){void usage_demo(int);scr=SCR_USAGE;screen_show(scr);usage_demo(getenv("CHG")!=NULL);}
         else if(!strcmp(page,"discoopts")){void settings_open_disco(void);setlist_open("Display");scr=SCR_SETLIST;screen_show(scr);settings_open_disco();}
         else if(!strncmp(page,"scr",3)){scr=atoi(page+3);}
