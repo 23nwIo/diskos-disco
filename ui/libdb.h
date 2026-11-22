@@ -19,13 +19,31 @@
 #ifndef DISKOS_LIBDB_H
 #define DISKOS_LIBDB_H
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "sqlite3.h"
 
 #define LIBDB_FLASH "/usr/data/fiio/db/song.db"            /* stock player's library, internal NAND */
 #define LIBDB_CARD  "/tmp/sdcard/.diskos/state/library.db" /* own player's library, on the card (not used yet) */
 
-/* The library DB in use now. */
-static inline const char *libdb_path(void){ return LIBDB_FLASH; }
+/* Switched off until the UI closes its long-lived connections when the card goes away (USB storage, format,
+ * removal): an open card DB would keep the card busy. Until then libdb_path() always answers the flash DB. */
+#ifndef LIBDB_CARD_ENABLED
+#define LIBDB_CARD_ENABLED 0
+#endif
+#define LIBDB_OWN_SWITCH "/usr/data/diskos-own-player"      /* = OPL_SWITCH (own_player.h) */
+
+/* The library DB in use now: the card DB when the own player is switched on and the mounted card has one, else the
+ * flash DB. A card without library.db (not migrated yet) keeps the flash DB, as before. */
+static inline const char *libdb_path(void){
+#if LIBDB_CARD_ENABLED
+    struct stat c, p;
+    if(access(LIBDB_OWN_SWITCH, F_OK) == 0 && stat("/tmp/sdcard", &c) == 0 && stat("/tmp", &p) == 0
+       && c.st_dev != p.st_dev && access(LIBDB_CARD, R_OK) == 0)
+        return LIBDB_CARD;
+#endif
+    return LIBDB_FLASH;
+}
 
 /* 1 when path names the card DB (any path ending in /library.db, so host tests can use a temp dir). */
 static inline int libdb_is_card(const char *path){
@@ -57,4 +75,27 @@ static inline int libdb_open_v2(const char *path, sqlite3 **out, int flags, cons
     libdb_setup(*out, path, flags);
     return SQLITE_OK;
 }
+
+/* The tables diskOS adds to the card DB. Idempotent; 0 or an SQLite error code.
+ * SOURCE_ID maps a song to its ID at an outside source (SOURCE 'bandcamp' now; 'navidrome', 'rsync', ... later).
+ * The rows go with their song (ON DELETE CASCADE). A rescan keeps SONG.ID (it updates rows by PATH); a moved or
+ * renamed file gets a new ID and the scanner fills its row again from the file's tags (docs/LIBRARY_DB.md). */
+#define LIBDB_VERSION 1
+static inline int libdb_card_schema(sqlite3 *d){
+    return sqlite3_exec(d,
+        "CREATE TABLE IF NOT EXISTS SOURCE_ID(SOURCE TEXT NOT NULL, EXT_ID TEXT NOT NULL, ALBUM_ID TEXT, "
+        "SONG_ID INTEGER NOT NULL REFERENCES SONG(ID) ON DELETE CASCADE, PRIMARY KEY(SOURCE, EXT_ID));"
+        "CREATE INDEX IF NOT EXISTS SOURCE_ID_SONG ON SOURCE_ID(SONG_ID);"
+        "CREATE TABLE IF NOT EXISTS DISKOS_META(K TEXT PRIMARY KEY, V INTEGER NOT NULL);"
+        "INSERT OR REPLACE INTO DISKOS_META(K, V) VALUES('LIBDB_VERSION', 1);", 0, 0, 0);
+}
+
+/* Migration (libdb_migrate.c, mq_ui only): copy src (the flash DB) to dst (the card DB) as one consistent snapshot.
+ * Writes dst.tmp, drops the stock player's queue tables (LIST_SONG_0, LIST_SONG_3: the own player keeps its list in
+ * RAM), adds the tables above, checks integrity, fsyncs, renames to dst and fsyncs the folder. dst is never
+ * half-written: on any failure dst.tmp is removed and src is untouched. 0, or an L1xx code (docs/LIBRARY_DB.md)
+ * with err filled. */
+enum { LIBDB_E_OPEN_SRC = 101, LIBDB_E_OPEN_DST = 102, LIBDB_E_COPY = 103, LIBDB_E_SCHEMA = 104,
+       LIBDB_E_CHECK = 105, LIBDB_E_SYNC = 106, LIBDB_E_RENAME = 107, LIBDB_E_EXISTS = 108 };
+int libdb_migrate(const char *src, const char *dst, char *err, int cap);
 #endif

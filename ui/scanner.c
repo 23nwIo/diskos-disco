@@ -234,6 +234,35 @@ static const char *date_pick(const tagdate_t *dt){ return dt->orig[0] ? dt->orig
 
 /* Read ID3v2 text frames (TIT2/TPE1/TALB/TCON/TRCK/TPOS/TPE2, or the v2.2 3-char ids). Returns 1 if the
  * header was present. Fields it doesn't find are left untouched. */
+/* Outside-source IDs in the file's tags (docs/LIBRARY_DB.md): Bandcamp's track and album ID, as the Bandcamp download
+ * writes them (docs/BANDCAMP.md: ID3 TXXX:BANDCAMP_TRACK_ID / BANDCAMP_ALBUM_ID, FLAC Vorbis comments of the same
+ * names). Digits only, anything else is ignored. Filled by the tag readers for the file being read, worker thread only;
+ * upsert_song puts them into SOURCE_ID when the library has that table (the card DB). */
+#define EXTID_LEN 24
+static char g_bc_track[EXTID_LEN], g_bc_album[EXTID_LEN];
+static void extid_take(const char *key, const char *v){
+    char *out = !strcasecmp(key, "BANDCAMP_TRACK_ID") ? g_bc_track : !strcasecmp(key, "BANDCAMP_ALBUM_ID") ? g_bc_album : NULL;
+    if(!out || out[0]) return;
+    size_t n = strlen(v);
+    if(n == 0 || n >= EXTID_LEN) return;
+    for(size_t i = 0; i < n; i++) if(v[i] < '0' || v[i] > '9') return;
+    memcpy(out, v, n + 1);
+}
+/* ID3 TXXX (v2.2 TXX): encoding byte, description, terminator (1 byte, or 2 for UTF-16), value. */
+static void id3_txxx(const unsigned char *body, long n){
+    if(n < 2) return;
+    int enc = body[0], wide = (enc == 1 || enc == 2);
+    long i = 1;
+    if(wide){ while(i + 1 < n && (body[i] || body[i+1])) i += 2; }
+    else    { while(i < n && body[i]) i++; }
+    long vstart = i + (wide ? 2 : 1);
+    if(vstart > n) return;
+    char key[64], val[64];
+    id3_decode(enc, body + 1, (int)(i - 1), key, sizeof key);
+    /* UTF-16 with BOM: the value carries its own BOM */
+    id3_decode(enc, body + vstart, (int)(n - vstart), val, sizeof val);
+    extid_take(key, val);
+}
 static int id3v2_read(FILE *f, char *title,char *artist,char *album,char *genre,
                       char *album_artist, int *track, int *disc, tagdate_t *dt, int *rerr){
     unsigned char h[10];
@@ -264,7 +293,8 @@ static int id3v2_read(FILE *f, char *title,char *artist,char *album,char *genre,
         else fsize = be32(buf+p+4);
         if(fsize<=0 || fsize > tagsize - p - fhdr) break;   /* overflow-safe (tagsize-p-fhdr >= 0) */
         const unsigned char *body = buf+p+fhdr;
-        if(id[0]=='T' && fsize>=1){               /* text frame: enc byte + text */
+        if(!strcmp(id,"TXXX")||!strcmp(id,"TXX")) id3_txxx(body, fsize);
+        else if(id[0]=='T' && fsize>=1){               /* text frame: enc byte + text */
             int enc=body[0];
             char val[TAGLEN]; id3_decode(enc, body+1, (int)fsize-1, val, sizeof val);
             if(val[0]){
@@ -316,6 +346,7 @@ static void vc_apply(char *kv, char *title,char *artist,char *album,char *genre,
     char *eq=strchr(kv,'=');
     if(!eq) return;
     *eq=0; const char *k=kv, *v=eq+1;
+    extid_take(k, v);
     if(!strcasecmp(k,"TITLE")  && !title[0])  snprintf(title, TAGLEN,"%s",v);
     else if(!strcasecmp(k,"ARTIST") && !artist[0]) snprintf(artist,TAGLEN,"%s",v);
     else if(!strcasecmp(k,"ALBUM")  && !album[0])  snprintf(album, TAGLEN,"%s",v);
@@ -844,6 +875,7 @@ static int tags_from_file(const char *path, const char *fname,
                           char *album_artist, int *track, int *disc, tagdate_t *dt, long long *dur_ms){
     title[0]=artist[0]=album[0]=genre[0]=album_artist[0]=0; *track=0; *disc=0; *dur_ms=0;
     memset(dt, 0, sizeof *dt);
+    g_bc_track[0] = g_bc_album[0] = 0;
     int rerr=0;
     FILE *f=fopen(path,"rb");
     if(!f && (has_ext(fname,".flac") || has_ext(fname,".mp3") || has_ext(fname,".m4a") || has_ext(fname,".m4b")
@@ -942,6 +974,20 @@ static const char *DUROK_INS = "INSERT OR IGNORE INTO book_dur_ok(PATH) VALUES(?
 
 static sqlite3 *g_db;
 static sqlite3_stmt *g_ins, *g_upd, *g_seen, *g_cuechk, *g_bookok, *g_durok;
+static sqlite3_stmt *g_srcid;   /* NULL when the library has no SOURCE_ID table (the flash DB) */
+static const char *SRCID_PUT =
+    "INSERT OR REPLACE INTO SOURCE_ID(SOURCE,EXT_ID,ALBUM_ID,SONG_ID) SELECT 'bandcamp',?1,?2,ID FROM SONG "
+    "WHERE PATH=?3 AND COALESCE(IS_CUE,0)=0 AND COALESCE(IS_ISO,0)=0 ORDER BY ID LIMIT 1;";
+/* The Bandcamp IDs the tags of the file just read carry -> SOURCE_ID (a song moved or renamed on the card gets a new
+ * SONG.ID; its mapping comes back from here). Best effort: a failure is logged and does not block the scan. */
+static void source_note(const char *path){
+    if(!g_srcid || !g_bc_track[0]) return;
+    sqlite3_reset(g_srcid); sqlite3_clear_bindings(g_srcid);
+    sqlite3_bind_text(g_srcid, 1, g_bc_track, -1, SQLITE_TRANSIENT);
+    if(g_bc_album[0]) sqlite3_bind_text(g_srcid, 2, g_bc_album, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(g_srcid, 3, path, -1, SQLITE_TRANSIENT);
+    if(sqlite3_step(g_srcid) != SQLITE_DONE){ fprintf(stderr, "scanner: SOURCE_ID for %s: %s\n", path, sqlite3_errmsg(g_db)); fflush(stderr); }
+}
 /* L39: a CUE/ISO backing file (e.g. one .flac holding many virtual tracks) has DB rows that share its
  * PATH but carry IS_CUE=1/IS_ISO=1 + per-track TITLE/TRACK/OFFSET. A rescan must NOT overwrite those
  * (UPDATE ... WHERE PATH=? would hit them) nor add a duplicate plain row - so we skip such a path. */
@@ -1068,6 +1114,7 @@ static void upsert_song(const char *path, const char *fname){
         sqlite3_bind_text(g_upd, 17, date_pick(&dt), -1, SQLITE_TRANSIENT);
         if(sqlite3_step(g_upd)!=SQLITE_DONE){ g_scan_err=1; return; }
         if(sqlite3_changes(g_db) > 0){                     /* existing PATH updated in place */
+            source_note(path);
             pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu);
             return;
         }
@@ -1080,7 +1127,7 @@ static void upsert_song(const char *path, const char *fname){
     bind_meta(g_ins, 13, disc, track, album_artist);
     sqlite3_bind_int64(g_ins, 17, (sqlite3_int64)(dur_ms > 0 ? dur_ms : 0));   /* new row: a read error is just unknown */
     sqlite3_bind_text(g_ins, 18, date_pick(&dt), -1, SQLITE_TRANSIENT);
-    if(sqlite3_step(g_ins)==SQLITE_DONE){ pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); }
+    if(sqlite3_step(g_ins)==SQLITE_DONE){ source_note(path); pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); }
     else g_scan_err=1;   /* insert failure (disk full, DB corruption) must block the commit */
 }
 
@@ -1818,6 +1865,8 @@ static void *scan_thread(void *arg){
         }   /* in_txn */
         int decided = 0;
         g_ins=NULL; g_upd=NULL; g_seen=NULL; g_cuechk=NULL; g_bookok=NULL; g_durok=NULL;
+        /* only the card DB has SOURCE_ID (ui/libdb.h): on the flash DB the prepare fails and the IDs are not kept */
+        if(in_txn && sqlite3_prepare_v2(g_db, SRCID_PUT, -1, &g_srcid, NULL) != SQLITE_OK){ sqlite3_finalize(g_srcid); g_srcid = NULL; }
         /* a required column still missing: roll back and finish now, no walk (retried on the next scan) */
         if(in_txn && !g_scan_err && sqlite3_prepare_v2(g_db, INS_SONG, -1, &g_ins,  NULL)==SQLITE_OK
            && sqlite3_prepare_v2(g_db, UPD_SONG, -1, &g_upd,  NULL)==SQLITE_OK
@@ -1927,6 +1976,7 @@ static void *scan_thread(void *arg){
         sqlite3_finalize(g_seen); g_seen=NULL;
         sqlite3_finalize(g_bookok); g_bookok=NULL;
         sqlite3_finalize(g_durok); g_durok=NULL;
+        sqlite3_finalize(g_srcid); g_srcid=NULL;
     }
     sqlite3_close(g_db); g_db=NULL;   /* close even on a failed open: sqlite3_open_v2 may still return a handle */
     pthread_mutex_lock(&g_mu);

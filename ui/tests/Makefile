@@ -44,6 +44,9 @@ trace_launch_test: trace_launch_test.c ../trace_launch.h ../wd_override.h
 	$(CC) $(CFLAGS) -I.. trace_launch_test.c -o $@
 own_player_test: own_player_test.c ../own_player.h
 	$(CC) $(CFLAGS) -I.. own_player_test.c -o $@
+# the library DB: copy to the card, card connection settings, SOURCE_ID (ui/libdb.h)
+libdb_test: libdb_test.c ../libdb.h ../libdb_migrate.c sqlite3_host.o
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. libdb_test.c ../libdb_migrate.c sqlite3_host.o -lpthread -lm -ldl -o $@
 
 PLAYER_SRCS := ../player/core.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c ../player/btout.c ../player/btavrcp.c ../dbusmini.c
 # SQLite for the player, without sanitizers (instrumenting the amalgamation only slows the tests)
@@ -100,8 +103,10 @@ pytests: mpd_test
 	python3 run_pytests.py
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
+run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test scanner_srcid_test
 	./config_test
+	@echo "--- libdb ---"
+	./libdb_test
 	@echo "--- playstate ---"
 	./playstate_test
 	@echo "--- remote ---"
@@ -132,11 +137,12 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test ban
 	./playlog_test
 	@echo "--- scanner date tags ---"
 	./scanner_date_test
+	./scanner_srcid_test
 	@echo "--- hitguess rules ---"
 	./hitguess_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test $(EXTRA)
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test scanner_srcid_test $(EXTRA)
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
@@ -146,6 +152,8 @@ hitguess_test: hitguess_test.c ../hitguess_core.c ../hitguess_core.h
 
 scanner_date_test: scanner_date_test.c ../scanner.c ../scanner.h sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_date_test.c sqlite3_host.o -pthread -ldl -lm -o $@
+scanner_srcid_test: scanner_srcid_test.c ../scanner.c ../scanner.h ../libdb.h sqlite3_host.o
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_srcid_test.c sqlite3_host.o -pthread -ldl -lm -o $@
 
 playlog_test: playlog_test.c ../playlog.c ../playlog.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. playlog_test.c ../playlog.c -o $@
