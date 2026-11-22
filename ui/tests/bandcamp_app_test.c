@@ -36,6 +36,12 @@ int  test_card_mounted(void){ return card_in; }
 int  cfg_get_int(const char *k, int def){ (void)def; return !strcmp(k, "bc_quality") ? cfg_q : def; }
 int  cfg_set_int(const char *k, int v){ if(!strcmp(k, "bc_quality")) cfg_q = v; return 0; }
 int  scanner_add_file(const char *p){ if(nadded < 16) snprintf(added[nadded++], sizeof added[0], "%s", p); return nadded; }
+static int g_saved_who, g_saved_id, g_saved_refuse;           /* party_bandcamp_saved */
+int  test_guest_saved(int who, int id, const char **why){ g_saved_who = who; g_saved_id = id; if(g_saved_refuse){ *why = "The queue is full"; return -1; } return 0; }
+static int wait_guest(int who, const char *key){
+    for(int i = 0; i < 300; i++){ bandcamp_tick(); char *j = bandcamp_guest_json(who); int ok = j && strstr(j, key); free(j); if(ok) return 1; usleep(20000); }
+    fprintf(stderr, "timeout waiting for guest %d: %s\n", who, key); return 0;
+}
 static char *file_text(const char *p, size_t *len){
     FILE *f = fopen(p, "rb"); if(!f) return NULL;
     static char b[4096]; size_t n = fread(b, 1, sizeof b, f); fclose(f); *len = n; return b;
@@ -184,6 +190,38 @@ int main(void){
       it.type = 'a'; CHECK(bandcamp_fav_add(&it, &why) == -1 && strstr(why, "SD card"));
       card_in = 1; sleep(1);
       CHECK(!bandcamp_fav_nocard() && bandcamp_fav_has("https://aphextwin.bandcamp.com")); }
+    /* Jukebox guests: their own search and page (the host's stay), a pick saved and then queued for them */
+    { const char *rel = "https://unicornpartisans.bandcamp.com/album/repression-depression";
+      CHECK(bandcamp_guest_search(0, "x", &why) == -1);
+      CHECK(bandcamp_guest_search(3, "aphex", &why) == 0);
+      CHECK(wait_guest(3, "\"search\":{\"state\":\"done\",\"q\":\"aphex\""));
+      { char *j = bandcamp_json(); CHECK(j && strstr(j, "\"q\":\"unicorn partisans\"")); free(j); }      /* the host's search is still theirs */
+      { char *j = bandcamp_guest_json(4); CHECK(j && strstr(j, "\"search\":{\"state\":\"idle\",\"q\":\"\"") && strstr(j, "\"picks\":[]")); free(j); }
+      CHECK(bandcamp_guest_open(3, rel, &why) == 0);
+      CHECK(wait_guest(3, "\"kind\":\"release\""));
+      { char *j = bandcamp_json(); CHECK(j && strstr(j, "\"url\":\"https://unicornpartisans.bandcamp.com/album/repression-depression\",\"kind\":\"release\"")); free(j); }
+      /* the pick: a track saved before is only put into the library and queued */
+      bandcamp_set_quality(BC_Q_STREAM); nadded = 0; g_saved_who = 0;
+      CHECK(bandcamp_guest_pick(3, rel, -1, &why) == -1);
+      CHECK(bandcamp_guest_pick(3, rel, 4, &why) == 0);
+      CHECK(bandcamp_guest_waiting(3) == 1 && bandcamp_guest_waiting(4) == 0 && bandcamp_guest_waiting_track(rel, 4) && !bandcamp_guest_waiting_track(rel, 3));
+      CHECK(wait_guest(3, "\"queued\":true"));
+      CHECK(g_saved_who == 3 && g_saved_id == nadded && nadded == 1 && strstr(added[0], "/05 "));
+      CHECK(bandcamp_guest_waiting(3) == 0);
+      { char *j = bandcamp_guest_json(3); CHECK(j && strstr(j, "\"picks\":[{\"state\":\"done\",\"queued\":true,\"title\":\"")); free(j); }
+      { char *j = bandcamp_json(); CHECK(j && strstr(j, "\"guest\":true")); free(j); }
+      /* the queue refuses: the guest is told why */
+      g_saved_refuse = 1;
+      CHECK(bandcamp_guest_pick(3, rel, 0, &why) == 0);
+      CHECK(wait_guest(3, "\"error\":\"The queue is full\""));
+      g_saved_refuse = 0;
+      /* a new guest gets the number: the old one's search and picks are gone */
+      bandcamp_guest_gone(3);
+      { char *j = bandcamp_guest_json(3); CHECK(j && strstr(j, "\"state\":\"idle\"") && strstr(j, "\"picks\":[]")); free(j); }
+      /* more guests than views: the longest unused makes way */
+      for(int g = 10; g < 10 + BC_GUEST_VIEWS + 1; g++) CHECK(bandcamp_guest_search(g, "aphex", &why) == 0);
+      CHECK(wait_guest(10 + BC_GUEST_VIEWS, "\"state\":\"done\""));
+      { char *j = bandcamp_guest_json(10); CHECK(j && strstr(j, "\"q\":\"\"")); free(j); } }
     if(system("rm -rf /tmp/bc_test_card")) fails++;
 
     /* stop: back to local playback */

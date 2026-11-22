@@ -106,6 +106,17 @@ and playing go on meanwhile.
   64 MB stay free. wget writes to `.bandcamp-download` in the folder, the tagged file is written as `<name>.part`
   and renamed.
 
+## Jukebox guests
+
+With **Pick songs from Bandcamp** ticked under System > Public (party.conf `bandcamp=1`, off by default), Jukebox guests
+get a **Bandcamp** tab on their page: their own search and pages (up to 8 guests at a time keep theirs; the host's
+search on the Remote page and the Disc stays the host's). A track a guest adds is saved like the host's downloads
+(BandcampDownloads/<artist>/<album>/, the download quality chosen by the host), goes into the library and then into
+the queue as the guest's song, by the Jukebox's rules (songs per guest, in a row, already queued). While it is on its
+way it counts as one of the guest's songs; their **Your Bandcamp picks** menu shows how far it is, and the page tells
+them once it is queued or why not. Guests' picks are saved before the host's own downloads waiting. They stay on the
+card after the party.
+
 ## Files
 
 - `ui/bandcamp_core.[ch]`: the pure part (URLs, search reply, release page, music page, the player's list). Host test

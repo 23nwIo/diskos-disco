@@ -23,6 +23,8 @@
 <label><input type=checkbox data-k=radio> Choose a radio station: it plays when the queue is empty, or at once if they may skip songs</label>
 <label><input type=checkbox data-k=upload> Upload songs to the SD card</label><label for=pup>Largest file (MB)</label><input id=pup data-k=upmax type=number min=1 max=2000 inputmode=numeric>
 <div class=hint>Uploads go to PartyUploads/&lt;link name&gt;/ on the card and into the library, not the queue: guests add them like any other song. They stay after the party.</div>
+<label><input type=checkbox data-k=bandcamp> Pick songs from Bandcamp</label>
+<div class=hint>A track a guest picks is saved to BandcampDownloads/&lt;artist&gt;/&lt;album&gt;/ on the card (your download quality), joins the library and then the queue as their song. It stays after the party.</div>
 <label for=ptot>Songs each guest may have in the queue</label><input id=ptot data-k=total type=number min=1 max=50 inputmode=numeric>
 <label for=pcon>Songs of one guest in a row (at most)</label><input id=pcon data-k=consec type=number min=1 max=10 inputmode=numeric>
 <div class=hint>Guests take turns: a new song joins the guest's next round instead of the end of the queue. While only one guest's songs are queued, that guest may add more in a row (up to their number of songs).</div></div></div>

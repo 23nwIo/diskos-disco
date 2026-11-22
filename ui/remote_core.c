@@ -653,6 +653,7 @@ const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N] = {
     [RMT_P_TOTAL] = { "total", 1, 50, 3 },   [RMT_P_CONSEC] = { "consec", 1, 10, 1 }, [RMT_P_REPEAT] = { "repeat", 0, 1, 0 },
     [RMT_P_RADIO] = { "radio", 0, 1, 0 },    [RMT_P_NAMES] = { "names", 0, 1, 1 },
     [RMT_P_UPLOAD] = { "upload", 0, 1, 0 },  [RMT_P_UPMAX] = { "upmax", 1, 2000, 100 },   /* MB */
+    [RMT_P_BANDCAMP] = { "bandcamp", 0, 1, 0 },   /* guests pick songs from Bandcamp (saved to the card, then queued) */
 };
 static void name_part(char *out, size_t cap, size_t *o, const char *s, size_t n){
     for(size_t i = 0; i < n && *o + 1 < cap; i++){
@@ -834,6 +835,9 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
         case RMT_CMD_VOLUME:                                       /* the guests' scale: 100 = the host's maximum */
             ok = 1; if(a.cmd.arg > 100){ memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; }
             break;
+        case RMT_CMD_BANDCAMP:                                     /* search, open a page, pick a track (party.c) */
+            ok = a.cmd.sub == RMT_BC_STATE || a.cmd.sub == RMT_BC_SEARCH || a.cmd.sub == RMT_BC_OPEN || (a.cmd.sub == RMT_BC_DOWNLOAD && a.cmd.pos >= 0);
+            break;
         case RMT_CMD_QUEUE: ok = a.cmd.sub == RMT_Q_LIST || (a.cmd.sub == RMT_Q_ADD && (a.cmd.item == RMT_I_SONG || a.cmd.item == RMT_I_FILE)); break;
         case RMT_CMD_BROWSE:
             ok = a.cmd.sub != RMT_L_RADIO && a.cmd.sub != RMT_L_FAVORITES;   /* the whole library, not the host's favourites (guests keep their own) */
@@ -850,6 +854,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
         if(pg == -1) a.cmd.gid[0] = 0;
         if(pn == -1) a.cmd.gname[0] = 0;
         int need = (a.cmd.kind == RMT_CMD_QUEUE && a.cmd.sub == RMT_Q_ADD) || a.cmd.kind == RMT_CMD_PARTY_STATIONS   /* adding counts against the guest's songs */
+                   || a.cmd.kind == RMT_CMD_BANDCAMP                                                                  /* their own search and picks */
                    || a.cmd.kind == RMT_CMD_GAME || a.cmd.kind == RMT_CMD_GAME_SEARCH;                                  /* a player is their id */
         if(pg == -2 || pn == -2 || (pg == 0 && !guest_id_ok(a.cmd.gid)) || (need && pg != 0)){
             memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; a.cmd.guest = 1; }

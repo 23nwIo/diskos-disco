@@ -84,6 +84,9 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'UPLOADED PartyUploads/Party_1/Anna_Mine.mp3 AnnaAnnaAnna1234', 'UPLOADED PartyUploads/Party_1/Anna_Mine.mp3 AnnaAnnaAnna1234',
         'UPLOADED PartyUploads/Party_1/Anna_x.txt AnnaAnnaAnna1234', 'GET /api/queue',
         'POST ~/api/stations g=AnnaAnnaAnna1234&s=http%3A%2F%2Fa.example%2Fs+Anna+%3CFM%3E&s=https%3A%2F%2Fb.example+B', 'GET /api/party',
+        # -5.. Bandcamp for guests (Jo, 2026-11-22): off unless the host allows it; their own search state
+        'GET ~/api/bandcamp?g=DoraDoraDora1234', 'POST /api/party bandcamp=1', 'GET ~/api/bandcamp?g=DoraDoraDora1234',
+        'POST ~/api/bandcamp action=play&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&g=DoraDoraDora1234',
         'POST /api/play_item kind=folder&path=Music%2FOther']   # last: the folder play's slot is checked after the run
 with tempfile.TemporaryDirectory() as tmp:
     rf = Path(tmp)/'reqs.txt'; rf.write_text('\n'.join(reqs) + '\n')
@@ -186,9 +189,14 @@ assert res[74]['rc'] == -1 and res[74]['why'] == 'The queue changed - here it is
 assert res[75]['rc'] == -1 and res[75]['why'].startswith('Only with the own player'), res[75]
 print('PASS Remote Control queue: add (song, album), list, move, remove, clear, stale version refused')
 # party mode
-p = res[76]['body']; assert p['settings'] == {'on': 0, 'vol': 1, 'maxvol': 100, 'np': 1, 'queue': 1, 'skip': 0, 'total': 3, 'consec': 1, 'repeat': 0, 'radio': 0, 'names': 1, 'upload': 0, 'upmax': 100, 'name': '', 'own_player': False} and p['guests'] == [], p
+p = res[76]['body']; assert p['settings'] == {'on': 0, 'vol': 1, 'maxvol': 100, 'np': 1, 'queue': 1, 'skip': 0, 'total': 3, 'consec': 1, 'repeat': 0, 'radio': 0, 'names': 1, 'upload': 0, 'upmax': 100, 'bandcamp': 0, 'name': '', 'own_player': False} and p['guests'] == [], p
 assert res[77]['rc'] == -1 and res[77]['why'] == 'Choose a name for the link first', res[77]
 assert res[78]['rc'] == 0 and res[78]['body']['settings']['name'] == 'Party_1' and res[78]['body']['settings']['total'] == 2, res[78]
+bc = res[-5:-1]
+assert bc[0]['rc'] == -1 and bc[0]['why'] == "The host doesn't let guests pick from Bandcamp", bc[0]
+assert bc[1]['rc'] == 0 and 'bandcamp=1\n' in party_conf, party_conf
+assert bc[2]['rc'] == 0 and bc[2]['body'] == {'ok': True, 'search': {'state': 'idle', 'q': '', 'items': []}, 'page': {'state': 'idle', 'url': ''}, 'picks': []}, bc[2]
+assert bc[3]['req'].startswith('POST ~/api/bandcamp action=play') and bc[3]['rc'] != 0, bc[3]   # the host's own actions: not for guests
 assert 'name=Party_1\n' in party_conf and 'on=1\n' in party_conf and 'total=2\n' in party_conf, party_conf   # on the SD card
 g = res[79]['body']; assert g['party']['left'] == 2 and g['party']['mine'] == 0 and g['party']['radio'] == 0 and 'volume' in g and 'title' in g and 'balance' not in g and 'outputs' not in g, g
 assert res[80]['rc'] == -100 - 8, res[80]                                         # adding needs the guest's id (400)

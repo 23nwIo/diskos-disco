@@ -48,6 +48,24 @@ static rmt_route_t preq(const char *method, const char *path, const char *body){
     return rmt_route_party(&r, "Fest_1");
 }
 /* Hit&Guess (Jo, 2026-11-18): the players' requests on the guests' link, the host's on the own link */
+/* Jukebox guests and Bandcamp (Jo, 2026-11-22): search, a page and a pick of one track, as themselves */
+static void test_party_bandcamp(void){
+    rmt_route_t r = preq("GET", "/Fest_1/api/bandcamp?g=AnnaAnnaAnna1234", NULL);
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BANDCAMP && r.cmd.sub == RMT_BC_STATE && r.cmd.guest);
+    CHECK(preq("GET", "/Fest_1/api/bandcamp", NULL).kind == RMT_R_BAD_PARAM);                 /* a guest is their id */
+    r = preq("POST", "/Fest_1/api/bandcamp", "action=search&q=aphex&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_SEARCH && !strcmp(r.cmd.q, "aphex"));
+    r = preq("POST", "/Fest_1/api/bandcamp", "action=open&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_OPEN);
+    r = preq("POST", "/Fest_1/api/bandcamp", "action=download&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&track=2&g=AnnaAnnaAnna1234");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_DOWNLOAD && r.cmd.pos == 2);
+    /* not a whole album, nor the host's own actions */
+    CHECK(preq("POST", "/Fest_1/api/bandcamp", "action=download&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&g=AnnaAnnaAnna1234").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/bandcamp", "action=play&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&g=AnnaAnnaAnna1234").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/bandcamp", "action=quality&q=1&g=AnnaAnnaAnna1234").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("POST", "/Fest_1/api/bandcamp", "action=fav_remove&url=x&g=AnnaAnnaAnna1234").kind == RMT_R_NOT_FOUND);
+    CHECK(preq("GET", "/Fest_1/api/bandcamp?favs=1&g=AnnaAnnaAnna1234", NULL).kind == RMT_R_NOT_FOUND);
+}
 static void test_game(void){
     rmt_route_t r = preq("GET", "/Fest_1/api/game?g=AnnaAnnaAnna1234", NULL);
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_GAME && r.cmd.sub == RMT_G_STATE && r.cmd.guest && !strcmp(r.cmd.gid, "AnnaAnnaAnna1234"));
@@ -834,6 +852,7 @@ int main(int argc, char **argv){
     test_core();
     test_party();
     test_game();
+    test_party_bandcamp();
     test_server();
     if(fails){ fprintf(stderr, "%d check(s) failed\n", fails); return 1; }
     puts("PASS remote control: parsing, routing, token, JSON, HTTP round trip");

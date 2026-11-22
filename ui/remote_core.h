@@ -116,7 +116,7 @@ typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_A
 /* Party mode: guests use their own link /<party name>/ with a reduced page (rmt_route_party). The settings, as numbers;
  * "on" is the mode of that link: 0 off, 1 the party, 2 the game Hit&Guess (one at a time, Jo 2026-11-18): */
 enum { RMT_P_ON, RMT_P_VOL, RMT_P_MAXVOL, RMT_P_NP, RMT_P_QUEUE, RMT_P_SKIP, RMT_P_TOTAL, RMT_P_CONSEC, RMT_P_REPEAT,
-       RMT_P_RADIO, RMT_P_NAMES, RMT_P_UPLOAD, RMT_P_UPMAX, RMT_P_N };
+       RMT_P_RADIO, RMT_P_NAMES, RMT_P_UPLOAD, RMT_P_UPMAX, RMT_P_BANDCAMP, RMT_P_N };
 typedef struct { const char *key; int min, max, def; } rmt_party_key_t;
 extern const rmt_party_key_t RMT_PARTY_KEYS[RMT_P_N];   /* key = the API parameter and (with "party_") the cfg key */
 #define RMT_PARTY_NAME_MAX 32

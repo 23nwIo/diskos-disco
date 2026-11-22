@@ -35,6 +35,7 @@
 
 #include "own_player.h"
 #include "hitguess.h"
+#include "bandcamp.h"
 int settings_outputs_state(opl_outputs_t *o, int *auto_out);   /* settings.c */
 #define GUESTS 128
 static struct { char gid[RMT_GID_MAX + 1], name[RMT_GNAME_MAX + 1]; uint32_t seen; char *stations; } g_guest[GUESTS];
@@ -134,13 +135,14 @@ static int guest_slot(const char *gid){                  /* 1-based "who", 0 non
     int free_at = -1; uint32_t oldest = 0;
     for(int i = 0; i < GUESTS; i++){
         if(!g_guest[i].gid[0]){ free_at = i; break; }
-        int queued = 0;                                   /* a guest with songs in the queue keeps the slot (the queue names them) */
+        int queued = bandcamp_guest_waiting(i + 1);       /* a guest with songs in the queue (or on their way) keeps the slot (the queue names them) */
         for(int q = 0, n = queue_count(); q < n && !queued; q++) queued = queue_item_who(q) == i + 1;
         if(queued || queue_now_who() == i + 1) continue;
         uint32_t age = lv_tick_elaps(g_guest[i].seen);
         if(free_at < 0 || age > oldest){ free_at = i; oldest = age; }
     }
     if(free_at < 0) return 0;
+    if(g_guest[free_at].gid[0]) bandcamp_guest_gone(free_at + 1);
     free(g_guest[free_at].stations);
     memset(&g_guest[free_at], 0, sizeof g_guest[free_at]);
     snprintf(g_guest[free_at].gid, sizeof g_guest[free_at].gid, "%s", gid);
@@ -151,8 +153,8 @@ const char *party_guest_name(int who){
     if(who < 1 || who > GUESTS || !g_guest[who - 1].gid[0]) return "";
     return g_guest[who - 1].name[0] ? g_guest[who - 1].name : "a guest";
 }
-static int queued_by(int who){
-    int k = 0;
+static int queued_by(int who){                            /* also their Bandcamp picks on their way */
+    int k = who ? bandcamp_guest_waiting(who) : 0;
     for(int i = 0, n = queue_count(); i < n; i++) k += queue_item_who(i) == who;
     return k;
 }
@@ -212,10 +214,11 @@ static char *state_json(int who){
     int np = cfg_val(RMT_P_NP), names = cfg_val(RMT_P_NAMES), total = cfg_val(RMT_P_TOTAL), mine = who ? queued_by(who) : 0;
     rmt_buf_t b; memset(&b, 0, sizeof b);
     rmt_buf_printf(&b, "{\"ok\":true,\"party\":{\"np\":%d,\"queue\":%d,\"vol\":%d,\"skip\":%d,\"radio\":%d,\"names\":%d,"
-                   "\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"upload\":%d,\"upmax\":%d,\"you\":",
+                   "\"total\":%d,\"consec\":%d,\"repeat\":%d,\"mine\":%d,\"left\":%d,\"radio_end\":%d,\"radio_now\":%d,\"upload\":%d,\"upmax\":%d,\"bandcamp\":%d,\"you\":",
                    np, cfg_val(RMT_P_QUEUE), cfg_val(RMT_P_VOL), cfg_val(RMT_P_SKIP), radio_ok(), names,
                    total, cfg_val(RMT_P_CONSEC), cfg_val(RMT_P_REPEAT), mine, total > mine ? total - mine : 0,
-                   radio_ok() && own_player(), radio_ok() && cfg_val(RMT_P_SKIP), cfg_val(RMT_P_UPLOAD), cfg_val(RMT_P_UPMAX));
+                   radio_ok() && own_player(), radio_ok() && cfg_val(RMT_P_SKIP), cfg_val(RMT_P_UPLOAD), cfg_val(RMT_P_UPMAX),
+                   cfg_val(RMT_P_BANDCAMP));
     rmt_buf_str(&b, who && names ? g_guest[who - 1].name : "");
     rmt_buf_printf(&b, "},\"playing\":%s,\"has_track\":%s,\"controllable\":%s,\"source\":",
                    s.playing ? "true" : "false", np && s.has_track ? "true" : "false", s.controllable ? "true" : "false");
@@ -260,9 +263,9 @@ static char *queue_json(int who){
 }
 
 /* ---------------------------------------------------------------- a guest adds a song */
-static int add_song(int who, int id, const char **why, char **body){
+static int add_song_as(int who, int id, int picks, const char **why, char **body){   /* picks: of theirs on their way, not counted */
     if(!who){ *why = "Too many guests - try again later"; return -1; }
-    int total = cfg_val(RMT_P_TOTAL), mine = queued_by(who), n = queue_count();
+    int total = cfg_val(RMT_P_TOTAL), mine = queued_by(who) - picks, n = queue_count();
     if(mine >= total){
         *why = total == 1 ? "Your song is still in the queue - you can add another once it plays"
                           : "Your songs are all in the queue - you can add another once one plays";
@@ -293,6 +296,41 @@ static int add_song(int who, int id, const char **why, char **body){
     *body = malloc(64);
     if(*body) snprintf(*body, 64, "{\"ok\":true,\"added\":1,\"place\":%d,\"left\":%d}", at + 1, total - mine - 1);
     return 0;
+}
+static int add_song(int who, int id, const char **why, char **body){ return add_song_as(who, id, 0, why, body); }
+
+/* ---------------------------------------------------------------- Bandcamp (Jo, 2026-11-22: guests pick from Bandcamp too)
+ * The default: a pick is saved to the card like the host's downloads (BandcampDownloads/<artist>/<album>/), goes into
+ * the library and then into the queue as the guest's song; until then it counts as one of their songs. */
+int party_bandcamp_saved(int who, int song_id, const char **why){
+    if(party_mode() != PUBLIC_JUKEBOX){ *why = "The Jukebox has ended"; return -1; }
+    if(who < 1 || who > GUESTS || !g_guest[who - 1].gid[0]){ *why = "The guest has left"; return -1; }
+    char *body = NULL;
+    int r = add_song_as(who, song_id, 1, why, &body);       /* this pick is still counted as on its way */
+    free(body);
+    return r;
+}
+static int guest_bandcamp(int who, const rmt_cmd_t *c, const char **why, char **body){
+    if(!cfg_val(RMT_P_BANDCAMP)){ *why = "The host doesn't let guests pick from Bandcamp"; return -1; }
+    switch(c->sub){
+    case RMT_BC_STATE: *body = bandcamp_guest_json(who); if(!*body){ *why = "Out of memory"; return -1; } return 0;
+    case RMT_BC_SEARCH: return bandcamp_guest_search(who, c->q, why);
+    case RMT_BC_OPEN: return bandcamp_guest_open(who, c->name, why);
+    case RMT_BC_DOWNLOAD: {
+        if(!who){ *why = "Too many guests - try again later"; return -1; }
+        int total = cfg_val(RMT_P_TOTAL), mine = queued_by(who);
+        if(mine >= total){
+            *why = total == 1 ? "Your song is still in the queue - you can add another once it plays"
+                              : "Your songs are all in the queue - you can add another once one plays";
+            return -1;
+        }
+        if(!cfg_val(RMT_P_REPEAT) && bandcamp_guest_waiting_track(c->name, (int)c->pos)){ *why = "That song is already on its way to the queue"; return -1; }
+        if(bandcamp_guest_pick(who, c->name, (int)c->pos, why)) return -1;
+        *body = malloc(64);
+        if(*body) snprintf(*body, 64, "{\"ok\":true,\"left\":%d}", total - mine - 1);
+        return 0; }
+    default: *why = "Not in the Jukebox"; return -1;
+    }
 }
 
 /* ---------------------------------------------------------------- the guests' requests */
@@ -354,6 +392,7 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
         return 0;
     case RMT_CMD_RADIO_SEARCH:
         return remote_exec(&x, why, body);
+    case RMT_CMD_BANDCAMP: return guest_bandcamp(who, c, why, body);
     case RMT_CMD_PARTY_STATIONS:
         if(!who){ *why = "Too many guests - try again later"; return -1; }
         free(g_guest[who - 1].stations);

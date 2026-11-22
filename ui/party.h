@@ -30,4 +30,7 @@ int  party_volume_now(void);
 const char *party_guest_name(int who);
 /* Where guests' uploads go (absolute; "" unless the mode is Jukebox with uploads on) and the largest file in bytes. */
 const char *party_upload_dir(long long *max_bytes);
+/* A guest's Bandcamp pick is in the library now (bandcamp.c, main thread): into the queue for them, by the Jukebox's
+ * rules. 0 queued, -1 not (*why). */
+int  party_bandcamp_saved(int who, int song_id, const char **why);
 #endif

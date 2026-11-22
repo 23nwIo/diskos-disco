@@ -68,20 +68,28 @@ static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static int g_worker, g_jobs;                     /* started; the J_* waiting */
 static unsigned g_wake_bump;                     /* the worker finished something: bandcamp_tick looks */
 
-/* search */
-static char g_sq[96], g_job_sq[96];
-static int g_sstate = S_IDLE, g_nhits;
-static bc_item_t g_hits[BC_MAX_HITS];
-static unsigned g_sgen;
-/* the page opened: an artist's releases or a release's tracks */
-static char g_purl[BC_URL_LEN], g_job_purl[BC_URL_LEN];
-static int g_pstate = S_IDLE, g_pkind;           /* 'b' artist (g_rel), 'r' release (g_page_rel + g_page_t) */
-static bc_item_t *g_rel; static int g_nrel;
-static bc_release_t g_page_rel;
-static bc_track_t *g_page_t; static int g_page_n;
-static time_t g_page_at;                         /* when the release page was fetched (its stream links' age) */
-static char g_artist_name[BC_NAME_LEN];
-static unsigned g_pgen;
+/* What a search found and the page opened: the host's (view 0: the Remote page and the Disc) and one each for up to
+ * BC_GUEST_VIEWS Jukebox guests (party.c, Jo 2026-11-22), so a guest's search doesn't replace the host's. */
+#define BC_VIEWS (1 + BC_GUEST_VIEWS)
+typedef struct {
+    int who; time_t used;                        /* the guest (0 the host); when last asked for */
+    int jobs;                                    /* J_SEARCH | J_OPEN waiting */
+    char sq[96], job_sq[96];                     /* search */
+    int sstate, nhits;
+    bc_item_t hits[BC_MAX_HITS];
+    unsigned sgen;
+    char purl[BC_URL_LEN], job_purl[BC_URL_LEN]; /* the page opened: an artist's releases or a release's tracks */
+    int pstate, pkind;                           /* 'b' artist (rel), 'r' release (page_rel + page_t) */
+    bc_item_t *rel; int nrel;
+    bc_release_t page_rel;
+    bc_track_t *page_t; int page_n;
+    time_t page_at;                              /* when the release page was fetched (its stream links' age) */
+    char artist_name[BC_NAME_LEN];
+    unsigned pgen;
+} view_t;
+static view_t g_host_view;
+static view_t *g_view[BC_VIEWS] = { &g_host_view };   /* guests' on first use */
+static int g_view_rr;                            /* the worker serves the guests in turn */
 /* playing */
 static char g_job_play_url[BC_URL_LEN]; static int g_job_play_idx, g_job_play_retry;
 static unsigned g_play_gen;                      /* bumped by every play/stop: a stale download is dropped */
@@ -103,13 +111,17 @@ typedef struct {
     int q;                                  /* BC_Q_* */
     char err[96];
     unsigned id;
+    int who;                                /* a Jukebox guest's pick (party.c): queued for them once saved; 0 the host's */
+    int qstate;                             /* a pick: 0 not yet, 1 queued, -1 not queued (qerr) */
+    char qerr[96];
 } dl_job_t;
 static dl_job_t g_dl[BC_DL_JOBS]; static int g_ndl;
 static unsigned g_dl_id;
 static int g_dl_worker, g_dl_cancel;
 static pthread_cond_t g_dl_cv = PTHREAD_COND_INITIALIZER;
 #define BC_LIB_MAX 256
-static char *g_lib[BC_LIB_MAX]; static int g_nlib;  /* saved files the main thread puts into the library */
+typedef struct { char *path; unsigned job; int who; } lib_t;
+static lib_t g_lib[BC_LIB_MAX]; static int g_nlib;  /* saved files the main thread puts into the library (and a pick into the queue) */
 
 /* ================================================================ downloads (worker) */
 static char *slurp(const char *path, size_t max, size_t *len){
@@ -138,23 +150,24 @@ static char *fetch(const char *url, const char *post, const char *path, size_t *
     unlink(path);
     return b;
 }
-static void job_search(const char *q, unsigned gen){
+static void job_search(int vi, const char *q, unsigned gen){
     char body[300]; size_t len = 0;
     char *js = bc_search_body(q, body, sizeof body) > 0 ? fetch(BC_SEARCH_URL, body, BC_TMP_SEARCH, &len) : NULL;
     static bc_item_t hits[BC_MAX_HITS];
     int n = js ? bc_parse_search(js, len, hits, BC_MAX_HITS) : -1;
     free(js);
     pthread_mutex_lock(&g_mu);
-    if(gen == g_sgen){
-        if(n >= 0){ memcpy(g_hits, hits, sizeof hits[0] * (size_t)n); g_nhits = n; g_sstate = S_DONE; }
-        else { g_nhits = 0; g_sstate = S_FAIL; }
+    view_t *v = g_view[vi];
+    if(gen == v->sgen){
+        if(n >= 0){ memcpy(v->hits, hits, sizeof hits[0] * (size_t)n); v->nhits = n; v->sstate = S_DONE; }
+        else { v->nhits = 0; v->sstate = S_FAIL; }
         g_wake_bump++;
     }
     pthread_mutex_unlock(&g_mu);
-    fprintf(stderr, "bandcamp: search \"%s\": %d results\n", q, n);
+    fprintf(stderr, "bandcamp: search \"%s\"%s: %d results\n", q, vi ? " (a guest)" : "", n);
 }
 static int is_release_url(const char *u){ return strstr(u, "/album/") || strstr(u, "/track/"); }
-static void job_open(const char *url, unsigned gen){
+static void job_open(int vi, const char *url, unsigned gen){
     char page[BC_URL_LEN + 8];
     int release = is_release_url(url);
     if(release) snprintf(page, sizeof page, "%s", url);
@@ -177,11 +190,12 @@ static void job_open(const char *url, unsigned gen){
         free(h);
     }
     pthread_mutex_lock(&g_mu);
-    if(gen == g_pgen){
-        free(g_rel); free(g_page_t); g_rel = NULL; g_page_t = NULL; g_nrel = g_page_n = 0;
-        if(kind == 'b'){ g_rel = rel; g_nrel = n; rel = NULL; snprintf(g_artist_name, sizeof g_artist_name, "%s", artist); }
-        if(kind == 'r'){ g_page_rel = r; g_page_t = t; g_page_n = n; t = NULL; g_page_at = time(NULL); }
-        g_pkind = kind; g_pstate = kind ? S_DONE : S_FAIL;
+    view_t *v = g_view[vi];
+    if(gen == v->pgen){
+        free(v->rel); free(v->page_t); v->rel = NULL; v->page_t = NULL; v->nrel = v->page_n = 0;
+        if(kind == 'b'){ v->rel = rel; v->nrel = n; rel = NULL; snprintf(v->artist_name, sizeof v->artist_name, "%s", artist); }
+        if(kind == 'r'){ v->page_rel = r; v->page_t = t; v->page_n = n; t = NULL; v->page_at = time(NULL); }
+        v->pkind = kind; v->pstate = kind ? S_DONE : S_FAIL;
         g_wake_bump++;
     }
     pthread_mutex_unlock(&g_mu);
@@ -203,8 +217,9 @@ static void job_play(const char *url, int idx, int retry, unsigned gen){
     int n = -1;
     const char *err = NULL;
     pthread_mutex_lock(&g_mu);   /* the page just opened is fresh enough, unless the player said its links failed */
-    int cached = !retry && t && g_pkind == 'r' && g_page_t && !strcmp(g_page_rel.url, url) && time(NULL) - g_page_at < BC_FRESH_S;
-    if(cached){ r = g_page_rel; n = g_page_n; memcpy(t, g_page_t, sizeof *t * (size_t)n); }
+    const view_t *v = &g_host_view;
+    int cached = !retry && t && v->pkind == 'r' && v->page_t && !strcmp(v->page_rel.url, url) && time(NULL) - v->page_at < BC_FRESH_S;
+    if(cached){ r = v->page_rel; n = v->page_n; memcpy(t, v->page_t, sizeof *t * (size_t)n); }
     pthread_mutex_unlock(&g_mu);
     if(!cached && t){
         char *h = fetch(url, NULL, BC_TMP_PLAY, NULL);
@@ -245,30 +260,41 @@ static void *worker(void *arg){
     (void)arg;
     for(;;){
         pthread_mutex_lock(&g_mu);
-        while(!g_jobs) pthread_cond_wait(&g_cv, &g_mu);
-        /* playing first: someone is waiting to hear it */
-        int job = (g_jobs & J_PLAY) ? J_PLAY : (g_jobs & J_OPEN) ? J_OPEN : J_SEARCH;
-        g_jobs &= ~job;
+        int vi = -1;
+        for(;;){
+            if(g_jobs & J_PLAY) break;                          /* playing first: someone is waiting to hear it */
+            if(g_host_view.jobs){ vi = 0; break; }               /* then the host, then the guests in turn */
+            for(int k = 1; k < BC_VIEWS && vi < 0; k++){ int i = 1 + (g_view_rr + k - 1) % BC_GUEST_VIEWS; if(g_view[i] && g_view[i]->jobs) vi = i; }
+            if(vi >= 0){ g_view_rr = vi; break; }
+            pthread_cond_wait(&g_cv, &g_mu);
+        }
+        int job;
         char s[BC_URL_LEN]; int idx = g_job_play_idx, retry = g_job_play_retry; unsigned gen;
-        if(job == J_SEARCH){ snprintf(s, sizeof s, "%s", g_job_sq); gen = g_sgen; }
-        else if(job == J_OPEN){ snprintf(s, sizeof s, "%s", g_job_purl); gen = g_pgen; }
-        else { snprintf(s, sizeof s, "%s", g_job_play_url); gen = g_play_gen; }
+        if(vi < 0){ job = J_PLAY; g_jobs &= ~J_PLAY; snprintf(s, sizeof s, "%s", g_job_play_url); gen = g_play_gen; }
+        else {
+            view_t *v = g_view[vi];
+            job = (v->jobs & J_OPEN) ? J_OPEN : J_SEARCH;
+            v->jobs &= ~job;
+            if(job == J_SEARCH){ snprintf(s, sizeof s, "%s", v->job_sq); gen = v->sgen; }
+            else { snprintf(s, sizeof s, "%s", v->job_purl); gen = v->pgen; }
+        }
         pthread_mutex_unlock(&g_mu);
-        if(job == J_SEARCH) job_search(s, gen);
-        else if(job == J_OPEN) job_open(s, gen);
+        if(job == J_SEARCH) job_search(vi, s, gen);
+        else if(job == J_OPEN) job_open(vi, s, gen);
         else job_play(s, idx, retry, gen);
         ui_loop_wake();
     }
     return NULL;
 }
-static void post_job(int job){                          /* caller holds g_mu */
+static void post_job(view_t *v, int job){              /* caller holds g_mu; v NULL: J_PLAY */
     if(!g_worker){
         pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
         pthread_attr_setstacksize(&a, 256 * 1024);
         if(pthread_create(&t, &a, worker, NULL) == 0) g_worker = 1;
         pthread_attr_destroy(&a);
     }
-    g_jobs |= job; pthread_cond_signal(&g_cv);
+    if(v) v->jobs |= job; else g_jobs |= job;
+    pthread_cond_signal(&g_cv);
 }
 
 /* ================================================================ saving to the card (download worker) */
@@ -290,9 +316,9 @@ static void dl_set(unsigned id, int state, int done, const char *err){   /* the 
     pthread_mutex_unlock(&g_mu);
     ui_loop_wake();
 }
-static void lib_push(const char *path){
+static void lib_push(const dl_job_t *j, const char *path){
     pthread_mutex_lock(&g_mu);
-    if(g_nlib < BC_LIB_MAX){ g_lib[g_nlib] = strdup(path); if(g_lib[g_nlib]) g_nlib++; }
+    if(g_nlib < BC_LIB_MAX){ lib_t *l = &g_lib[g_nlib]; l->path = strdup(path); l->job = j->id; l->who = j->who; if(l->path) g_nlib++; }
     pthread_mutex_unlock(&g_mu);
 }
 static int room_for(const char *dir, long long bytes){
@@ -396,7 +422,7 @@ static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, con
             if(!audio_name(e->d_name)) continue;
             int old = 0; for(int i = 0; i < nhad && !old; i++) old = had[i] && !strcmp(had[i], e->d_name);
             char p[PATH_MAX + 300]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-            lib_push(p);
+            lib_push(j, p);
             if(!old) (*done)++;
         }
         if(d) closedir(d);
@@ -413,7 +439,7 @@ static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, con
             struct stat sb;
             if(stat(path, &sb) == 0) fprintf(stderr, "bandcamp: %s is already on the card\n", path);
             else if(rename(part, path)) err = "Couldn't write to the SD card";
-            if(!err){ lib_push(path); (*done)++; }
+            if(!err){ lib_push(j, path); (*done)++; }
         }
     }
     unlink(part);
@@ -485,7 +511,7 @@ static void job_download(const dl_job_t *j){
         struct stat sb;
         if(!sd_io_begin()){ err = "The SD card is not available right now"; break; }
         if(stat(path, &sb) == 0){                                        /* saved before: only into the library */
-            sd_io_end(); lib_push(path); dl_set(j->id, -1, ++done, NULL);
+            sd_io_end(); lib_push(j, path); dl_set(j->id, -1, ++done, NULL);
             fprintf(stderr, "bandcamp: %s is already on the card\n", path);
             continue;
         }
@@ -505,7 +531,7 @@ static void job_download(const dl_job_t *j){
         sd_io_end();
         if(werr){ err = werr; fprintf(stderr, "bandcamp: %s: %s (wget %d)\n", path, werr, rc); break; }
         fprintf(stderr, "bandcamp: saved %s\n", path);
-        lib_push(path); dl_set(j->id, -1, ++done, NULL);
+        lib_push(j, path); dl_set(j->id, -1, ++done, NULL);
     }
     free(jpg); free(t);
     dl_set(j->id, err ? (!strcmp(err, "Stopped") ? D_CANCEL : D_FAIL) : D_DONE, done, err);
@@ -517,7 +543,8 @@ static void *dl_worker(void *arg){
         pthread_mutex_lock(&g_mu);
         int k;
         for(;;){
-            for(k = 0; k < g_ndl && g_dl[k].state != D_WAIT; k++){}
+            for(k = 0; k < g_ndl && (g_dl[k].state != D_WAIT || !g_dl[k].who); k++){}   /* a guest's pick first: they wait for it */
+            if(k == g_ndl) for(k = 0; k < g_ndl && g_dl[k].state != D_WAIT; k++){}
             if(k < g_ndl) break;
             pthread_cond_wait(&g_dl_cv, &g_mu);
         }
@@ -541,32 +568,36 @@ const char *bandcamp_last_error(void){
     pthread_mutex_lock(&g_mu); snprintf(e, sizeof e, "%s", g_err); pthread_mutex_unlock(&g_mu);
     return e;
 }
-int bandcamp_search(const char *q, const char **why){
-    char t[sizeof g_sq]; snprintf(t, sizeof t, "%s", q ? q : "");
+static int search_in(view_t *v, const char *q, const char **why){   /* caller holds g_mu */
+    char t[sizeof v->sq]; snprintf(t, sizeof t, "%s", q ? q : "");
     size_t n = strlen(t); while(n && t[n - 1] == ' ') t[--n] = 0;
     if(!t[0]){ *why = "Type what to search for"; return -1; }
-    pthread_mutex_lock(&g_mu);
-    snprintf(g_sq, sizeof g_sq, "%s", t); snprintf(g_job_sq, sizeof g_job_sq, "%s", t);
-    g_sgen++; g_sstate = S_BUSY; g_nhits = 0;
-    post_job(J_SEARCH);
-    pthread_mutex_unlock(&g_mu);
+    snprintf(v->sq, sizeof v->sq, "%s", t); snprintf(v->job_sq, sizeof v->job_sq, "%s", t);
+    v->sgen++; v->sstate = S_BUSY; v->nhits = 0;
+    post_job(v, J_SEARCH);
     return 0;
 }
-int bandcamp_open(const char *url, const char **why){
+static int open_in(view_t *v, const char *url, const char **why){  /* caller holds g_mu */
     char u[BC_URL_LEN];
     if(bc_url_join(NULL, url, u, sizeof u)){ *why = "That is not a Bandcamp address"; return -1; }
-    pthread_mutex_lock(&g_mu);
-    snprintf(g_purl, sizeof g_purl, "%s", u); snprintf(g_job_purl, sizeof g_job_purl, "%s", u);
-    g_pgen++; g_pstate = S_BUSY;
-    post_job(J_OPEN);
-    pthread_mutex_unlock(&g_mu);
+    snprintf(v->purl, sizeof v->purl, "%s", u); snprintf(v->job_purl, sizeof v->job_purl, "%s", u);
+    v->pgen++; v->pstate = S_BUSY;
+    post_job(v, J_OPEN);
     return 0;
+}
+int bandcamp_search(const char *q, const char **why){
+    pthread_mutex_lock(&g_mu); int r = search_in(&g_host_view, q, why); pthread_mutex_unlock(&g_mu);
+    return r;
+}
+int bandcamp_open(const char *url, const char **why){
+    pthread_mutex_lock(&g_mu); int r = open_in(&g_host_view, url, why); pthread_mutex_unlock(&g_mu);
+    return r;
 }
 static void play_job(const char *url, int idx, int retry){   /* caller holds g_mu */
     snprintf(g_job_play_url, sizeof g_job_play_url, "%s", url);
     g_job_play_idx = idx; g_job_play_retry = retry;
     g_play_gen++; g_play_ready = 0; g_pstate_play = P_STARTING; g_err[0] = 0;
-    post_job(J_PLAY);
+    post_job(NULL, J_PLAY);
 }
 int bandcamp_play(const char *url, int idx, const char **why){
     char u[BC_URL_LEN];
@@ -582,7 +613,7 @@ static int g_quality = -1;                       /* BC_Q_*, -1 not read yet */
 int bandcamp_quality(void){ if(g_quality < 0){ g_quality = cfg_get_int("bc_quality", BC_Q_BEST); if(g_quality < 0 || g_quality > BC_Q_STREAM) g_quality = BC_Q_BEST; } return g_quality; }
 void bandcamp_set_quality(int q){ if(q < 0 || q > BC_Q_STREAM) return; g_quality = q; cfg_set_int("bc_quality", q); }
 const char *bandcamp_quality_name(int q){ static const char *n[] = { "Best (FLAC)", "MP3 V0", "MP3 320", "Stream (128 kbit/s)" }; return q >= 0 && q <= BC_Q_STREAM ? n[q] : ""; }
-int bandcamp_download(const char *url, int idx, const char **why){
+static int download_as(const char *url, int idx, int who, const char **why){
     char u[BC_URL_LEN];
     if(bc_url_join(NULL, url, u, sizeof u) || !is_release_url(u)){ *why = "That is not a Bandcamp album or track"; return -1; }
     if(idx < -1 || idx >= BC_MAX_TRACKS){ *why = "No such track"; return -1; }
@@ -591,13 +622,13 @@ int bandcamp_download(const char *url, int idx, const char **why){
         if((g_dl[i].state == D_WAIT || g_dl[i].state == D_RUN) && !strcmp(g_dl[i].url, u) && (g_dl[i].idx == idx || g_dl[i].idx == -1)){
             pthread_mutex_unlock(&g_mu); *why = "That is already being saved"; return -1; }
     if(g_ndl == BC_DL_JOBS){                                      /* forget the oldest finished one */
-        int k; for(k = 0; k < g_ndl && (g_dl[k].state == D_WAIT || g_dl[k].state == D_RUN); k++){}
+        int k; for(k = 0; k < g_ndl && (g_dl[k].state == D_WAIT || g_dl[k].state == D_RUN || (g_dl[k].who && g_dl[k].state == D_DONE && !g_dl[k].qstate)); k++){}
         if(k == g_ndl){ pthread_mutex_unlock(&g_mu); *why = "Too many downloads waiting - try again later"; return -1; }
         memmove(&g_dl[k], &g_dl[k + 1], sizeof g_dl[0] * (size_t)(g_ndl - k - 1)); g_ndl--;
     }
     dl_job_t *j = &g_dl[g_ndl++];
     memset(j, 0, sizeof *j);
-    snprintf(j->url, sizeof j->url, "%s", u); j->idx = idx; j->state = D_WAIT; j->id = ++g_dl_id; j->q = bandcamp_quality();
+    snprintf(j->url, sizeof j->url, "%s", u); j->idx = idx; j->state = D_WAIT; j->id = ++g_dl_id; j->q = bandcamp_quality(); j->who = who;
     snprintf(j->title, sizeof j->title, "%.127s", u);
     if(!g_dl_worker){
         pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
@@ -609,9 +640,10 @@ int bandcamp_download(const char *url, int idx, const char **why){
     pthread_cond_signal(&g_dl_cv);
     g_wake_bump++;
     pthread_mutex_unlock(&g_mu);
-    fprintf(stderr, "bandcamp: download %s track %d queued\n", u, idx);
+    fprintf(stderr, "bandcamp: download %s track %d queued%s\n", u, idx, who ? " (a guest's pick)" : "");
     return 0;
 }
+int bandcamp_download(const char *url, int idx, const char **why){ return download_as(url, idx, 0, why); }
 void bandcamp_download_cancel(void){
     pthread_mutex_lock(&g_mu);
     for(int i = 0; i < g_ndl; i++) if(g_dl[i].state == D_WAIT){ g_dl[i].state = D_CANCEL; snprintf(g_dl[i].err, sizeof g_dl[i].err, "Stopped"); }
@@ -625,21 +657,105 @@ int bandcamp_downloading(void){
     pthread_mutex_unlock(&g_mu);
     return n;
 }
+/* ---- Jukebox guests (party.c, main thread): their own searches and pages; a pick is saved, then queued for them */
+static void view_clear(view_t *v){                         /* caller holds g_mu; answers on their way are dropped */
+    free(v->rel); free(v->page_t); v->rel = NULL; v->page_t = NULL; v->nrel = v->page_n = 0;
+    v->jobs = 0; v->sgen++; v->pgen++; v->sstate = v->pstate = S_IDLE; v->nhits = 0; v->pkind = 0;
+    v->sq[0] = v->purl[0] = v->artist_name[0] = 0;
+}
+static view_t *guest_view(int who){                        /* caller holds g_mu; NULL: out of memory */
+    int at = -1;
+    for(int i = 1; i < BC_VIEWS; i++) if(g_view[i] && g_view[i]->who == who){ g_view[i]->used = time(NULL); return g_view[i]; }
+    for(int i = 1; i < BC_VIEWS && at < 0; i++) if(!g_view[i] || !g_view[i]->who) at = i;
+    if(at < 0){ at = 1; for(int i = 2; i < BC_VIEWS; i++) if(g_view[i]->used < g_view[at]->used) at = i; }   /* the longest unused */
+    if(!g_view[at] && !(g_view[at] = calloc(1, sizeof *g_view[at]))) return NULL;
+    view_clear(g_view[at]);
+    g_view[at]->who = who; g_view[at]->used = time(NULL);
+    return g_view[at];
+}
+int bandcamp_guest_search(int who, const char *q, const char **why){
+    if(who <= 0){ *why = "Too many guests - try again later"; return -1; }
+    pthread_mutex_lock(&g_mu);
+    view_t *v = guest_view(who);
+    int r = v ? search_in(v, q, why) : -1;
+    if(!v) *why = "Out of memory";
+    pthread_mutex_unlock(&g_mu);
+    return r;
+}
+int bandcamp_guest_open(int who, const char *url, const char **why){
+    if(who <= 0){ *why = "Too many guests - try again later"; return -1; }
+    pthread_mutex_lock(&g_mu);
+    view_t *v = guest_view(who);
+    int r = v ? open_in(v, url, why) : -1;
+    if(!v) *why = "Out of memory";
+    pthread_mutex_unlock(&g_mu);
+    return r;
+}
+int bandcamp_guest_pick(int who, const char *url, int idx, const char **why){
+    if(who <= 0){ *why = "Too many guests - try again later"; return -1; }
+    if(idx < 0){ *why = "Pick one track"; return -1; }
+    return download_as(url, idx, who, why);
+}
+static int pick_open(const dl_job_t *j){ return j->state == D_WAIT || j->state == D_RUN || (j->state == D_DONE && !j->qstate); }
+int bandcamp_guest_waiting(int who){
+    pthread_mutex_lock(&g_mu);
+    int n = 0; for(int i = 0; i < g_ndl; i++) n += g_dl[i].who == who && pick_open(&g_dl[i]);
+    pthread_mutex_unlock(&g_mu);
+    return n;
+}
+int bandcamp_guest_waiting_track(const char *url, int idx){
+    char u[BC_URL_LEN]; if(bc_url_join(NULL, url, u, sizeof u)) return 0;
+    pthread_mutex_lock(&g_mu);
+    int n = 0; for(int i = 0; i < g_ndl; i++) n += g_dl[i].who && pick_open(&g_dl[i]) && g_dl[i].idx == idx && !strcmp(g_dl[i].url, u);
+    pthread_mutex_unlock(&g_mu);
+    return n;
+}
+void bandcamp_guest_gone(int who){
+    pthread_mutex_lock(&g_mu);
+    for(int i = 1; i < BC_VIEWS; i++) if(g_view[i] && g_view[i]->who == who){ view_clear(g_view[i]); g_view[i]->who = 0; }
+    for(int i = 0; i < g_ndl; i++) if(g_dl[i].who == who){ g_dl[i].who = 0; if(!g_dl[i].qstate) g_dl[i].qstate = -1; }
+    pthread_mutex_unlock(&g_mu);
+}
+#ifndef BC_GUEST_SAVED
+#include "party.h"
+#define BC_GUEST_SAVED party_bandcamp_saved
+#else
+int BC_GUEST_SAVED(int who, int song_id, const char **why);
+#endif
+static void pick_done(const lib_t *l, int id){             /* a guest's pick is in the library: into the queue for them */
+    pthread_mutex_lock(&g_mu);
+    dl_job_t *j = NULL;
+    for(int i = 0; i < g_ndl && !j; i++) if(g_dl[i].id == l->job && g_dl[i].who == l->who && !g_dl[i].qstate) j = &g_dl[i];
+    pthread_mutex_unlock(&g_mu);
+    if(!j) return;                                         /* queued already (one song a pick), or the guest left */
+    const char *why = NULL;
+    int r = id > 0 ? BC_GUEST_SAVED(l->who, id, &why) : -1;
+    if(id <= 0) why = "The Disc couldn't read the song";
+    pthread_mutex_lock(&g_mu);
+    for(int i = 0; i < g_ndl; i++) if(g_dl[i].id == l->job){
+        g_dl[i].qstate = r == 0 ? 1 : -1;
+        snprintf(g_dl[i].qerr, sizeof g_dl[i].qerr, "%s", r == 0 ? "" : why ? why : "Couldn't queue it");
+    }
+    g_wake_bump++;
+    pthread_mutex_unlock(&g_mu);
+    fprintf(stderr, "bandcamp: guest %d's pick %s%s%s\n", l->who, r == 0 ? "queued" : "not queued", r == 0 ? "" : ": ", r == 0 ? "" : why ? why : "");
+}
 /* saved files into the library (main thread: scanner_add_file); while a scan runs they wait */
 static void lib_drain(void){
     if(scanner_active()) return;
     for(;;){
         pthread_mutex_lock(&g_mu);
-        char *p = g_nlib ? g_lib[0] : NULL;
-        if(p){ memmove(g_lib, g_lib + 1, sizeof g_lib[0] * (size_t)(g_nlib - 1)); g_nlib--; }
+        lib_t l = { 0 };
+        if(g_nlib){ l = g_lib[0]; memmove(g_lib, g_lib + 1, sizeof g_lib[0] * (size_t)(g_nlib - 1)); g_nlib--; }
         pthread_mutex_unlock(&g_mu);
-        if(!p) return;
-        int id = scanner_add_file(p);
+        if(!l.path) return;
+        int id = scanner_add_file(l.path);
         if(id < 0 && scanner_active()){ pthread_mutex_lock(&g_mu);   /* a scan began: it waits for that */
-            if(g_nlib < BC_LIB_MAX){ memmove(g_lib + 1, g_lib, sizeof g_lib[0] * (size_t)g_nlib); g_lib[0] = p; g_nlib++; p = NULL; }
-            pthread_mutex_unlock(&g_mu); free(p); return; }
-        if(id <= 0) fprintf(stderr, "bandcamp: the library didn't take %s (%d)\n", p, id);
-        free(p);
+            if(g_nlib < BC_LIB_MAX){ memmove(g_lib + 1, g_lib, sizeof g_lib[0] * (size_t)g_nlib); g_lib[0] = l; g_nlib++; l.path = NULL; }
+            pthread_mutex_unlock(&g_mu); free(l.path); return; }
+        if(id <= 0) fprintf(stderr, "bandcamp: the library didn't take %s (%d)\n", l.path, id);
+        if(l.who) pick_done(&l, id);
+        free(l.path);
     }
 }
 static void send_line(int line){
@@ -824,9 +940,10 @@ char *bandcamp_fav_json(void){ rmt_buf_t b = { 0 }; fav_json(&b); return rmt_buf
 unsigned bandcamp_gen(void){ pthread_mutex_lock(&g_mu); unsigned g = g_wake_bump; pthread_mutex_unlock(&g_mu); return g; }
 int bandcamp_hits(bc_item_t *out, int max, int *state){
     pthread_mutex_lock(&g_mu);
-    int n = g_nhits < max ? g_nhits : max;
-    if(n > 0) memcpy(out, g_hits, sizeof out[0] * (size_t)n);
-    *state = g_sstate;
+    const view_t *v = &g_host_view;
+    int n = v->nhits < max ? v->nhits : max;
+    if(n > 0) memcpy(out, v->hits, sizeof out[0] * (size_t)n);
+    *state = v->sstate;
     pthread_mutex_unlock(&g_mu);
     return n;
 }
@@ -835,14 +952,15 @@ int bandcamp_page(char *url, size_t ulen, int *state, int *kind, char *name, siz
     int n = 0;
     *items = NULL; *tracks = NULL; *kind = 0;
     pthread_mutex_lock(&g_mu);
-    snprintf(url, ulen, "%s", g_purl); *state = g_pstate;
-    if(g_pstate == S_DONE && g_pkind == 'b' && g_nrel > 0 && (*items = malloc(sizeof **items * (size_t)g_nrel))){
-        memcpy(*items, g_rel, sizeof **items * (size_t)g_nrel); n = g_nrel; *kind = 'b';
-        snprintf(name, nlen, "%s", g_artist_name);
-    } else if(g_pstate == S_DONE && g_pkind == 'r'){
-        *rel = g_page_rel; *kind = 'r'; snprintf(name, nlen, "%s", g_page_rel.title);
-        if(g_page_n > 0 && (*tracks = malloc(sizeof **tracks * (size_t)g_page_n))){ memcpy(*tracks, g_page_t, sizeof **tracks * (size_t)g_page_n); n = g_page_n; }
-    } else if(g_pstate == S_DONE) *state = S_FAIL;                     /* out of memory */
+    const view_t *v = &g_host_view;
+    snprintf(url, ulen, "%s", v->purl); *state = v->pstate;
+    if(v->pstate == S_DONE && v->pkind == 'b' && v->nrel > 0 && (*items = malloc(sizeof **items * (size_t)v->nrel))){
+        memcpy(*items, v->rel, sizeof **items * (size_t)v->nrel); n = v->nrel; *kind = 'b';
+        snprintf(name, nlen, "%s", v->artist_name);
+    } else if(v->pstate == S_DONE && v->pkind == 'r'){
+        *rel = v->page_rel; *kind = 'r'; snprintf(name, nlen, "%s", v->page_rel.title);
+        if(v->page_n > 0 && (*tracks = malloc(sizeof **tracks * (size_t)v->page_n))){ memcpy(*tracks, v->page_t, sizeof **tracks * (size_t)v->page_n); n = v->page_n; }
+    } else if(v->pstate == S_DONE) *state = S_FAIL;                     /* out of memory */
     pthread_mutex_unlock(&g_mu);
     return n;
 }
@@ -884,24 +1002,52 @@ static void release_json(rmt_buf_t *b, const bc_release_t *r, const bc_track_t *
     rmt_buf_put(b, "]}");
 }
 static const char *sname(int s){ return s == S_BUSY ? "busy" : s == S_DONE ? "done" : s == S_FAIL ? "failed" : "idle"; }
+static void view_json(rmt_buf_t *b, const view_t *v){     /* "search":{...},"page":{...  (the page left open) */
+    rmt_buf_printf(b, "\"search\":{\"state\":\"%s\",\"q\":", sname(v->sstate));
+    rmt_buf_str(b, v->sq);
+    rmt_buf_put(b, ",\"items\":[");
+    for(int i = 0; i < v->nhits; i++){ if(i) rmt_buf_put(b, ","); item_json(b, &v->hits[i]); }
+    rmt_buf_printf(b, "]},\"page\":{\"state\":\"%s\",\"url\":", sname(v->pstate));
+    rmt_buf_str(b, v->purl);
+    if(v->pstate == S_DONE && v->pkind == 'b'){
+        rmt_buf_put(b, ",\"kind\":\"artist\",\"name\":"); rmt_buf_str(b, v->artist_name);
+        rmt_buf_put(b, ",\"items\":[");
+        for(int i = 0; i < v->nrel; i++){ if(i) rmt_buf_put(b, ","); item_json(b, &v->rel[i]); }
+        rmt_buf_put(b, "]");
+    } else if(v->pstate == S_DONE && v->pkind == 'r'){
+        rmt_buf_put(b, ",\"kind\":\"release\","); release_json(b, &v->page_rel, v->page_t, v->page_n);
+    }
+}
+static const char *const DL_NAMES[] = { "waiting", "saving", "done", "failed", "stopped" };
+char *bandcamp_guest_json(int who){
+    rmt_buf_t b = { 0 };
+    pthread_mutex_lock(&g_mu);
+    const view_t *v = NULL;
+    for(int i = 1; i < BC_VIEWS && !v; i++) if(g_view[i] && g_view[i]->who == who && who > 0) v = g_view[i];
+    static const view_t none;
+    rmt_buf_put(&b, "{\"ok\":true,"); view_json(&b, v ? v : &none);
+    rmt_buf_put(&b, "},\"picks\":[");
+    for(int i = g_ndl - 1, first = 1; i >= 0; i--){             /* newest first */
+        const dl_job_t *j = &g_dl[i];
+        if(who <= 0 || j->who != who) continue;
+        rmt_buf_printf(&b, "%s{\"state\":\"%s\",\"queued\":%s,\"title\":", first ? "" : ",", DL_NAMES[j->state],
+                       j->qstate > 0 ? "true" : "false");
+        rmt_buf_str(&b, j->title);
+        rmt_buf_put(&b, ",\"artist\":"); rmt_buf_str(&b, j->artist);
+        rmt_buf_put(&b, ",\"error\":"); rmt_buf_str(&b, j->qstate < 0 ? j->qerr : j->err);
+        rmt_buf_put(&b, "}");
+        first = 0;
+    }
+    rmt_buf_put(&b, "]}");
+    pthread_mutex_unlock(&g_mu);
+    return rmt_buf_take(&b);
+}
 char *bandcamp_json(void){
     rmt_buf_t b = { 0 };
     int line = bandcamp_active() ? now_line() : -1, quality = bandcamp_quality();
     pthread_mutex_lock(&g_mu);
-    rmt_buf_printf(&b, "{\"ok\":true,\"own_player\":%s,\"quality\":%d,\"search\":{\"state\":\"%s\",\"q\":", BC_OPL_RUNNING() ? "true" : "false", quality, sname(g_sstate));
-    rmt_buf_str(&b, g_sq);
-    rmt_buf_put(&b, ",\"items\":[");
-    for(int i = 0; i < g_nhits; i++){ if(i) rmt_buf_put(&b, ","); item_json(&b, &g_hits[i]); }
-    rmt_buf_printf(&b, "]},\"page\":{\"state\":\"%s\",\"url\":", sname(g_pstate));
-    rmt_buf_str(&b, g_purl);
-    if(g_pstate == S_DONE && g_pkind == 'b'){
-        rmt_buf_put(&b, ",\"kind\":\"artist\",\"name\":"); rmt_buf_str(&b, g_artist_name);
-        rmt_buf_put(&b, ",\"items\":[");
-        for(int i = 0; i < g_nrel; i++){ if(i) rmt_buf_put(&b, ","); item_json(&b, &g_rel[i]); }
-        rmt_buf_put(&b, "]");
-    } else if(g_pstate == S_DONE && g_pkind == 'r'){
-        rmt_buf_put(&b, ",\"kind\":\"release\","); release_json(&b, &g_page_rel, g_page_t, g_page_n);
-    }
+    rmt_buf_printf(&b, "{\"ok\":true,\"own_player\":%s,\"quality\":%d,", BC_OPL_RUNNING() ? "true" : "false", quality);
+    view_json(&b, &g_host_view);
     int st = g_pstate_play;
     rmt_buf_printf(&b, "},\"now\":{\"state\":\"%s\",\"active\":%s,\"error\":",
                    st == P_STARTING ? "starting" : st == P_PLAYING ? "playing" : st == P_ERROR ? "error" : "off",
@@ -912,11 +1058,10 @@ char *bandcamp_json(void){
         release_json(&b, &g_now, g_now_t, g_now_n);
     }
     rmt_buf_put(&b, "},\"downloads\":[");
-    static const char *dn[] = { "waiting", "saving", "done", "failed", "stopped" };
     for(int i = g_ndl - 1; i >= 0; i--){                          /* newest first */
         const dl_job_t *j = &g_dl[i];
-        rmt_buf_printf(&b, "%s{\"state\":\"%s\",\"track\":%d,\"done\":%d,\"total\":%d,\"url\":", i < g_ndl - 1 ? "," : "",
-                       dn[j->state], j->idx, j->done, j->total);
+        rmt_buf_printf(&b, "%s{\"state\":\"%s\",\"track\":%d,\"done\":%d,\"total\":%d,\"guest\":%s,\"url\":", i < g_ndl - 1 ? "," : "",
+                       DL_NAMES[j->state], j->idx, j->done, j->total, j->who ? "true" : "false");
         rmt_buf_str(&b, j->url);
         rmt_buf_put(&b, ",\"title\":"); rmt_buf_str(&b, j->title);
         rmt_buf_put(&b, ",\"artist\":"); rmt_buf_str(&b, j->artist);

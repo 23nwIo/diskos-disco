@@ -62,6 +62,19 @@ int  bandcamp_fav_nocard(void);                 /* 1 = no SD card: no favourites
 unsigned bandcamp_fav_gen(void);                /* changes when the list changed (or was read again) */
 char *bandcamp_fav_json(void);                  /* {"ok":true,"nocard":bool,"items":[...]} malloc'd */
 
+/* Jukebox guests (party.c, Jo 2026-11-22), who = party.c's guest number (1..): each has a search and a page of their
+ * own (up to BC_GUEST_VIEWS at a time; the longest unused makes way). A pick is one track: it is saved to the card as the
+ * host's downloads are (BandcampDownloads/<artist>/<album>/, the download quality), goes into the library and then
+ * into the queue for the guest: party_bandcamp_saved (party.h) applies the Jukebox's rules then. */
+#define BC_GUEST_VIEWS 8
+int  bandcamp_guest_search(int who, const char *q, const char **why);
+int  bandcamp_guest_open(int who, const char *url, const char **why);
+int  bandcamp_guest_pick(int who, const char *url, int idx, const char **why);   /* 0 on its way, -1 (*why) */
+int  bandcamp_guest_waiting(int who);           /* the guest's picks not queued yet (they count as their songs) */
+int  bandcamp_guest_waiting_track(const char *url, int idx);   /* 1: some guest's pick of that track is on its way */
+void bandcamp_guest_gone(int who);              /* party.c gave the number to a new guest */
+char *bandcamp_guest_json(int who);             /* {"ok":true,"search":{...},"page":{...},"picks":[...]} malloc'd */
+
 /* main.c */
 void bandcamp_mode_leaving(void);               /* another source takes over */
 void bandcamp_restart(void);                    /* the output was re-initialised: start the track again */
