@@ -144,6 +144,7 @@ int main(void){
     { char p[600]; size_t len = 0; snprintf(p, sizeof p, "%s/03 Everybody is arrested.mp3", dir);
       char *b = file_text(p, &len);
       CHECK(b && len > 20 && !memcmp(b, "ID3\4", 4) && memmem(b, len, "\3Everybody is arrested", 22) && memmem(b, len, "\377\330\377\340cover", 9));
+      CHECK(b && memmem(b, len, "BANDCAMP_TRACK_ID", 17) && memmem(b, len, "WOAF", 4));
       CHECK(b && len > 14 && !memcmp(b + len - 9, "\377\373\220\000audio", 9) && !memmem(b, len, "xx", 2));   /* its own tag went */
       CHECK(nadded == 1 && !strcmp(added[0], p));
       snprintf(p, sizeof p, "%s/cover.jpg", dir); b = file_text(p, &len);
@@ -174,6 +175,9 @@ int main(void){
       char p[600]; size_t len;
       snprintf(p, sizeof p, "%s/Skycolourgirl - Ambulocetus - 01 Ambulocetus.flac", fd); char *b = file_text(p, &len);
       CHECK(b && len >= 4 && !memcmp(b, "fLaC", 4));
+      /* Bandcamp's ids into its own FLAC: its comments stay, an old BANDCAMP_ one is replaced, the audio follows */
+      CHECK(b && memmem(b, len, "TITLE=Ambulocetus", 17) && memmem(b, len, "BANDCAMP_TRACK_ID=1302076063", 28) && !memmem(b, len, "BANDCAMP_TRACK_ID=1\0", 20)
+            && memmem(b, len, "BANDCAMP_ALBUM_ID=3404045742", 28) && memmem(b, len, "BANDCAMP_BAND_ID=3940683785", 27) && !memcmp(b + len - 7, "\377\370audio", 7));
       CHECK(nadded == 2 && (strstr(added[0], ".flac") && strstr(added[1], ".flac")));
       snprintf(p, sizeof p, "%s/cover.jpg", fd); b = file_text(p, &len);
       CHECK(b && len == 9 && !memcmp(b, "\377\330\377\340cover", 9));   /* ours was there first: theirs isn't written over */

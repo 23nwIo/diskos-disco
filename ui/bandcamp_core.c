@@ -294,6 +294,10 @@ int bc_parse_release(const char *html, bc_release_t *r, bc_track_t *out, int max
         art_url_size(atoll(v), 10, r->cover, sizeof r->cover);
         get_str(js, t, nt, cur, "release_date", v, sizeof v); bc_date(v, r->date, sizeof r->date);
         if(!r->date[0]){ get_str(js, t, nt, 0, "album_release_date", v, sizeof v); bc_date(v, r->date, sizeof r->date); }
+        get_str(js, t, nt, 0, "id", v, sizeof v); if(strspn(v, "0123456789") == strlen(v)) snprintf(r->id, sizeof r->id, "%.20s", v);
+        get_str(js, t, nt, cur, "band_id", v, sizeof v); if(strspn(v, "0123456789") == strlen(v)) snprintf(r->band_id, sizeof r->band_id, "%.20s", v);
+        if(r->type == 'a') snprintf(r->album_id, sizeof r->album_id, "%s", r->id);
+        else { get_str(js, t, nt, cur, "album_id", v, sizeof v); if(strspn(v, "0123456789") == strlen(v)) snprintf(r->album_id, sizeof r->album_id, "%.20s", v); }
         get_str(js, t, nt, 0, "freeDownloadPage", v, sizeof v);
         if(bc_url_ok(v)) snprintf(r->free_dl, sizeof r->free_dl, "%s", v);
         if(r->type == 't') ld_album(html, r->album, sizeof r->album);
@@ -312,6 +316,8 @@ int bc_parse_release(const char *html, bc_release_t *r, bc_track_t *out, int max
             get_str(js, t, nt, k, "duration", v, sizeof v);
             double d = atof(v); x->ms = d > 0 && d < 86400 ? (long)(d * 1000.0 + 0.5) : 0;
             get_str(js, t, nt, k, "track_num", v, sizeof v); x->num = atoi(v);
+            get_str(js, t, nt, k, "track_id", v, sizeof v); if(!v[0]) get_str(js, t, nt, k, "id", v, sizeof v);
+            if(strspn(v, "0123456789") == strlen(v)) snprintf(x->id, sizeof x->id, "%.20s", v);
             get_str(js, t, nt, k, "title_link", v, sizeof v);
             if(bc_url_join(r->url, v, x->page, sizeof x->page)) x->page[0] = 0;
             int f = obj_get(js, t, nt, k, "file");
@@ -514,7 +520,7 @@ unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total,
     char trck[24] = "";
     if(t->num > 0) snprintf(trck, sizeof trck, total > 0 ? "%d/%d" : "%d", t->num, total);
     const char *album = r->album[0] ? r->album : r->type == 't' ? "" : r->title;
-    size_t cap = 10 + 6 * (11 + BC_NAME_LEN) + 32 + (jpg ? 10 + 32 + jlen : 0);
+    size_t cap = 10 + 6 * (11 + BC_NAME_LEN) + 32 + 4 * (10 + 32 + BC_URL_LEN) + (jpg ? 10 + 32 + jlen : 0);
     unsigned char *out = malloc(cap);
     if(!out) return NULL;
     size_t o = 10;
@@ -524,6 +530,13 @@ unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total,
     o = text_frame(out, o, "TPE2", r->artist);
     o = text_frame(out, o, "TRCK", trck);
     o = text_frame(out, o, "TDRC", r->date);
+    {   const char *name[4], *val[4]; int n = bc_id_pairs(r, t, name, val);   /* Bandcamp's ids: TXXX, the page as WOAF */
+        for(int i = 0; i < n; i++){
+            size_t vl = strlen(val[i]), nl = strlen(name[i]);
+            if(!strcmp(name[i], "BANDCAMP_URL")){ memcpy(out + o + 10, val[i], vl); o = frame(out, o, "WOAF", vl); continue; }
+            out[o + 10] = 3; memcpy(out + o + 11, name[i], nl + 1); memcpy(out + o + 12 + nl, val[i], vl);
+            o = frame(out, o, "TXXX", 2 + nl + vl);
+        } }
     if(jpg && jlen){                                                      /* enc 0, "image/jpeg", type 3 (front cover), no description */
         static const unsigned char head[] = "\0image/jpeg\0\3";
         unsigned char *body = out + o + 10;
@@ -533,6 +546,89 @@ unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total,
     }
     memcpy(out, "ID3\4\0\0", 6); syncsafe(out + 6, o - 10);
     *len = o;
+    return out;
+}
+
+/* ---- Bandcamp's ids in the files */
+int bc_id_pairs(const bc_release_t *r, const bc_track_t *t, const char *name[4], const char *val[4]){
+    const char *page = t && t->page[0] ? t->page : r->type == 't' ? r->url : "";
+    const char *v[4] = { t && t->id[0] ? t->id : r->type == 't' ? r->id : "", r->album_id, r->band_id, page };
+    static const char *const nm[4] = { "BANDCAMP_TRACK_ID", "BANDCAMP_ALBUM_ID", "BANDCAMP_BAND_ID", "BANDCAMP_URL" };
+    int n = 0;
+    for(int i = 0; i < 4; i++) if(v[i][0]){ name[n] = nm[i]; val[n] = v[i]; n++; }
+    return n;
+}
+static unsigned get32(const unsigned char *p, int safe){
+    return safe ? ((unsigned)p[0] << 21) | ((unsigned)p[1] << 14) | ((unsigned)p[2] << 7) | p[3]
+                : ((unsigned)p[0] << 24) | ((unsigned)p[1] << 16) | ((unsigned)p[2] << 8) | p[3];
+}
+static void put32(unsigned char *p, size_t v, int safe){
+    if(safe) syncsafe(p, v);
+    else { p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v; }
+}
+unsigned char *bc_id3_add_ids(const unsigned char *tag, size_t tlen, const bc_release_t *r, const bc_track_t *t, size_t *olen){
+    if(tlen < 10 || memcmp(tag, "ID3", 3) || (tag[3] != 3 && tag[3] != 4) || (tag[5] & 0xC0)) return NULL;   /* 2.3/2.4, no unsync / ext. header */
+    size_t body = bc_id3_skip(tag, tlen);
+    if(!body || (tag[5] & 0x10)) return NULL;                                /* a footer: leave it alone */
+    int v4 = tag[3] == 4;
+    const char *name[4], *val[4]; int n = bc_id_pairs(r, t, name, val);
+    size_t cap = body + 4 * (10 + 1 + 20 + 1 + BC_URL_LEN);
+    unsigned char *out = malloc(cap);
+    if(!out) return NULL;
+    size_t o = 10;
+    for(size_t p = 10; p + 10 <= body; ){
+        if(!tag[p]) break;                                                   /* padding */
+        size_t fl = get32(tag + p + 4, v4);
+        if(p + 10 + fl > body){ free(out); return NULL; }
+        int ours = !memcmp(tag + p, "WOAF", 4);
+        if(!memcmp(tag + p, "TXXX", 4) && fl > 10 && !memcmp(tag + p + 11, "BANDCAMP_", 9)) ours = 1;   /* enc 0/3: ASCII name */
+        if(!ours){ memcpy(out + o, tag + p, 10 + fl); o += 10 + fl; }
+        p += 10 + fl;
+    }
+    for(int i = 0; i < n; i++){
+        size_t vl = strlen(val[i]), fl;
+        if(!strcmp(name[i], "BANDCAMP_URL")){ memcpy(out + o, "WOAF", 4); memcpy(out + o + 10, val[i], vl); fl = vl; }
+        else {
+            size_t nl = strlen(name[i]);
+            memcpy(out + o, "TXXX", 4); out[o + 10] = 0;                     /* ISO-8859-1: digits only, readable by 2.3 too */
+            memcpy(out + o + 11, name[i], nl + 1); memcpy(out + o + 12 + nl, val[i], vl); fl = 2 + nl + vl;
+        }
+        put32(out + o + 4, fl, v4); out[o + 8] = out[o + 9] = 0;
+        o += 10 + fl;
+    }
+    memcpy(out, tag, 6); out[5] = 0; put32(out + 6, o - 10, 1);              /* the tag's size is syncsafe in both versions */
+    *olen = o;
+    return out;
+}
+static unsigned le32(const unsigned char *p){ return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }
+static void put_le32(unsigned char *p, size_t v){ p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24); }
+unsigned char *bc_vorbis_add_ids(const unsigned char *vc, size_t len, const bc_release_t *r, const bc_track_t *t, size_t *olen){
+    static const unsigned char vendor[] = "diskOS";
+    const char *name[4], *val[4]; int n = bc_id_pairs(r, t, name, val);
+    size_t cap = len + 16 + 4 * (4 + 20 + 1 + BC_URL_LEN);
+    unsigned char *out = malloc(cap);
+    if(!out) return NULL;
+    size_t o = 0, p = 0; unsigned count = 0, kept = 0;
+    if(vc && len){
+        if(len < 8 || le32(vc) > len - 8){ free(out); return NULL; }
+        size_t vl = le32(vc); memcpy(out, vc, 4 + vl); o = p = 4 + vl;
+        count = le32(vc + p); p += 4;
+    } else { put_le32(out, sizeof vendor - 1); memcpy(out + 4, vendor, sizeof vendor - 1); o = 4 + sizeof vendor - 1; }
+    size_t at = o; o += 4;                                                    /* the count, filled in below */
+    for(unsigned i = 0; i < count; i++){
+        if(p + 4 > len || le32(vc + p) > len - p - 4){ free(out); return NULL; }
+        size_t cl = le32(vc + p);
+        if(!(cl >= 9 && !strncasecmp((const char *)vc + p + 4, "BANDCAMP_", 9))){ memcpy(out + o, vc + p, 4 + cl); o += 4 + cl; kept++; }
+        p += 4 + cl;
+    }
+    for(int i = 0; i < n; i++){
+        size_t nl = strlen(name[i]), vl = strlen(val[i]);
+        put_le32(out + o, nl + 1 + vl); memcpy(out + o + 4, name[i], nl); out[o + 4 + nl] = '='; memcpy(out + o + 5 + nl, val[i], vl);
+        o += 5 + nl + vl; kept++;
+    }
+    put_le32(out + at, kept);
+    if(p < len){ memcpy(out + o, vc + p, len - p); o += len - p; }          /* a framing bit (Ogg) or anything after */
+    *olen = o;
     return out;
 }
 

@@ -402,6 +402,73 @@ static int best_url(const char *free_dl, int q, char *url, size_t un, char *enc,
     }
     return -1;
 }
+/* Bandcamp's ids into a file it sent (bandcamp_core.h bc_id_pairs): MP3 (ID3) and FLAC (Vorbis comments); the rest
+ * is left as it is. Rewritten as <path>.part, then renamed; on any doubt the file stays untouched. The SD lease is held. */
+static int copy_rest(FILE *in, FILE *out){
+    static char buf[64 * 1024]; size_t r;
+    while((r = fread(buf, 1, sizeof buf, in)) > 0) if(fwrite(buf, 1, r, out) != r) return -1;
+    return ferror(in) ? -1 : 0;
+}
+static void tag_ids(const char *path, const bc_release_t *r, const bc_track_t *t){
+    const char *dot = strrchr(path, '.');
+    int mp3 = dot && !strcasecmp(dot, ".mp3"), flac = dot && !strcasecmp(dot, ".flac");
+    const char *name[4], *val[4];
+    if((!mp3 && !flac) || !bc_id_pairs(r, t, name, val)) return;
+    FILE *in = fopen(path, "rbe"); if(!in) return;
+    struct stat sb; unsigned char h[10]; unsigned char *head = NULL, *blk = NULL; size_t hl = 0;
+    const char *why = NULL;
+    if(fstat(fileno(in), &sb) || fread(h, 1, 10, in) != 10) why = "too short";
+    else if(mp3){
+        size_t ts = bc_id3_skip(h, (size_t)sb.st_size);
+        static const unsigned char empty[10] = { 'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0 };
+        unsigned char *old = ts ? malloc(ts) : NULL;
+        if(ts && (!old || fseek(in, 0, SEEK_SET) || fread(old, 1, ts, in) != ts)) why = "unreadable tag";
+        else if(!(head = bc_id3_add_ids(ts ? old : empty, ts ? ts : 10, r, t, &hl))) why = "a tag it can't change";
+        else if(fseek(in, (long)ts, SEEK_SET)) why = "unreadable";
+        free(old);
+    } else {
+        /* "fLaC", then metadata blocks (1 byte last-flag + type, 3 bytes length); the VORBIS_COMMENT (4) gets the ids */
+        if(memcmp(h, "fLaC", 4) || fseek(in, 4, SEEK_SET)) why = "not FLAC";
+        size_t cap = 0; unsigned char *vc = NULL; size_t vl = 0; int last = 0;
+        while(!why && !last){
+            unsigned char bh[4];
+            if(fread(bh, 1, 4, in) != 4){ why = "damaged"; break; }
+            last = bh[0] & 0x80; int type = bh[0] & 0x7f; size_t len = ((size_t)bh[1] << 16) | ((size_t)bh[2] << 8) | bh[3];
+            if(len > (16u << 20) || hl + 4 + len > (24u << 20)){ why = "metadata too big"; break; }
+            unsigned char *b = malloc(len ? len : 1);
+            if(!b || fread(b, 1, len, in) != len){ free(b); why = "damaged"; break; }
+            if(type == 4 && !vc){ vc = b; vl = len; continue; }
+            if(hl + 4 + len > cap){ unsigned char *g = realloc(blk, cap = (hl + 4 + len) * 2 + 4096); if(!g){ free(b); why = "out of memory"; break; } blk = g; }
+            blk[hl] = (unsigned char)type; blk[hl + 1] = (unsigned char)(len >> 16); blk[hl + 2] = (unsigned char)(len >> 8); blk[hl + 3] = (unsigned char)len;
+            memcpy(blk + hl + 4, b, len); hl += 4 + len; free(b);
+        }
+        size_t nl = 0; unsigned char *nv = why ? NULL : bc_vorbis_add_ids(vc, vl, r, t, &nl);
+        if(!why && (!nv || nl >= (1u << 24))) why = "damaged comments";
+        if(!why){                                                          /* fLaC, STREAMINFO and the rest, then ours last */
+            head = malloc(4 + hl + 4 + nl);
+            if(!head) why = "out of memory";
+            else {
+                memcpy(head, "fLaC", 4); memcpy(head + 4, blk, hl);
+                size_t o = 4 + hl; head[o] = 0x80 | 4; head[o + 1] = (unsigned char)(nl >> 16); head[o + 2] = (unsigned char)(nl >> 8); head[o + 3] = (unsigned char)nl;
+                memcpy(head + o + 4, nv, nl); hl = o + 4 + nl;
+                for(size_t q = 4; q < 4 + (hl - 4 - 4 - nl); ){ size_t len = ((size_t)head[q + 1] << 16) | ((size_t)head[q + 2] << 8) | head[q + 3]; head[q] &= 0x7f; q += 4 + len; }
+            }
+        }
+        free(vc); free(nv); free(blk); blk = NULL;
+        if(!why && hl > 4 + 4 && (head[4] & 0x7f) != 0) why = "no STREAMINFO first";
+    }
+    char tmp[PATH_MAX + 16]; snprintf(tmp, sizeof tmp, "%s.part", path);
+    FILE *out = why ? NULL : fopen(tmp, "wbe");
+    if(!why && !out) why = "can't write";
+    if(out){
+        int bad = fwrite(head, 1, hl, out) != hl || copy_rest(in, out);
+        if(fflush(out) || fsync(fileno(out))) bad = 1;
+        if(fclose(out)) bad = 1;
+        if(bad || rename(tmp, path)){ unlink(tmp); why = "couldn't write"; }
+    }
+    fclose(in); free(head); free(blk);
+    if(why) fprintf(stderr, "bandcamp: ids not written into %s: %s\n", path, why);
+}
 /* NULL: saved in the best quality (*done files); else why not (the caller saves the stream instead) */
 static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, const bc_track_t *t, int n, const char *dir, int *done){
     char free_dl[BC_URL_LEN];
@@ -447,6 +514,7 @@ static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, con
             if(!audio_name(e->d_name)) continue;
             int old = 0; for(int i = 0; i < nhad && !old; i++) old = had[i] && !strcmp(had[i], e->d_name);
             char p[PATH_MAX + 300]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+            if(!old) for(int i = 0; i < n; i++) if(bc_local_match(e->d_name, &t[i])){ tag_ids(p, r, &t[i]); break; }
             lib_push(j, p);
             if(!old) (*done)++;
         }
@@ -464,6 +532,7 @@ static const char *job_best(const dl_job_t *j, int q, const bc_release_t *r, con
             struct stat sb;
             if(stat(path, &sb) == 0) fprintf(stderr, "bandcamp: %s is already on the card\n", path);
             else if(rename(part, path)) err = "Couldn't write to the SD card";
+            else tag_ids(path, r, &x);
             if(!err){ lib_push(j, path); (*done)++; }
         }
     }

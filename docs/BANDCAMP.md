@@ -100,6 +100,14 @@ and playing go on meanwhile.
 - Everything else (paid releases, Jo: "Variante B"), the Stream setting, and whenever the free download fails: the
   128 kbit/s stream, its own ID3 tag (if any) replaced by an ID3v2.4 tag (UTF-8) with title, artist, album, album
   artist, track n/N, the release date and the cover (APIC).
+- Bandcamp's ids in the files (Jo, 2026-11-22), so the library can know them after any rescan (a `SOURCE_ID` table
+  in the own player's card database is planned): MP3 (ours from the stream and Bandcamp's own) get ID3
+  `TXXX:BANDCAMP_TRACK_ID`, `TXXX:BANDCAMP_ALBUM_ID`, `TXXX:BANDCAMP_BAND_ID` and `WOAF` = the track's page; FLAC gets
+  Vorbis comments `BANDCAMP_TRACK_ID=`, `BANDCAMP_ALBUM_ID=`, `BANDCAMP_BAND_ID=`, `BANDCAMP_URL=` (an older
+  `BANDCAMP_*` is replaced, the rest stays). The ids come from the page's `data-tralbum` (`id`, `current.band_id`,
+  `current.album_id`, `trackinfo[].track_id`); a file of Bandcamp's ZIP is matched to its track by name
+  (`bc_local_match`). Not yet: Ogg and M4A (`----:com.apple.iTunes:BANDCAMP_TRACK_ID` ...) are left as they are; an
+  ID3 tag that is unsynchronised or has an extended header or footer is left alone.
 - Then: each saved file goes into the library at once (`scanner_add_file`, as the party uploads); while a scan runs
   they wait for it.
 - The card: the SD lease (`sd_io_begin`) is held while a track downloads and is written, as for an upload; at least

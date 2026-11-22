@@ -74,6 +74,7 @@ static void test_album(void){
           && !strncmp(t[0].stream, "https://t4.bcbits.com/stream/60b1860a737fb7198c44dd523451e4ec/mp3-128/940895579?p=0&ts=", 87)
           && strstr(t[0].stream, "&token=") != NULL);
     for(int i = 0; i < n; i++) CHECK(t[i].stream[0] && t[i].num == i + 1);
+    CHECK(!strcmp(r.id, "3255513876") && !strcmp(r.album_id, "3255513876") && !strcmp(r.band_id, "3917876796") && !strcmp(t[0].id, "940895579"));
     CHECK(bc_parse_release(h, &r, t, 2) == 2 && r.ntracks == 6);
     /* the player's list: streamable tracks only, with their index */
     t[2].stream[0] = 0;
@@ -99,6 +100,7 @@ static void test_track(void){
     CHECK(n == 1 && r.type == 't' && !strcmp(r.title, "Soko Linx") && !strcmp(r.artist, "Unicorn Partisans")
           && !strcmp(r.album, "Repression Depression") && !strcmp(r.url, "https://unicornpartisans.bandcamp.com/track/soko-linx"));
     CHECK(!strcmp(t[0].title, "Soko Linx") && t[0].ms == 317432 && t[0].num == 4 && !strncmp(t[0].stream, "https://t4.bcbits.com/stream/", 29));
+    CHECK(!strcmp(r.id, "1017811426") && !strcmp(r.album_id, "3255513876") && !strcmp(r.band_id, "3917876796") && !strcmp(t[0].id, "1017811426"));
     /* one release only: /music shows that release's page */
     bc_item_t it[4]; bc_release_t one;
     CHECK(bc_parse_music(h, "https://unicornpartisans.bandcamp.com", it, 4, &one) == 0 && !strcmp(one.title, "Soko Linx"));
@@ -231,10 +233,44 @@ static void test_local(void){                       /* a saved file is the track
     t.num = 0; snprintf(t.title, sizeof t.title, "Soko Linx");
     CHECK(bc_local_match("Soko Linx.mp3", &t) && !bc_local_match("01 Soko Linx.mp3", &t));
 }
+/* Bandcamp's ids in the files (Jo, 2026-11-22): our ID3 tag, someone's ID3 tag, a FLAC's Vorbis comments */
+static const unsigned char *find(const unsigned char *b, size_t n, const char *s){ return memmem(b, n, s, strlen(s)); }
+static void test_ids(void){
+    bc_release_t r; memset(&r, 0, sizeof r); r.type = 'a';
+    snprintf(r.id, sizeof r.id, "3255513876"); snprintf(r.album_id, sizeof r.album_id, "3255513876"); snprintf(r.band_id, sizeof r.band_id, "3917876796");
+    bc_track_t t; memset(&t, 0, sizeof t); snprintf(t.title, sizeof t.title, "Soko Linx"); t.num = 4;
+    snprintf(t.id, sizeof t.id, "1017811426"); snprintf(t.page, sizeof t.page, "https://unicornpartisans.bandcamp.com/track/soko-linx");
+    const char *nm[4], *v[4];
+    CHECK(bc_id_pairs(&r, &t, nm, v) == 4 && !strcmp(nm[0], "BANDCAMP_TRACK_ID") && !strcmp(v[0], "1017811426") && !strcmp(nm[3], "BANDCAMP_URL"));
+    size_t len = 0; unsigned char *tag = bc_id3_tag(&r, &t, 6, NULL, 0, &len);
+    CHECK(tag && find(tag, len, "TXXX") && find(tag, len, "BANDCAMP_TRACK_ID") && find(tag, len, "1017811426")
+          && find(tag, len, "WOAF") && find(tag, len, "https://unicornpartisans.bandcamp.com/track/soko-linx") && bc_id3_skip(tag, len) == len);
+    /* someone else's 2.3 tag: kept, ours added once (an old one replaced) */
+    unsigned char v23[64] = { 'I', 'D', '3', 3, 0, 0, 0, 0, 0, 0 }; size_t o = 10;
+    memcpy(v23 + o, "TIT2\0\0\0\x05\0\0\0Soko", 15); o += 15;
+    memcpy(v23 + o, "TXXX\0\0\0\x14\0\0\0BANDCAMP_BAND_ID\0\x31\x32", 30); o += 30;
+    v23[9] = (unsigned char)(o - 10);
+    size_t nl = 0; unsigned char *nt = bc_id3_add_ids(v23, o, &r, &t, &nl);
+    CHECK(nt && nt[3] == 3 && bc_id3_skip(nt, nl) == nl && find(nt, nl, "TIT2\0\0\0\x05\0\0\0Soko") && find(nt, nl, "3917876796") && !find(nt, nl, "\x31\x32\x54"));
+    int k = 0; for(const unsigned char *c = nt; c && (c = find(c, nl - (size_t)(c - nt), "BANDCAMP_BAND_ID")); c++) k++;
+    CHECK(k == 1);
+    free(nt);
+    v23[5] = 0x80; CHECK(bc_id3_add_ids(v23, o, &r, &t, &nl) == NULL);       /* unsynchronised: left alone */
+    /* Vorbis comments: the vendor and other comments stay, an old BANDCAMP_ one goes */
+    unsigned char vc[] = "\x06\0\0\0libFLA\x02\0\0\0\x0a\0\0\0TITLE=Soko\x13\0\0\0BANDCAMP_TRACK_ID=1";
+    unsigned char *nv = bc_vorbis_add_ids(vc, sizeof vc - 1, &r, &t, &nl);
+    CHECK(nv && !memcmp(nv, "\x06\0\0\0libFLA\x05\0\0\0\x0a\0\0\0TITLE=Soko", 28) && find(nv, nl, "BANDCAMP_TRACK_ID=1017811426")
+          && !find(nv, nl, "BANDCAMP_TRACK_ID=1\x15") && find(nv, nl, "BANDCAMP_URL=https://"));
+    free(nv);
+    CHECK((nv = bc_vorbis_add_ids(NULL, 0, &r, &t, &nl)) && !memcmp(nv, "\x06\0\0\0diskOS\x04\0\0\0", 14)); free(nv);
+    vc[0] = 0x7f; CHECK(bc_vorbis_add_ids(vc, sizeof vc - 1, &r, &t, &nl) == NULL);
+    free(tag);
+}
 int main(void){
     test_urls();
     test_fav();
     test_local();
+    test_ids();
     test_free();
     test_download();
     test_search();

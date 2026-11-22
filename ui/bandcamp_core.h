@@ -34,6 +34,7 @@ typedef struct {
     char page[BC_URL_LEN];        /* the track's page, "" none */
     long ms;                      /* duration, 0 unknown */
     int  num;                     /* track number, 0 unknown */
+    char id[24];                  /* Bandcamp's track_id (digits), "" unknown */
 } bc_track_t;
 
 typedef struct {
@@ -47,6 +48,9 @@ typedef struct {
     char date[16];                /* the release date, "YYYY-MM-DD", "" unknown */
     char free_dl[BC_URL_LEN];     /* the free download page (name your price / free), "" none */
     int  ntracks;                 /* all tracks, streamable or not */
+    char id[24];                  /* Bandcamp's ids (digits, "" unknown): the page's own (album or track) */
+    char album_id[24];            /* the album: the page's id for an album, a track page's album_id ("" none) */
+    char band_id[24];             /* the artist / label */
 } bc_release_t;
 
 /* An address we fetch: https://, a host, printable ASCII without spaces, quotes or angle brackets, < BC_URL_LEN. */
@@ -92,6 +96,18 @@ size_t bc_id3_skip(const unsigned char *buf, size_t len);
 /* An ID3v2.4 tag (UTF-8) for track t of r (total = the release's track count): TIT2, TPE1, TALB, TPE2, TRCK "n/N",
  * TDRC, and the cover as APIC when jpg is not NULL. malloc'd, *len its size; NULL out of memory. */
 unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total, const unsigned char *jpg, size_t jlen, size_t *len);
+/* Bandcamp's ids in the files (Jo, 2026-11-22; a library table can be filled from them after any rescan):
+ *   ID3: TXXX:BANDCAMP_TRACK_ID / BANDCAMP_ALBUM_ID / BANDCAMP_BAND_ID, WOAF = the track's page
+ *   Vorbis comments (FLAC, Ogg): BANDCAMP_TRACK_ID= / BANDCAMP_ALBUM_ID= / BANDCAMP_BAND_ID= / BANDCAMP_URL=
+ *   (M4A would be ----:com.apple.iTunes:BANDCAMP_TRACK_ID ...; not written yet)
+ * bc_id_pairs: the names and values for track t of r (the empty ones left out); the count (at most 4). */
+int  bc_id_pairs(const bc_release_t *r, const bc_track_t *t, const char *name[4], const char *val[4]);
+/* An existing ID3v2.3/2.4 tag (the whole tag, header included) with the ids added (an older BANDCAMP_* TXXX and WOAF
+ * replaced). malloc'd, *olen; NULL when the tag can't be changed safely (unsynchronised, extended header, damaged). */
+unsigned char *bc_id3_add_ids(const unsigned char *tag, size_t tlen, const bc_release_t *r, const bc_track_t *t, size_t *olen);
+/* A FLAC VORBIS_COMMENT block's body (vc, len; NULL/0: none yet) with the ids added (older BANDCAMP_* comments go).
+ * malloc'd, *olen; NULL damaged or out of memory. */
+unsigned char *bc_vorbis_add_ids(const unsigned char *vc, size_t len, const bc_release_t *r, const bc_track_t *t, size_t *olen);
 /* ---- favourites (docs/BANDCAMP.md "Favourites"): <card>/bandcamp_favorites.txt, one per line, TAB-separated:
  *   <a|b|t> TAB name TAB artist TAB album TAB url TAB art
  * 'b' artist or label, 'a' album, 't' track (its page); lines starting with '#' are comments. At most BC_MAX_FAV. */
