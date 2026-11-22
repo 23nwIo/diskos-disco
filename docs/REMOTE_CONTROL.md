@@ -86,6 +86,11 @@ the system page's **Public** tab. Ending it sets the mode to Off and keeps every
 to the mode on the Public tab, or on the Disc **Settings > Connectivity > Remote Control > Public Mode** (the row shows
 the mode; a tap asks, then ends it). Starting it again is choosing a mode on the Public tab.
 
+A guest's name is one for every public mode: the name given in the Jukebox (its **You** tab) is the name in
+Hit&Guess and the other way round (kept in the guest's browser for the link's address, like their favourites). A
+phone that still shows the old mode's page reloads by itself when the host switches the mode, so players with a name
+join the Hit&Guess lobby without typing it again.
+
 #### Jukebox
 
 | Setting | Default | What it does |

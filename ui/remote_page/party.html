@@ -22,7 +22,10 @@
 @@COMMON@@
 /* the guests' page: who you are is a random id this browser keeps (a private window is a new guest) */
 var GID='',NM='',P=null,V='np',st=[],items=[],tot=0,art='',drag=0,busy=0,qver=-1;
-try{GID=localStorage.getItem('pg')||'';NM=localStorage.getItem('pn')||''}catch(e){}
+/* the guest's name is one for every public mode (Jo, 2026-11-22): 'pn', shared with Hit&Guess (its old 'hn' read too) */
+try{GID=localStorage.getItem('pg')||'';NM=localStorage.getItem('pn')||localStorage.getItem('hn')||''}catch(e){}
+/* the host switched the public mode: the link now serves the other mode's page */
+function moved(m){if(/reload the page/.test(m||'')){location.reload();return 1}}
 if(!/^[A-Za-z0-9]{16}$/.test(GID)){var A='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789',r=new Uint8Array(16);crypto.getRandomValues(r);GID='';r.forEach(function(x){GID+=A[x%A.length]});try{localStorage.setItem('pg',GID)}catch(e){}}
 function who(){return'g='+GID+(NM&&P&&P.names?'&n='+encodeURIComponent(NM):'')}
 function pc(c,b){return cmdj(c,who()+(b?'&'+b:''))}
@@ -31,7 +34,7 @@ function mark(on){return on?'<span style=color:var(--fav)>'+SYM[LK.fav][0]+'</sp
 function rules(p){var t=['You can have '+p.total+(p.total>1?' songs':' song')+' in the queue at a time; a place frees up once one plays.'];
 if(p.consec>=1)t.push(p.consec>1?'At most '+p.consec+' of your songs play in a row.':'Your songs never play twice in a row - guests take turns.');
 if(p.radio)t.push(p.radio_now?'You may pick a radio station that plays now or when the queue is empty.':'A station you pick in Radio plays when the queue is empty.');if(!p.repeat)t.push('A song that is already queued can’t be added again.');return t.join(' ')}
-function poll(){if(document.hidden||busy)return;busy=1;get('api/state').then(function(s){busy=0;if(!s.ok){say(s.message||'Not possible right now');return}
+function poll(){if(document.hidden||busy)return;busy=1;get('api/state').then(function(s){busy=0;if(!s.ok){if(!moved(s.message))say(s.message||'Not possible right now');return}
 var p=P=s.party;$('left').textContent=p.left?p.left+(p.left>1?' songs':' song')+' left to add':'Your songs are queued';$('rules').textContent=rules(p);
 $('npt').classList.toggle('hide',!p.np&&!p.vol&&!p.skip);$('qt').classList.toggle('hide',!p.queue);$('nmw').classList.toggle('hide',!p.names);$('upw').classList.toggle('hide',!p.upload);if(!sts&&FR.length)sendst();
 if(V==='q'&&p.queue&&s.queue_ver!==qver)qload();
