@@ -132,7 +132,7 @@ assert len(res) == len(reqs), r.stdout
 def ok(k): assert res[k]['rc'] == 0, res[k]; return res[k]['body']
 def no(k, why=None): assert res[k]['rc'] == -1 and (why is None or why in res[k]['why']), res[k]
 def names(b): return [p['name'] for p in b['players']]
-no(0, 'The party is over')                                        # the harness routes it; the server answers 404 while the link is off
+no(0, 'No public mode is on')                                        # the harness routes it; the server answers 404 while the link is off
 ok(1); s = ok(2)['set']
 assert s['pick'] == 1 and s['year'] == 1 and s['stagger'] == 1 and s['skip'] == 1 and s['late'] == 1 and s['form'] == 0 and s['countdown'] == 0
 assert ok(3)['set']['form'] == 1 and res[3]['body']['dir'] == 'Music/80s'

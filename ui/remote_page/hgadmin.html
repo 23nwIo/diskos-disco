@@ -4,7 +4,7 @@
 @@STYLE@@
 .pl{display:flex;gap:.5em;align-items:center;padding:.5em 1em;border-bottom:1px solid var(--line)}.pl span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pl button{border:0;border-radius:8px;padding:.35em .6em;background:var(--line);color:var(--fg)}
 .blk select,.blk input{margin-bottom:.2em}#fls .pl{cursor:pointer}
-</style><main><div class=top><h1>Hit&amp;Guess</h1><a href=system#party>System</a></div>
+</style><main><div class=top><h1>Hit&amp;Guess</h1><a href=system#public>System</a></div>
 <div class=card><b id=mode></b><div class='hd hide' id=lw><small id=lk class='hint u' style=flex:1></small><button id=lc>Copy</button></div>
 <div class=tr style='margin:.6em 0 0'><button id=bs class=pp>Start</button><button id=bk class=sm>Skip turn</button><button id=be class=sm>End game</button></div>
 <div class=tr style=margin:0><button id=ba class=sm>New game, same players</button><button id=br class=sm>Empty the lobby</button></div><div id=now class=hint></div></div>
@@ -40,7 +40,7 @@ function adm(b){return cmdj('game_admin',b).then(function(j){if(j.ok)draw(j);ret
 function refresh(){if(document.hidden||document.querySelector('.fixf'))return;fetch('api/game_admin',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.ok)draw(j)}).catch(function(){say('Disc not reachable')})}
 var PH={lobby:'Waiting for players',pick:'Choosing',play:'Playing - the players guess',reveal:'Revealed - ticking',end:'Game over'};
 function draw(j){G=j;var s=j.set,ph=j.phase,P=j.players,run=ph!=='lobby'&&ph!=='end';
-$('mode').textContent=j.mode!==2?'The guests’ link is not set to the game - change it in System > Party.':PH[ph]+(run?' · round '+j.round+' · '+j.songs+' songs'+(j.left>0?' · '+j.left+' left':''):'');
+$('mode').textContent=j.mode!==2?'The public mode is not Hit&Guess - change it in System > Public.':PH[ph]+(run?' · round '+j.round+' · '+j.songs+' songs'+(j.left>0?' · '+j.left+' left':''):'');
 var u=j.link&&j.mode===2?location.origin+'/'+j.link+'/':'';$('lw').classList.toggle('hide',!u);$('lk').textContent=u;
 $('bs').disabled=run||j.mode!==2;$('bk').disabled=$('be').disabled=!run;$('ba').disabled=ph==='lobby';
 var n=$('now');n.textContent='';if(j.turn&&j.turn.song&&(ph==='play'||ph==='reveal'))n.textContent=P[j.cur].name+'’s song: '+j.turn.song.title+' – '+j.turn.song.artist+(j.turn.song.date?' ('+j.turn.song.date+')':'')+(j.turn.chance?' · random':'');

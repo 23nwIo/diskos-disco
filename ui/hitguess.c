@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 /* Hit&Guess (Jo, 2026-11-18): a music quiz for the phones of everybody in the room, on the guests' link while it is
- * in game mode (System > Party: "The guests' link" = Game). The rules are hitguess_core.c; this file adds:
+ * in game mode (System > Public: mode Hit&Guess). The rules are hitguess_core.c; this file adds:
  *  - the setup, kept on the SD card in .diskos/state/hitguess.conf (written only when the host saves it);
  *  - the songs: the whole library, a folder with its subfolders, or a playlist, read when the game starts;
  *  - the playing: a chosen song plays in the all-songs list (as Songs does); hitguess_tick() pauses it at its end so
@@ -294,7 +294,7 @@ static int song_get(int id, song_t *s){ memset(s, 0, sizeof *s); return mdb_rows
 /* ---------------------------------------------------------------- playing */
 static int g_loop;                                       /* Repeat One is on for the game */
 static void loop_check(void){                            /* the game is over or off: the user's play mode again */
-    if(g_loop && (party_mode() != 2 || G.phase == HG_LOBBY || G.phase == HG_END)){ ui_play_mode_restore(); g_loop = 0; }
+    if(g_loop && (party_mode() != PUBLIC_HITGUESS || G.phase == HG_LOBBY || G.phase == HG_END)){ ui_play_mode_restore(); g_loop = 0; }
 }
 static struct { int on, seen, seeks, done; uint32_t at, deadline; char before[160], title[160]; long start, end, dur; } P;
 static void send(rmt_cmd_kind_t k, long arg){
@@ -329,8 +329,8 @@ void hitguess_tick(void){
     static uint32_t last;
     if(last && lv_tick_elaps(last) < 200) return;
     last = lv_tick_get() | 1;
-    if(g_ready || party_mode() == 2){ ready(); screen_update(); }
-    if(P.on && party_mode() == 2) play_tick();
+    if(g_ready || party_mode() == PUBLIC_HITGUESS){ ready(); screen_update(); }
+    if(P.on && party_mode() == PUBLIC_HITGUESS) play_tick();
     loop_check();
 }
 static void play_tick(void){
@@ -389,7 +389,7 @@ static void rank_line(char *out, size_t cap){
 static void phase_sig(char *out, size_t cap){ snprintf(out, cap, "%d/%d/%d", G.phase, G.nt, G.cur); }
 static void scr_tap(lv_event_t *e){ (void)e; phase_sig(g_hide_sig, sizeof g_hide_sig); scr_close(); }
 static void screen_update(void){
-    if(party_mode() != 2){ scr_close(); g_hide_sig[0] = 0; return; }
+    if(party_mode() != PUBLIC_HITGUESS){ scr_close(); g_hide_sig[0] = 0; return; }
     char ps[64]; phase_sig(ps, sizeof ps);
     if(g_hide_sig[0]){ if(!strcmp(ps, g_hide_sig)) return; g_hide_sig[0] = 0; }
     const hg_turn_t *t = G.nt && G.phase >= HG_PLAY ? &G.t[G.nt - 1] : NULL;
@@ -784,7 +784,7 @@ static int host(const rmt_cmd_t *c, const char **why, char **body){
         if(setup_save()){ memcpy(G.set, old, sizeof old); snprintf(g_dir, sizeof g_dir, "%s", od); g_pl = op; *why = "Couldn't save on the SD card - is a card in the Disc?"; return -1; }
         break; }
     case RMT_G_START:
-        if(party_mode() != 2){ *why = "Set the guests' link to the game first (System > Party)"; return -1; }
+        if(party_mode() != PUBLIC_HITGUESS){ *why = "Set the public mode to Hit&Guess first (System > Public)"; return -1; }
         if(G.phase == HG_END) hg_again(&G);
         if(G.phase != HG_LOBBY){ *why = "The game runs already"; return -1; }
         if(!G.np){ *why = "Nobody plays yet - open the game's link on the phones first"; return -1; }
@@ -826,7 +826,7 @@ int hitguess_dispatch(const rmt_cmd_t *c, const char **why, char **body){
     ready();
     int r;
     if(c->kind == RMT_CMD_GAME_ADMIN) r = host(c, why, body);
-    else if(party_mode() != 2){ *why = "No game is on"; r = -1; }
+    else if(party_mode() != PUBLIC_HITGUESS){ *why = "No game is on"; r = -1; }
     else r = player(c, why, body);
     loop_check();
     return r;

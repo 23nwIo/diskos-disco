@@ -1,14 +1,19 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* Party mode: guests use a link of their own, http://<Disc>:8088/<party name>/, with a reduced page (party.html):
+/* Public modes (Jo, 2026-11-22): guests use a link of their own, http://<Disc>:8088/<link name>/. The public mode says
+ * what the link is for, one at a time: Jukebox (below; called party mode until 2026-11-22), the game Hit&Guess
+ * (hitguess.c), or Off. Ending it (System > Public, or Settings > Remote Control > Public Mode on the Disc) only sets
+ * the mode to Off.
+ *
+ * Jukebox: a reduced page (party.html):
  * what plays now, the queue, the library to add songs from, and the volume - each only as far as the host allows on
- * the admin page (System > Party, GET/POST api/party). Nothing changes on the Disc's own screens. With "See what plays
+ * the admin page (System > Public, GET/POST api/party). Nothing changes on the Disc's own screens. With "See what plays
  * now" off, the queue shows other guests' songs without title, artist or length (only the guest's own in full).
  *
  * Guests are told apart by a random id their browser makes and keeps (g=); a private window is a new guest. The ids,
  * names and the songs each queued are kept in memory only: they start afresh after a restart. The settings are kept on
  * the SD card (Jo, 2026-11-16), in .diskos/state/party.conf (sdstate.h), written only when the host changes them;
- * without a card the defaults apply and party mode is off. A guest's radio station becomes the station after the queue
+ * without a card the defaults apply and the public mode is off. A guest's radio station becomes the station after the queue
  * (After the List Ends, radio.c), or plays at once when skipping is allowed too: guests never cut a song short otherwise.
  *
  * Main thread only (remote.c's dispatch calls party_dispatch for every guest request). */
@@ -56,7 +61,7 @@ static void load(void){
     char *t = NULL; size_t n = 0; int r = 0;
     if(sds_begin()){ r = sds_read(PARTY_FILE, &t, &n, 4096); sds_end(); }
     parse(r == 1 ? t : "");
-    if(r < 0) fprintf(stderr, "party: %s on the SD card could not be read - party mode stays off\n", PARTY_FILE);
+    if(r < 0) fprintf(stderr, "party: %s on the SD card could not be read - the public mode stays off\n", PARTY_FILE);
     if(r < 0) g_val[RMT_P_ON] = 0;
     free(t);
 }
@@ -64,7 +69,7 @@ static int cfg_val(int k){ load(); return g_val[k]; }
 static const char *cfg_name(void){ load(); return g_name; }
 static int save(const int *val, const char *name){
     char text[512]; int o = 0;
-    o += snprintf(text + o, sizeof text - (size_t)o, "# diskOS party mode (Remote Control: System > Party)\nname=%s\n", name);
+    o += snprintf(text + o, sizeof text - (size_t)o, "# diskOS public mode (Remote Control: System > Public; on = mode: 0 off, 1 Jukebox, 2 Hit&Guess)\nname=%s\n", name);
     for(int k = 0; k < RMT_P_N && o < (int)sizeof text; k++) o += snprintf(text + o, sizeof text - (size_t)o, "%s=%d\n", RMT_PARTY_KEYS[k].key, val[k]);
     if(o >= (int)sizeof text) return -1;
     int r = -1;
@@ -73,11 +78,35 @@ static int save(const int *val, const char *name){
     return r;
 }
 const char *party_link_name(void){ return cfg_val(RMT_P_ON) ? cfg_name() : ""; }
-int party_mode(void){ return cfg_name()[0] ? cfg_val(RMT_P_ON) : 0; }
+int party_mode(void){ return cfg_name()[0] ? cfg_val(RMT_P_ON) : PUBLIC_OFF; }
+const char *party_mode_label(int mode){ return mode == PUBLIC_JUKEBOX ? "Jukebox" : mode == PUBLIC_HITGUESS ? "Hit&Guess" : "Off"; }
+int party_end(void){
+    g_read_at = 0; load();                                /* the card's current file: only the mode changes */
+    if(!g_val[RMT_P_ON]) return 0;
+    int val[RMT_P_N]; char name[RMT_PARTY_NAME_MAX + 1];
+    memcpy(val, g_val, sizeof val); snprintf(name, sizeof name, "%s", g_name);
+    val[RMT_P_ON] = PUBLIC_OFF;
+    return save(val, name);
+}
+char g_public_lbl[16] = "Off";
+void public_label_refresh(void){ snprintf(g_public_lbl, sizeof g_public_lbl, "%s", party_mode_label(party_mode())); }
+static void end_yes(void){
+    if(party_end()) ui_toast("Couldn't save on the SD card");
+    else ui_toast("Public mode ended");
+    public_label_refresh(); setlist_refresh();
+}
+void public_end_ask(void){
+    public_label_refresh();
+    int m = party_mode();
+    if(m == PUBLIC_OFF){ ui_toast("No public mode is on. Start one on the Remote Control system page."); return; }
+    static char title[40];
+    snprintf(title, sizeof title, "End the public mode (%s)?", party_mode_label(m));
+    fileops_confirm(title, "The guests' link stops working. Its settings stay.", "End", end_yes);
+}
 const char *party_upload_dir(long long *max_bytes){
     static char dir[PATH_MAX];
     *max_bytes = (long long)cfg_val(RMT_P_UPMAX) * 1024 * 1024;
-    if(party_mode() != 1 || !cfg_val(RMT_P_UPLOAD)) return "";
+    if(party_mode() != PUBLIC_JUKEBOX || !cfg_val(RMT_P_UPLOAD)) return "";
     snprintf(dir, sizeof dir, "%s/%s/%s", FOLDERBROWSER_ROOT, RMT_UPLOAD_DIR, cfg_name());
     return dir;
 }
@@ -128,13 +157,13 @@ static int queued_by(int who){
     return k;
 }
 
-/* ---------------------------------------------------------------- the host's settings (System > Party) */
+/* ---------------------------------------------------------------- the host's settings (System > Public) */
 static int admin(const rmt_cmd_t *c, const char **why, char **body){
     if(c->arg){
         const char *tok = remote_token();
-        if(c->name[0] && tok && !strcasecmp(c->name, tok)){ *why = "Choose a party name that is not your own link"; return -1; }
+        if(c->name[0] && tok && !strcasecmp(c->name, tok)){ *why = "Choose a name for the link that is not your own link"; return -1; }
         int turn_on = c->party[RMT_P_ON] >= 1;
-        if(turn_on && !c->name[0] && !cfg_name()[0]){ *why = "Choose a party name first"; return -1; }
+        if(turn_on && !c->name[0] && !cfg_name()[0]){ *why = "Choose a name for the link first"; return -1; }
         int val[RMT_P_N]; char name[RMT_PARTY_NAME_MAX + 1];
         g_read_at = 0; load();                            /* the card's current file, not an old copy */
         for(int k = 0; k < RMT_P_N; k++) val[k] = c->party[k] >= 0 ? c->party[k] : g_val[k];
@@ -284,8 +313,8 @@ int party_volume_now(void){
 int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL;
     if(c->kind == RMT_CMD_PARTY) return admin(c, why, body);
-    if(!party_link_name()[0]){ *why = "The party is over"; return -1; }
-    if(party_mode() == 2){                                 /* a game, not the party: only the game's requests (Jo, 2026-11-18) */
+    if(!party_link_name()[0]){ *why = "No public mode is on"; return -1; }
+    if(party_mode() == PUBLIC_HITGUESS){                                 /* a game, not the party: only the game's requests (Jo, 2026-11-18) */
         if(c->kind == RMT_CMD_GAME || c->kind == RMT_CMD_GAME_SEARCH) return hitguess_dispatch(c, why, body);
         if(c->kind == RMT_CMD_COVER){
             if(!hitguess_cover_ok(c->gid)){ *why = "Not revealed yet"; return -1; }
@@ -358,6 +387,6 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
         if(radio_end_set(RADIO_END_STATION, &st)){ *why = "Couldn't save that"; return -1; }
         return 0; }
     default:
-        *why = "Not at a party"; return -1;
+        *why = "Not in the Jukebox"; return -1;
     }
 }

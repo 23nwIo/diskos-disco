@@ -187,7 +187,7 @@ assert res[75]['rc'] == -1 and res[75]['why'].startswith('Only with the own play
 print('PASS Remote Control queue: add (song, album), list, move, remove, clear, stale version refused')
 # party mode
 p = res[76]['body']; assert p['settings'] == {'on': 0, 'vol': 1, 'maxvol': 100, 'np': 1, 'queue': 1, 'skip': 0, 'total': 3, 'consec': 1, 'repeat': 0, 'radio': 0, 'names': 1, 'upload': 0, 'upmax': 100, 'name': '', 'own_player': False} and p['guests'] == [], p
-assert res[77]['rc'] == -1 and res[77]['why'] == 'Choose a party name first', res[77]
+assert res[77]['rc'] == -1 and res[77]['why'] == 'Choose a name for the link first', res[77]
 assert res[78]['rc'] == 0 and res[78]['body']['settings']['name'] == 'Party_1' and res[78]['body']['settings']['total'] == 2, res[78]
 assert 'name=Party_1\n' in party_conf and 'on=1\n' in party_conf and 'total=2\n' in party_conf, party_conf   # on the SD card
 g = res[79]['body']; assert g['party']['left'] == 2 and g['party']['mine'] == 0 and g['party']['radio'] == 0 and 'volume' in g and 'title' in g and 'balance' not in g and 'outputs' not in g, g

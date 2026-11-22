@@ -1181,7 +1181,7 @@ void remote_pump(void){
     static uint32_t last;
     if(!rsrv_running()) return;
     rsrv_set_party(party_link_name());
-    rsrv_set_party_game(party_mode() == 2);
+    rsrv_set_party_game(party_mode() == PUBLIC_HITGUESS);
     hitguess_tick();
     { long long mx = 0; const char *ud = party_upload_dir(&mx); rsrv_set_upload(ud, mx); }
     rmt_state_t s;

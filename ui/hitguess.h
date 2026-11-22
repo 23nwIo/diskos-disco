@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 /* Hit&Guess on the Disc (hitguess.c): the game of hitguess_core.c with the library, the player, the phones and the
- * host's page. Runs while the guests' link is in game mode (party_mode() 2). Main thread only. */
+ * host's page. Runs while the guests' link is in game mode (public mode Hit&Guess, party_mode() PUBLIC_HITGUESS). Main thread only. */
 #ifndef HITGUESS_H
 #define HITGUESS_H
 #include "remote_core.h"

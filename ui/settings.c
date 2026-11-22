@@ -9,6 +9,7 @@
 #include "ma.h"
 #include "remote.h"
 #include "mpd.h"
+#include "party.h"
 #include "fork_build.h"
 #include "braun.h"
 #include "theme.h"
@@ -600,6 +601,7 @@ static void apply_remote_show(int v){ (void)v; remote_show_link(); }
 static void apply_remote_new(int v){ (void)v; remote_new_link(); }
 static void apply_mpd_on(int v){ mpd_set_on(v); }
 static void apply_mpd_show(int v){ (void)v; mpd_show_access(); }
+static void apply_public(int v){ (void)v; public_end_ask(); }   /* party.c */
 static void apply_ma_forget(int v){ (void)v; ma_forget_servers(); }
 
 static void apply_workmode(int v){ (void)v; modes_open(); }
@@ -1365,6 +1367,8 @@ static const setting_t TABLE[] = {
       "The control page's QR code and address. Anyone with the link can control the player, so keep it private.", NULL },
     { "Remote Control", "New Link", ST_ACTION, NULL, 0,0,0, NULL,0, "New", apply_remote_new, 0,
       "Make a new link. Old links and bookmarks stop working. The MPD password changes with it.", NULL },
+    { "Remote Control", "Public Mode", ST_ACTION, NULL, 0,0,0, NULL,0, g_public_lbl, apply_public, 0,
+      "The guests' link: Jukebox or Hit&Guess, one at a time, set up on the Remote Control system page. Tap to end it; its settings stay.", NULL },
     { "Remote Control", "MPD Server", ST_TOGGLE, "mpd_on", 0,1,1, NULL,0, NULL, apply_mpd_on, 0,
       "On: MPD clients such as mpc or ncmpcpp control the Disc over Wi-Fi (port 6600). The password is the link's code. Unencrypted: use trusted networks only.", NULL },
     { "Remote Control", "MPD Access", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_mpd_show, 0,
@@ -1593,7 +1597,7 @@ static void apply_grp_about(int v){ (void)v; g_active_group = "About"; setlist_r
 static void apply_volkeys_group(int v){ (void)v; g_active_group = "Volume Keys"; setlist_refresh(); }
 static void apply_ma_group(int v){ (void)v; ma_settings_load(); g_active_group = "MA Sendspin"; setlist_refresh(); }
 void settings_open_ma(void){ apply_ma_group(0); }      /* host renders */
-static void apply_remote_group(int v){ (void)v; g_active_group = "Remote Control"; setlist_refresh(); }
+static void apply_remote_group(int v){ (void)v; public_label_refresh(); g_active_group = "Remote Control"; setlist_refresh(); }
 void settings_open_remote(void){ apply_remote_group(0); }   /* host renders */
 void settings_open_volkeys(void){ apply_volkeys_group(0); }   /* host renders */
 void settings_open_ma_delay(void){ for(int i = 0; i < (int)(sizeof TABLE / sizeof TABLE[0]); i++) if(TABLE[i].cfg_key && !strcmp(TABLE[i].cfg_key, "ma_delay_ms")){ settings_open_detail(i); return; } }

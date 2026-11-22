@@ -74,18 +74,24 @@ playlist (the Disc has no reorder function either).
 ### System page
 
 **System ›** at the top right opens a second page, `http://<address>:8088/<link code>/system`, with the **Status**,
-**Bluetooth**, **Screen** and **Party** tabs; **‹ Remote** goes back. The address ends in `#status`, `#bt`, `#scr` or `#party`, so a bookmark
+**Bluetooth**, **Screen** and **Public** tabs; **‹ Remote** goes back. The address ends in `#status`, `#bt`, `#scr` or `#public` (an old `#party` bookmark opens Public), so a bookmark
 opens that tab. Keeping them apart keeps the control page small and quick to load on a phone.
 
-### Party mode
+### Public modes: Jukebox and Hit&Guess
 
-For a party, guests get a page of their own: `http://<address>:8088/<party name>/`, without the link code. Nothing
-changes on the Disc's screens. The host sets it up on the system page's **Party** tab:
+A public mode gives guests a page of their own: `http://<address>:8088/<link name>/`, without the link code. The modes
+exclude each other, one at a time: **Jukebox** (guests add songs to the queue, below; called party mode until
+2026-11-22) or **Hit&Guess** (a music quiz, see below); more multi-user modes can join the list. The host sets it up on
+the system page's **Public** tab. Ending it sets the mode to Off and keeps every setting and the link name: **End** next
+to the mode on the Public tab, or on the Disc **Settings > Connectivity > Remote Control > Public Mode** (the row shows
+the mode; a tap asks, then ends it). Starting it again is choosing a mode on the Public tab.
+
+#### Jukebox
 
 | Setting | Default | What it does |
 |---|---|---|
-| Party mode | off | Off: the guests' link answers 404. **Party** is the guests' page below; **Game: Hit&Guess** turns the guests' link into the game (see below). Party and game never run at once. |
-| Party name | — | The guests' link: at least 2 letters, digits, `-` or `_` (upper and lower case differ). A new name locks out the old link. **Copy** copies the link. |
+| Public mode | Off | Off: the guests' link answers 404. **Jukebox: guests add songs** is the guests' page below; **Hit&Guess: music quiz** turns the guests' link into the game (see below). The Jukebox-only settings below show only in the Jukebox mode. |
+| Name of the guests' link | — | The guests' link: at least 2 letters, digits, `-` or `_` (upper and lower case differ). A new name locks out the old link. **Copy** copies the link. |
 | Change the volume | on | Guests get a volume slider. **Up to N %**: their 100 % is N % of the Disc's volume (scaled, so their slider still goes from 0 to 100). |
 | See what plays now | on | Off: title, artist, cover and position are hidden (for a music quiz), and the queue shows other guests' and the host's songs as "A secret song" (with who queued it); each guest still sees their own songs in full. |
 | See the queue | on | Guests see the song playing now and the queued songs, with who queued them; their own are marked with their favourite symbol. The host's own list after the queue (Up next) stays hidden. |
@@ -98,9 +104,9 @@ changes on the Disc's screens. The host sets it up on the system page's **Party*
 | Upload songs to the SD card | off | Guests get **Upload a song…** (Songs tab menu ⋯, and their **You** tab). **Largest file** (MB, default 100) limits each file. See below. |
 | When the queue is empty | — | The same setting as **After the list ends**: stop, random songs from the library, a radio station or a playlist. |
 
-While party mode is on, the queue plays on its own: the guests' (and the host's) queued songs in their order, never
+While the Jukebox is on, the queue plays on its own: the guests' (and the host's) queued songs in their order, never
 shuffled, and when it is empty **When the queue is empty** decides what follows. It never goes back to the list that
-was playing before (outside party mode it does: a song queued during an album plays next, then the album goes on).
+was playing before (outside the Jukebox it does: a song queued during an album plays next, then the album goes on).
 
 Why a song plays: `/tmp/diskos-queue.log` (Debug Mode SSH; RAM, gone after a reboot, kept to the last 2 MB) has a line
 for every song change the queue sees and every decision it takes - a guest adding a song and where it went, the queue
@@ -113,7 +119,7 @@ seen, and below each guest the radio stations they saved in their browser (name 
 those stations to `/tmp/party-stations.txt` (guest, station and URL, tab-separated; in RAM, gone after a restart).
 
 **Uploads.** A guest picks a music file on their phone (mp3, flac, m4a, ogg, opus, oga, wav, aif, aiff, ape, wma, aac,
-dsf, dff or dts) and the Disc saves it to `PartyUploads/<party name>/` on the SD card as `<guest name>_<file name>`
+dsf, dff or dts) and the Disc saves it to `PartyUploads/<link name>/` (the folder keeps its old name) on the SD card as `<guest name>_<file name>`
 (spaces and characters a card can't take become `_`; `guest_…` without a name). An existing file is never overwritten
 (`-2`, `-3`, … are added). The file then goes into the library at once (one row in song.db, no rescan), but not into
 the queue: the page offers **Add to the queue**, which counts like any other song. The upload is refused when it is
@@ -135,13 +141,13 @@ may pick its own page colour and favourite symbol and colour.
 
 A guest is told apart by a random id their browser keeps; a private window or another browser counts as a new guest.
 The ids, names and who queued what are kept in RAM only and start afresh after a restart. The settings are kept on
-the SD card in `.diskos/state/party.conf` (written only when the host changes one); without a card party mode is off.
+the SD card in `.diskos/state/party.conf` (written only when the host changes one); without a card no public mode is on.
 The host's own page has no limits and shows "by <name>" on guests' songs. Not yet tested on a Disc.
 
 ### Hit&Guess (music quiz)
 
-A game for the guests' link: set **Party mode** to **Game: Hit&Guess** and open the host page
-`http://<address>:8088/<link code>/hitguess` (also linked from the Party tab). Players open the guests' link on their
+A public mode: set **Public mode** to **Hit&Guess: music quiz** and open the host page
+`http://<address>:8088/<link code>/hitguess` (also linked from the Public tab). Players open the guests' link on their
 phones and give a name. The host presses **Start**; players take turns in the order they joined.
 
 One turn: the player whose turn it is (A) chooses a song (or **Random**), it plays, everybody guesses artist, title and
@@ -181,7 +187,7 @@ the line. Until the tags are fixed every game uses the corrections, and a song l
 the search or the suggestions). The tags and the library are not changed. (`year-fixes.tsv`, the first version with
 years only, is still read.)
 
-Every phone gets a volume slider, as the Party tab's **Change the volume** and **Up to N %** allow (the only party
+Every phone gets a volume slider, as the Public tab's **Change the volume** and **Up to N %** allow (the only public-mode
 settings the game uses besides the link's name).
 
 The host can skip a turn, remove a player, end the game, start a new game with the same players or empty the lobby.
@@ -280,7 +286,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/queue` with `action=add` and `kind=song&song_id=N`, `kind=album&name=…` or `kind=artist&name=…` or `kind=next&b=ID` (an Up next row) | Adds to the end of the queue (`{"ok":true,"added":N}`). |
 | `POST api/queue` with `ver` and `action=jump&kind=queue&i=N` \| `action=jump&kind=next&b=ID` \| `action=remove&i=N` \| `action=move&i=N&to=M` \| `action=clear` | Refused with "The queue changed" when `ver` is not the list's version any more. |
 | `POST api/list_end` with `mode=0..3` (stop, shuffle all, station, playlist) and optionally `pos=N&url=U` (radio favourite N as the station) or, with mode 3, `pl=ID&flags=0..3` (the playlist; Repeat 1, Shuffle 2) | After the List Ends (own player only). `api/state` reports `"list_end":{"mode":N,"station":"name","playlist":"name","pl_id":ID,"pl_flags":F}`, or `null` with the stock player. |
-| `GET api/party`, `POST api/party` with any of `on`, `name`, `vol`, `maxvol=1..100`, `np`, `queue`, `skip`, `total=1..50`, `consec=1..10`, `repeat`, `radio`, `names`, `upload`, `upmax=1..2000` (MB) (0/1 unless stated) | Party mode settings (saved on the SD card): `{"ok":true,"settings":{…,"name":"…","own_player":…},"guests":[{"name":"…","queued":N,"seen_s":N,"stations":[{"name":"…","url":"…"}]}]}`. |
+| `GET api/party`, `POST api/party` with any of `on`, `name`, `vol`, `maxvol=1..100`, `np`, `queue`, `skip`, `total=1..50`, `consec=1..10`, `repeat`, `radio`, `names`, `upload`, `upmax=1..2000` (MB) (0/1 unless stated; `on` is the public mode: 0 Off, 1 Jukebox, 2 Hit&Guess, so `on=0` ends it) | Public mode settings (saved on the SD card): `{"ok":true,"settings":{…,"name":"…","own_player":…},"guests":[{"name":"…","queued":N,"seen_s":N,"stations":[{"name":"…","url":"…"}]}]}`. |
 | `POST api/queue` with `action=add&kind=file&path=…` | Adds a card file (all its tracks). |
 | `POST api/outputs` with one of `aux=0/1`, `bt=0/1`, `vol_aux=0..120`, `vol_bt=0..120`, `auto=0..2`, `codec=0..4` (0 SBC, 1 AAC, 2 LDAC, 3 aptX, 4 aptX HD) | Settings > Audio > Outputs (own player only; refused with the reason otherwise). `api/state` reports `"outputs":{"aux","bt","vol_aux","vol_bt","bt_ready","auto","jack","bal","codec" (-1 none),"codecs":[ids offered],"switching"}`, or `null` with the stock player. |
 | `POST api/seek` with `position_ms=N` | Seek. |
@@ -291,7 +297,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing); or `kind=stream` with `name` and an http/https `url` (a stream address of your own; add only). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 
-The guests' link `http://<Disc address>:8088/<party name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio` or `favorites`), `POST api/radio_search` and their own `POST api/radio` with `name`, `url` (http or https) and `now=0|1` (0: the station when the queue is empty; 1: play it now, needs skipping too). The state's `party` also has `radio_end` and `radio_now` (what picking a station may do) and `upload`, `upmax` (MB). `POST api/stations` with `s=<url> <name>` for each saved station (repeated; http/https only, about 3 KB in all) tells the host the guest's stations. `POST api/upload?g=…&n=…&f=<file name>` takes the file itself as the request body (any Content-Type, Content-Length required, no chunked encoding) and answers `{"ok":true,"song_id":N,"file":"PartyUploads/…","title":"…"}`; refused with 403 (uploads off), 413 (too large), 415 (not a music file), 503 (another upload runs, or no card), 507 (card full), 400 (broke off; nothing is left behind). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
+The guests' link `http://<Disc address>:8088/<link name>/` takes `GET api/state` (the guests' view: `"party":{"np","queue","vol","skip","radio","names","total","consec","repeat","mine","left","you"}` and only what they may see; `volume` on their 0-100 scale), `GET api/cover`, `GET api/queue`, `POST api/queue` (`action=add&kind=song&song_id=N` or `kind=file&path=…`; answers `"place"` and `"left"`), `POST api/volume` (`value=0..100`), `POST api/next`, `GET api/library/<list>` (not `radio` or `favorites`), `POST api/radio_search` and their own `POST api/radio` with `name`, `url` (http or https) and `now=0|1` (0: the station when the queue is empty; 1: play it now, needs skipping too). The state's `party` also has `radio_end` and `radio_now` (what picking a station may do) and `upload`, `upmax` (MB). `POST api/stations` with `s=<url> <name>` for each saved station (repeated; http/https only, about 3 KB in all) tells the host the guest's stations. `POST api/upload?g=…&n=…&f=<file name>` takes the file itself as the request body (any Content-Type, Content-Length required, no chunked encoding) and answers `{"ok":true,"song_id":N,"file":"PartyUploads/…","title":"…"}`; refused with 403 (uploads off), 413 (too large), 415 (not a music file), 503 (another upload runs, or no card), 507 (card full), 400 (broke off; nothing is left behind). Each request carries the guest's id `g=` (8-24 letters and digits; required to add) and optionally their name `n=`.
 
 Status codes: 200 done, 400 missing or invalid value, 404 wrong link code or path, 405 wrong method, 409 refused
 (`message` says why), 503 another command is still running, 504 the UI did not answer in time.
@@ -309,7 +315,7 @@ curl "http://192.168.1.50:8088/<link code>/api/state"
 |---|---|
 | `ui/queueview.c` | The queue list and its jump checks, shared with the MPD server. |
 | `ui/remote_core.c` | Request parsing, routing, link code, JSON (pure, host-tested). |
-| `ui/party.c` | Party mode: the settings on the card, the guests and their rules, what guests see. |
+| `ui/party.c` | Public modes: the mode setting and the Jukebox (Hit&Guess is `ui/hitguess.c`): the settings on the card, the guests and their rules, what guests see. |
 | `ui/remote_page/` | The pages' source: `remote.html` (control page), `system.html` (system page), `party.html` (the guests' page), shared `style.css` and `common.js`. `python3 ui/tools/gen_remote_page.py` writes them into `ui/remote_page.c` (generated, committed; `--check` tells whether it is up to date). |
 | `ui/remote_srv.c` | The server thread and the one-slot command mailbox to the UI (no LVGL). |
 | `ui/remote.c` | Settings, the Show Link overlay, Wi-Fi address tracking, and running commands on the main thread through `ui_transport_command`, `ui_set_volume`, `ui_seek_to`, `ui_set_workmode`, the `mdb_*` library queries, the `ui_play_*` entry points and the Radio app's `radio.h`. |
