@@ -70,6 +70,19 @@ int main(void){
     assert(sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) == 1 && sqlite3_column_int(st, 1) == 2);
     sqlite3_finalize(st); sqlite3_finalize(g_srcid); sqlite3_close(g_db);
     puts("PASS SOURCE_ID: written on the card DB, follows a moved file");
+
+    /* scanner_add_file (a single new file, e.g. a Bandcamp download): its row and its mapping */
+    unlink(DB_PATH);
+    { sqlite3 *d; assert(libdb_open_v2(DB_PATH, &d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) == SQLITE_OK);
+      assert(sqlite3_exec(d, SCHEMA_SONG, 0, 0, 0) == SQLITE_OK && libdb_card_schema(d) == SQLITE_OK); sqlite3_close(d); }
+    int id = scanner_add_file(DIR_ "/a.mp3");
+    assert(id > 0);
+    { sqlite3 *d; assert(sqlite3_open(DB_PATH, &d) == SQLITE_OK);
+      assert(sqlite3_prepare_v2(d, "SELECT EXT_ID, ALBUM_ID, SONG_ID FROM SOURCE_ID WHERE SOURCE='bandcamp';", -1, &st, NULL) == SQLITE_OK);
+      assert(sqlite3_step(st) == SQLITE_ROW && !strcmp((const char *)sqlite3_column_text(st, 0), "1234567")
+             && !strcmp((const char *)sqlite3_column_text(st, 1), "89") && sqlite3_column_int(st, 2) == id);
+      sqlite3_finalize(st); sqlite3_close(d); }
+    puts("PASS scanner_add_file: the new song's Bandcamp IDs are kept");
     assert(system("rm -rf " DIR_) == 0);
     puts("COMPLETE scanner_srcid_test");
     return 0;

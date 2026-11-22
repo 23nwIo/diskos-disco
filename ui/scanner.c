@@ -2062,6 +2062,8 @@ int scanner_add_file(const char *path){
     int tst = tags_from_file(path, fname, title, artist, album, genre, album_artist, &track, &disc, &dt, &dur_ms);
     sd_io_end();
     if(tst == 0) return 0;
+    char bc_track[EXTID_LEN], bc_album[EXTID_LEN];      /* its outside-source IDs, as a scan keeps them (source_note) */
+    snprintf(bc_track, sizeof bc_track, "%s", g_bc_track); snprintf(bc_album, sizeof bc_album, "%s", g_bc_album);
     sqlite3 *db = NULL; sqlite3_stmt *st = NULL; int id = -1;
     if(libdb_open_v2(DB_PATH, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK) goto out;
     sqlite3_busy_timeout(db, 3000);
@@ -2080,6 +2082,15 @@ int scanner_add_file(const char *path){
     sqlite3_bind_text(st, 18, date_pick(&dt), -1, SQLITE_TRANSIENT);
     if(sqlite3_step(st) == SQLITE_DONE) id = (int)sqlite3_last_insert_rowid(db);
 out:
+    if(st) sqlite3_finalize(st);
+    st = NULL;
+    /* SOURCE_ID only exists in the card DB: on the flash DB the prepare fails and nothing is kept */
+    if(db && id > 0 && bc_track[0] && sqlite3_prepare_v2(db, SRCID_PUT, -1, &st, NULL) == SQLITE_OK){
+        sqlite3_bind_text(st, 1, bc_track, -1, SQLITE_TRANSIENT);
+        if(bc_album[0]) sqlite3_bind_text(st, 2, bc_album, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 3, path, -1, SQLITE_TRANSIENT);
+        if(sqlite3_step(st) != SQLITE_DONE){ fprintf(stderr, "scanner: SOURCE_ID for %s: %s\n", path, sqlite3_errmsg(db)); fflush(stderr); }
+    }
     if(st) sqlite3_finalize(st);
     if(db) sqlite3_close(db);
     return id;
