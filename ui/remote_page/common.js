@@ -30,4 +30,11 @@ if(!a.length){say(m==3?'No playlists yet':'No radio favourites yet - save statio
 function askurl(then){var u=prompt('Stream address (http:// or https://)','https://');if(!u||!/^https?:\/\/./i.test(u.trim())){if(u)say('That is not a stream address (http:// or https://)');return}
 var n=prompt('Name of the station',u.trim().replace(/^https?:\/\//i,'').split(/[/?]/)[0]);if(!n||!n.trim())return;then(n.trim(),u.trim())}
 function shut(){$('sh').classList.add('hide');$('shb').classList.add('hide')}
+/* Public modes (Jukebox, Hit&Guess and every later game; Jo, 2026-11-22): a guest has ONE name for all of them.
+ * Each mode's guest page reads it with gname() and stores it with gname_set(); moved() reloads the page when the
+ * host switched the mode (the server answers "... reload the page"), so the guest lands in the new mode by name. */
+function gname(){try{return localStorage.getItem('pn')||localStorage.getItem('hn')||''}catch(e){return''}}
+function gname_set(n){try{localStorage.setItem('pn',n);localStorage.removeItem('hn')}catch(e){}}
+function moved(m){if(!/reload the page/.test(m||''))return 0;var t=0;try{t=+sessionStorage.getItem('mv')||0;sessionStorage.setItem('mv',Date.now())}catch(e){}
+if(Date.now()-t>5000)location.reload();return 1}   /* at most one reload in 5 s: never a reload loop */
 look();try{matchMedia('(prefers-color-scheme: light)').addEventListener('change',look)}catch(e){}

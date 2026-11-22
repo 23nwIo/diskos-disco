@@ -22,10 +22,7 @@
 @@COMMON@@
 /* the guests' page: who you are is a random id this browser keeps (a private window is a new guest) */
 var GID='',NM='',P=null,V='np',st=[],items=[],tot=0,art='',drag=0,busy=0,qver=-1;
-/* the guest's name is one for every public mode (Jo, 2026-11-22): 'pn', shared with Hit&Guess (its old 'hn' read too) */
-try{GID=localStorage.getItem('pg')||'';NM=localStorage.getItem('pn')||localStorage.getItem('hn')||''}catch(e){}
-/* the host switched the public mode: the link now serves the other mode's page */
-function moved(m){if(/reload the page/.test(m||'')){location.reload();return 1}}
+try{GID=localStorage.getItem('pg')||''}catch(e){}NM=gname();   /* one name for every public mode: gname() in common.js */
 if(!/^[A-Za-z0-9]{16}$/.test(GID)){var A='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789',r=new Uint8Array(16);crypto.getRandomValues(r);GID='';r.forEach(function(x){GID+=A[x%A.length]});try{localStorage.setItem('pg',GID)}catch(e){}}
 function who(){return'g='+GID+(NM&&P&&P.names?'&n='+encodeURIComponent(NM):'')}
 function pc(c,b){return cmdj(c,who()+(b?'&'+b:''))}
@@ -119,7 +116,7 @@ if(v==='q'){qver=-1;$('ql').textContent='Loading…';poll();return}if(v==='np'){
 [].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
 $('pa').onclick=function(){var a=cur().act;if(a)a[1]()};$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};$('shb').onclick=shut;$('mo').onclick=function(){load(items.length)};
 var qt;$('q').oninput=function(){clearTimeout(qt);qt=setTimeout(function(){load(0)},cur().l==='radio_search'?600:300)};
-$('nm').value=NM;$('nm').onchange=function(){NM=$('nm').value.trim();while(new TextEncoder().encode(NM).length>24)NM=NM.slice(0,-1);$('nm').value=NM;try{localStorage.setItem('pn',NM)}catch(e){}poll();if(NM)say('Hi '+NM+'!',1)};
+$('nm').value=NM;$('nm').onchange=function(){NM=$('nm').value.trim();while(new TextEncoder().encode(NM).length>24)NM=NM.slice(0,-1);$('nm').value=NM;gname_set(NM);poll();if(NM)say('Hi '+NM+'!',1)};
 $('lka').value=LK.acc;$('lkf').value=LK.fav;$('lka').onchange=function(){LK.acc=$('lka').value;look()};$('lkf').onchange=function(){LK.fav=$('lkf').value;look();qver=-1};$('lkc').value=LK.fc;$('lkc').onchange=function(){LK.fc=$('lkc').value;look()};
 var tk=0;setInterval(function(){tk++;if(V==='np'||V==='q'||tk%5===0)poll()},1000);document.addEventListener('visibilitychange',poll);poll();
 </script></html>

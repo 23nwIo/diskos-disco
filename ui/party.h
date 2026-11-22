@@ -2,6 +2,8 @@
 /* Copyright (C) 2026 diskOS contributors */
 /* Public modes (Jo, 2026-11-22): the guests' link and its rules (party.c). One mode at a time, mutually exclusive:
  * Jukebox (guests queue songs; called party mode before) or the game Hit&Guess; more multi-user modes can follow.
+ * A new mode (game) must: answer requests of another mode with a message ending "reload the page", and keep the
+ * guest's name with gname()/gname_set() from remote_page/common.js, so one name serves every mode (Jo, 2026-11-22).
  * Main thread only. */
 #ifndef PARTY_H
 #define PARTY_H

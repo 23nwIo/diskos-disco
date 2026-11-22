@@ -89,7 +89,9 @@ the mode; a tap asks, then ends it). Starting it again is choosing a mode on the
 A guest's name is one for every public mode: the name given in the Jukebox (its **You** tab) is the name in
 Hit&Guess and the other way round (kept in the guest's browser for the link's address, like their favourites). A
 phone that still shows the old mode's page reloads by itself when the host switches the mode, so players with a name
-join the Hit&Guess lobby without typing it again.
+join the Hit&Guess lobby without typing it again. This holds for every later game too: a new mode's page takes the
+name from `gname()`/`gname_set()` in `ui/remote_page/common.js` and refuses the other modes' requests with "… reload the
+page" (the rule is in `ui/party.h`).
 
 #### Jukebox
 
