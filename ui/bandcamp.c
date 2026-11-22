@@ -16,6 +16,7 @@
 #include "scanner.h"
 #include "sdio.h"
 #include "config.h"
+#include "libdb.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <strings.h>
@@ -219,11 +220,34 @@ static int write_list(const char *text, size_t len){
     if(!ok || rename(tmp, OPL_BC_LIST) != 0){ fprintf(stderr, "bandcamp: write %s: %s\n", OPL_BC_LIST, strerror(errno)); unlink(tmp); return -1; }
     return 0;
 }
-/* Tracks of the release saved on the card before (Jo, 2026-11-22): played from there instead of the stream. Worker. */
+#ifndef BC_DB_PATH
+#define BC_DB_PATH libdb_path()
+#endif
+/* Tracks of the release saved on the card before (Jo, 2026-11-22): played from there instead of the stream. Worker.
+ * First by Bandcamp's track id in the library (SOURCE_ID, filled from the files' tags; only the card DB has it), then
+ * by the file names in the release's download folder. The SD lease is held. */
+static int db_tracks(bc_track_t *t, int n){
+    const char *db = BC_DB_PATH; sqlite3 *d = NULL; sqlite3_stmt *st = NULL; int k = 0;
+    if(libdb_open_v2(db, &d, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK) return 0;
+    sqlite3_busy_timeout(d, 500);
+    if(sqlite3_prepare_v2(d, "SELECT S.PATH FROM SOURCE_ID X JOIN SONG S ON S.ID=X.SONG_ID WHERE X.SOURCE='bandcamp' AND X.EXT_ID=?1;", -1, &st, NULL) == SQLITE_OK)
+        for(int i = 0; i < n; i++){
+            if(!t[i].id[0] || t[i].stream[0] == '/') continue;
+            sqlite3_reset(st); sqlite3_bind_text(st, 1, t[i].id, -1, SQLITE_TRANSIENT);
+            const unsigned char *p = sqlite3_step(st) == SQLITE_ROW ? sqlite3_column_text(st, 0) : NULL;
+            struct stat sb;
+            if(p && p[0] == '/' && strlen((const char *)p) < sizeof t[i].stream && stat((const char *)p, &sb) == 0){
+                snprintf(t[i].stream, sizeof t[i].stream, "%s", (const char *)p); k++; }
+        }
+    sqlite3_finalize(st); sqlite3_close(d);                     /* no SOURCE_ID (the flash DB): by name only */
+    return k;
+}
 static int local_tracks(const bc_release_t *r, bc_track_t *t, int n){
     char dir[PATH_MAX];
-    if(bc_dl_dir(BC_CARD_ROOT, r, dir, sizeof dir) || !BC_CARD_MOUNTED() || !sd_io_begin()) return 0;
-    int k = 0; DIR *d = opendir(dir); struct dirent *e;
+    if(!BC_CARD_MOUNTED() || !sd_io_begin()) return 0;
+    int k = db_tracks(t, n);
+    if(bc_dl_dir(BC_CARD_ROOT, r, dir, sizeof dir)){ sd_io_end(); return k; }
+    DIR *d = opendir(dir); struct dirent *e;
     while(d && (e = readdir(d)))
         for(int i = 0; i < n; i++){
             if(t[i].stream[0] == '/' || !bc_local_match(e->d_name, &t[i])) continue;

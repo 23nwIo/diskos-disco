@@ -6,6 +6,7 @@
 #include "../bandcamp.h"
 #include "../ipc.h"
 #include "../own_player.h"
+#include "sqlite3.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -213,9 +214,24 @@ int main(void){
       char *l = list_text();
       CHECK(l && strstr(l, "\t/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression/03 Everybody is arrested.mp3\tEverybody is arrested\t"));
       CHECK(l && strstr(l, "\t/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression/01 Computer kaputt.mp3\t"));
+      /* by Bandcamp's track id in the library (SOURCE_ID, the card DB) first: a file moved elsewhere is still found */
+      if(system("mkdir -p /tmp/bc_test_lib /tmp/bc_test_card/Music && cp '/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression/02 Go away.mp3' /tmp/bc_test_card/Music/moved.mp3")) fails++;
+      sqlite3 *db = NULL; unlink("/tmp/bc_test_lib/library.db");
+      CHECK(sqlite3_open("/tmp/bc_test_lib/library.db", &db) == SQLITE_OK && sqlite3_exec(db,
+            "CREATE TABLE SONG(ID INTEGER PRIMARY KEY, PATH TEXT);"
+            "CREATE TABLE SOURCE_ID(SOURCE TEXT NOT NULL, EXT_ID TEXT NOT NULL, ALBUM_ID TEXT, SONG_ID INTEGER NOT NULL REFERENCES SONG(ID), PRIMARY KEY(SOURCE, EXT_ID));"
+            "INSERT INTO SONG VALUES(7, '/tmp/bc_test_card/Music/moved.mp3');"
+            "INSERT INTO SOURCE_ID VALUES('bandcamp', '1871765188', '3255513876', 7);", 0, 0, 0) == SQLITE_OK);
+      sqlite3_close(db);
+      nsent = 0;
+      CHECK(bandcamp_play("https://unicornpartisans.bandcamp.com/album/repression-depression", 0, &why) == 0 && wait_sent(1));
+      l = list_text();
+      CHECK(l && strstr(l, "\t/tmp/bc_test_card/Music/moved.mp3\tGo away\t") && strstr(l, "/01 Computer kaputt.mp3\t"));
+      for(int i = 0; i < 300 && bandcamp_downloading(); i++){ bandcamp_tick(); usleep(20000); }
+      if(system("rm -rf /tmp/bc_test_lib /tmp/bc_test_card/Music")) fails++;
       for(int i = 0; i < 300 && bandcamp_downloading(); i++){ bandcamp_tick(); usleep(20000); }
       int ndl = 0; { char *j = bandcamp_json(); for(char *c = j; c && (c = strstr(c, "\"state\":\"done\",\"track\":")); c++) ndl++; free(j); }
-      CHECK(ndl == ndl0 + 1);                                                   /* the release was saved (already there: library only) */
+      CHECK(ndl == ndl0 + 2);                                                   /* the release was saved, both plays (already there: library only) */
       save_played = 0; }
     /* Jukebox guests: their own search and page (the host's stay), a pick saved and then queued for them */
     { const char *rel = "https://unicornpartisans.bandcamp.com/album/repression-depression";

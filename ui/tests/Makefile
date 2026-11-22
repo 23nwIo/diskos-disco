@@ -66,8 +66,8 @@ btavrcp_test: btavrcp_test.c ../dbusmini.c ../dbusmini.h ../player/btavrcp.c ../
 bandcamp_test: bandcamp_test.c ../bandcamp_core.c ../bandcamp_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. bandcamp_test.c ../bandcamp_core.c -o $@
 # bandcamp.c with a stand-in wget (fixtures/bandcamp/wget) and stubs for the UI around it
-bandcamp_app_test: bandcamp_app_test.c ../bandcamp.c ../bandcamp.h ../bandcamp_core.c ../bandcamp_core.h ../remote_core.c ../hitguess_core.c ../command_spawn.c
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -DBC_OPL_RUNNING=test_opl_running -DBC_CARD_MOUNTED=test_card_mounted -DBC_GUEST_SAVED=test_guest_saved -DBC_CARD_ROOT='"/tmp/bc_test_card"' -I.. bandcamp_app_test.c ../bandcamp.c ../bandcamp_core.c ../remote_core.c ../hitguess_core.c ../command_spawn.c -pthread -o $@
+bandcamp_app_test: bandcamp_app_test.c ../bandcamp.c ../bandcamp.h ../bandcamp_core.c ../bandcamp_core.h ../remote_core.c ../hitguess_core.c ../command_spawn.c ../libdb.h sqlite3_host.o
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DBC_OPL_RUNNING=test_opl_running -DBC_CARD_MOUNTED=test_card_mounted -DBC_GUEST_SAVED=test_guest_saved -DBC_CARD_ROOT='"/tmp/bc_test_card"' -DBC_DB_PATH='"/tmp/bc_test_lib/library.db"' -I.. bandcamp_app_test.c ../bandcamp.c ../bandcamp_core.c ../remote_core.c ../hitguess_core.c ../command_spawn.c sqlite3_host.o -pthread -lm -ldl -o $@
 radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. radio_test.c ../radio_core.c -o $@
 
