@@ -31,9 +31,9 @@ static int card_ok = 1, scanning; static char added[16][512]; static int nadded;
 int  sd_io_begin(void){ return card_ok; }
 void sd_io_end(void){}
 int  scanner_active(void){ return scanning; }
-static int cfg_q = 0, card_in = 1;
+static int cfg_q = 0, card_in = 1, save_played = 0;
 int  test_card_mounted(void){ return card_in; }
-int  cfg_get_int(const char *k, int def){ (void)def; return !strcmp(k, "bc_quality") ? cfg_q : def; }
+int  cfg_get_int(const char *k, int def){ return !strcmp(k, "bc_quality") ? cfg_q : !strcmp(k, "bc_save_played") ? save_played : def; }
 int  cfg_set_int(const char *k, int v){ if(!strcmp(k, "bc_quality")) cfg_q = v; return 0; }
 int  scanner_add_file(const char *p){ if(nadded < 16) snprintf(added[nadded++], sizeof added[0], "%s", p); return nadded; }
 static int g_saved_who, g_saved_id, g_saved_refuse;           /* party_bandcamp_saved */
@@ -190,6 +190,18 @@ int main(void){
       it.type = 'a'; CHECK(bandcamp_fav_add(&it, &why) == -1 && strstr(why, "SD card"));
       card_in = 1; sleep(1);
       CHECK(!bandcamp_fav_nocard() && bandcamp_fav_has("https://aphextwin.bandcamp.com")); }
+    /* playing a release: saved too (same rules), and the tracks on the card play from there (Jo, 2026-11-22) */
+    { save_played = 1; nsent = 0; int ndl0 = 0;
+      { char *j = bandcamp_json(); for(char *c = j; c && (c = strstr(c, "\"state\":\"done\",\"track\":")); c++) ndl0++; free(j); }
+      CHECK(bandcamp_play("https://unicornpartisans.bandcamp.com/album/repression-depression", 2, &why) == 0);
+      CHECK(wait_sent(1));
+      char *l = list_text();
+      CHECK(l && strstr(l, "\t/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression/03 Everybody is arrested.mp3\tEverybody is arrested\t"));
+      CHECK(l && strstr(l, "\t/tmp/bc_test_card/BandcampDownloads/Unicorn Partisans/Repression Depression/01 Computer kaputt.mp3\t"));
+      for(int i = 0; i < 300 && bandcamp_downloading(); i++){ bandcamp_tick(); usleep(20000); }
+      int ndl = 0; { char *j = bandcamp_json(); for(char *c = j; c && (c = strstr(c, "\"state\":\"done\",\"track\":")); c++) ndl++; free(j); }
+      CHECK(ndl == ndl0 + 1);                                                   /* the release was saved (already there: library only) */
+      save_played = 0; }
     /* Jukebox guests: their own search and page (the host's stay), a pick saved and then queued for them */
     { const char *rel = "https://unicornpartisans.bandcamp.com/album/repression-depression";
       CHECK(bandcamp_guest_search(0, "x", &why) == -1);

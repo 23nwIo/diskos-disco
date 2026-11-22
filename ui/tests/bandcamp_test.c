@@ -221,9 +221,20 @@ static void test_fav(void){
     CHECK(bc_fav_format(it, n, out, 40) == -1 && bc_fav_parse(txt, it, 1) == 1);
 }
 
+static void test_local(void){                       /* a saved file is the track (bc_dl_file's name or Bandcamp's ZIP name) */
+    bc_track_t t; memset(&t, 0, sizeof t); t.num = 3; snprintf(t.title, sizeof t.title, "Everybody: arrested?");
+    CHECK(bc_local_match("03 Everybody_ arrested_.mp3", &t));
+    CHECK(bc_local_match("03 Everybody_ arrested_.flac", &t));
+    CHECK(bc_local_match("Unicorn Partisans - Repression Depression - 03 Everybody_ arrested_.flac", &t));
+    CHECK(!bc_local_match("03 Everybody_ arrested_.jpg", &t) && !bc_local_match("13 Everybody_ arrested_.mp3", &t));
+    CHECK(!bc_local_match("x03 Everybody_ arrested_.mp3", &t) && !bc_local_match(".03 Everybody_ arrested_.mp3", &t));
+    t.num = 0; snprintf(t.title, sizeof t.title, "Soko Linx");
+    CHECK(bc_local_match("Soko Linx.mp3", &t) && !bc_local_match("01 Soko Linx.mp3", &t));
+}
 int main(void){
     test_urls();
     test_fav();
+    test_local();
     test_free();
     test_download();
     test_search();

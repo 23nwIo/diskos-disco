@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #define JSMN_STATIC                 /* a private strict copy, as radio_core.c */
 #define JSMN_STRICT
 #include "jsmn.h"
@@ -481,6 +482,14 @@ int bc_dl_file(const bc_track_t *t, char *out, size_t n){
     char x[104]; bc_safe_name(t->title, "Track", x, sizeof x);
     int w = t->num > 0 ? snprintf(out, n, "%02d %s.mp3", t->num, x) : snprintf(out, n, "%s.mp3", x);
     return w < 0 || (size_t)w >= n ? -1 : 0;
+}
+int bc_local_match(const char *fname, const bc_track_t *t){
+    const char *dot = strrchr(fname, '.');
+    if(!dot || fname[0] == '.' || (strcasecmp(dot, ".flac") && strcasecmp(dot, ".mp3") && strcasecmp(dot, ".ogg") && strcasecmp(dot, ".m4a"))) return 0;
+    char want[160]; if(bc_dl_file(t, want, sizeof want)) return 0;
+    size_t wl = strlen(want) - 4, fl = (size_t)(dot - fname);              /* without ".mp3" / the file's own extension */
+    if(fl == wl) return !strncmp(fname, want, wl);
+    return fl > wl + 3 && !strncmp(fname + fl - wl - 3, " - ", 3) && !strncmp(fname + fl - wl, want, wl);
 }
 size_t bc_id3_skip(const unsigned char *b, size_t len){
     if(len < 10 || memcmp(b, "ID3", 3) || b[3] == 0xFF || b[4] == 0xFF || ((b[6] | b[7] | b[8] | b[9]) & 0x80)) return 0;

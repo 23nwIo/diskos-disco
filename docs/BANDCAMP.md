@@ -105,6 +105,12 @@ and playing go on meanwhile.
 - The card: the SD lease (`sd_io_begin`) is held while a track downloads and is written, as for an upload; at least
   64 MB stay free. wget writes to `.bandcamp-download` in the folder, the tagged file is written as `<name>.part`
   and renamed.
+- Playing saves too (Jo, 2026-11-22): whatever you play (a release from any track, or a track page) is also saved
+  by these rules, in the background (diskos.conf `bc_save_played=0` turns that off; nothing happens without a card).
+  Tracks already in the release's folder play from the card instead of the stream: the stream list line then holds
+  the file's path (`bc_local_match`: `NN Title.<ext>` as saved from the stream, or Bandcamp's ZIP name
+  `Artist - Album - NN Title.<ext>`; flac, mp3, ogg, m4a). A track saved under another name (a title Bandcamp's ZIP
+  writes differently) is still streamed.
 
 ## Jukebox guests
 

@@ -53,7 +53,8 @@
 #define OPL_VOLUMES OPL_DIR "/volumes"          /* the two output volumes, kept by the player: "vol_aux=N\nvol_bt=N" */
 /* A stream list (Bandcamp, ui/bandcamp.c): the UI writes the tracks here and sends 0d14 with the track to start at;
  * the player plays them one after another in the radio work mode (playback.c pb_slist_*). tmpfs. One track per line:
- * "<duration ms>\t<stream url>\t<title>\t<artist>\t<album>" (no tabs or newlines in the texts). When a track can't be
+ * "<duration ms>\t<stream url>\t<title>\t<artist>\t<album>" (no tabs or newlines in the texts); instead of the URL an
+ * absolute path: the track saved on the SD card (BandcampDownloads), played from there. When a track can't be
  * played (the stream links expire), the player stops and sends ad14 with its index; the UI fetches fresh links,
  * writes the list again and sends 0d14 for that track. */
 #define OPL_BC_LIST "/tmp/diskos-stream-list"

@@ -939,7 +939,7 @@ void pb_stream_mode(int on){
 int pb_stream_active(void){ return g_stream; }
 int pb_stream_set(const char *uri, const char *title){
     if(!g_stream) return -1;
-    if(strncmp(uri, "http://", 7) && strncmp(uri, "https://", 8)){ L("radio: not a stream URL: %.80s", uri); return -1; }
+    if(strncmp(uri, "http://", 7) && strncmp(uri, "https://", 8) && uri[0] != '/'){ L("radio: not a stream URL: %.80s", uri); return -1; }   /* '/': a saved Bandcamp track on the card */
     if(strlen(uri) >= sizeof g_st_uri){ L("radio: stream URL too long"); return -1; }
     snprintf(g_st_uri, sizeof g_st_uri, "%s", uri);
     snprintf(g_st_title, sizeof g_st_title, "%s", title ? title : "");
@@ -948,7 +948,8 @@ int pb_stream_set(const char *uri, const char *title){
 }
 int pb_stream_play(void){
     if(!g_stream || !g_st_uri[0]) return -1;
-    if(g_st_loaded && g_es_valid && g_es.state == ENG_PAUSE && !strcmp(g_es.file, g_st_uri)){   /* plays on after a pause */
+    if(g_st_loaded && g_es_valid && g_es.state == ENG_PAUSE && (!strcmp(g_es.file, g_st_uri) ||
+       (g_st_uri[0] == '/' && !strncmp(g_es.file, "file://", 7) && !strcmp(g_es.file + 7, g_st_uri)))){   /* plays on after a pause */
         if(eng_pause(0) != 0) return -1;
         update_status();
         return 0;
@@ -997,7 +998,7 @@ static int sl_parse(char *text, sl_track_t *out, int max){
         for(int k = 1; k < 5 && f[k - 1]; k++){ char *t = strchr(f[k - 1], '\t'); if(t){ *t = 0; f[k] = t + 1; } }
         char *end;
         long ms = f[4] ? strtol(f[0], &end, 10) : -1;
-        if(f[4] && !*end && ms >= 0 && (!strncmp(f[1], "http://", 7) || !strncmp(f[1], "https://", 8))
+        if(f[4] && !*end && ms >= 0 && (!strncmp(f[1], "http://", 7) || !strncmp(f[1], "https://", 8) || f[1][0] == '/')   /* '/': saved on the card */
            && strlen(f[1]) < sizeof g_st_uri){
             out[n].ms = ms; out[n].url = f[1]; out[n].title = f[2]; out[n].artist = f[3]; out[n].album = f[4]; n++;
         } else L("stream list: line %d skipped", n + 1);

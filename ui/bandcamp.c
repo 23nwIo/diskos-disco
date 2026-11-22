@@ -50,6 +50,12 @@ int BC_OPL_RUNNING(void);
 #ifndef BC_CARD_ROOT
 #define BC_CARD_ROOT  "/tmp/sdcard"  /* folderbrowser.h FOLDERBROWSER_ROOT */
 #endif
+#ifndef BC_CARD_MOUNTED
+#include "system.h"
+#define BC_CARD_MOUNTED() sys_is_mounted("/proc/mounts", BC_CARD_ROOT)
+#else
+int BC_CARD_MOUNTED(void);
+#endif
 #define BC_COVER_MAX  (8 << 20)      /* diskos-artdec's limit for a picture */
 #define BC_DL_SPARE   (64LL << 20)   /* what the card keeps free after a download (as the party uploads) */
 #define BC_DL_JOBS    24             /* downloads remembered: waiting, running and finished */
@@ -212,6 +218,23 @@ static int write_list(const char *text, size_t len){
     if(!ok || rename(tmp, OPL_BC_LIST) != 0){ fprintf(stderr, "bandcamp: write %s: %s\n", OPL_BC_LIST, strerror(errno)); unlink(tmp); return -1; }
     return 0;
 }
+/* Tracks of the release saved on the card before (Jo, 2026-11-22): played from there instead of the stream. Worker. */
+static int local_tracks(const bc_release_t *r, bc_track_t *t, int n){
+    char dir[PATH_MAX];
+    if(bc_dl_dir(BC_CARD_ROOT, r, dir, sizeof dir) || !BC_CARD_MOUNTED() || !sd_io_begin()) return 0;
+    int k = 0; DIR *d = opendir(dir); struct dirent *e;
+    while(d && (e = readdir(d)))
+        for(int i = 0; i < n; i++){
+            if(t[i].stream[0] == '/' || !bc_local_match(e->d_name, &t[i])) continue;
+            char p[PATH_MAX + 300];
+            int w = snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+            if(w > 0 && (size_t)w < sizeof t[i].stream){ memcpy(t[i].stream, p, (size_t)w + 1); k++; }
+            break;
+        }
+    if(d) closedir(d);
+    sd_io_end();
+    return k;
+}
 static void job_play(const char *url, int idx, int retry, unsigned gen){
     bc_release_t r; bc_track_t *t = calloc(BC_MAX_TRACKS, sizeof *t);
     int n = -1;
@@ -229,6 +252,7 @@ static void job_play(const char *url, int idx, int retry, unsigned gen){
         else if(n < 0) err = "Bandcamp sent a page without music";
     }
     if(!t) err = "Out of memory";
+    int local = err ? 0 : local_tracks(&r, t, n);
     char *text = NULL; size_t len = 0; int map[BC_MAX_TRACKS], lines = -1, line = 0;
     if(!err){
         size_t cap = (size_t)n * 1200 + 64;
@@ -254,7 +278,7 @@ static void job_play(const char *url, int idx, int retry, unsigned gen){
     }
     pthread_mutex_unlock(&g_mu);
     free(t); free(text);
-    fprintf(stderr, "bandcamp: play %s from track %d%s: %s\n", url, idx, retry ? " (fresh links)" : "", err ? err : "ready");
+    fprintf(stderr, "bandcamp: play %s from track %d%s: %s (%d from the card)\n", url, idx, retry ? " (fresh links)" : "", err ? err : "ready", local);
 }
 static void *worker(void *arg){
     (void)arg;
@@ -593,6 +617,7 @@ int bandcamp_open(const char *url, const char **why){
     pthread_mutex_lock(&g_mu); int r = open_in(&g_host_view, url, why); pthread_mutex_unlock(&g_mu);
     return r;
 }
+static int download_as(const char *url, int idx, int who, const char **why);
 static void play_job(const char *url, int idx, int retry){   /* caller holds g_mu */
     snprintf(g_job_play_url, sizeof g_job_play_url, "%s", url);
     g_job_play_idx = idx; g_job_play_retry = retry;
@@ -607,6 +632,10 @@ int bandcamp_play(const char *url, int idx, const char **why){
     play_job(u, idx, 0);
     g_retry_line = -1;
     pthread_mutex_unlock(&g_mu);
+    /* what plays is saved too, by the download rules (Jo, 2026-11-22; diskos.conf bc_save_played=0: not) */
+    const char *dwhy = NULL;
+    if(cfg_get_int("bc_save_played", 1) && BC_CARD_MOUNTED() && download_as(u, -1, 0, &dwhy) && dwhy && strcmp(dwhy, "That is already being saved"))
+        fprintf(stderr, "bandcamp: not saving what plays: %s\n", dwhy);
     return 0;
 }
 static int g_quality = -1;                       /* BC_Q_*, -1 not read yet */
@@ -832,12 +861,6 @@ static void item_json(rmt_buf_t *b, const bc_item_t *it);
  * Only on the SD card (Jo: user data on the card; a place on the player can follow as for the radio): read again
  * when the card comes or goes or the file changed (at most once a second); never written without the card or when
  * the file couldn't be read. Kept apart from the radio's and the library's favourites. */
-#ifndef BC_CARD_MOUNTED
-#include "system.h"
-#define BC_CARD_MOUNTED() sys_is_mounted("/proc/mounts", BC_CARD_ROOT)
-#else
-int BC_CARD_MOUNTED(void);
-#endif
 #define BC_FAV_PATH BC_CARD_ROOT "/" BC_FAV_NAME
 static bc_item_t *g_fav; static int g_nfav, g_fav_loaded, g_fav_nocard, g_fav_bad;
 static struct { ino_t ino; off_t size; time_t mt; long mns; int have; } g_fav_sig;

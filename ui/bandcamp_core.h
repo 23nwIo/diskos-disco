@@ -84,6 +84,9 @@ int  bc_safe_name(const char *s, const char *fallback, char *out, size_t n);
 int  bc_dl_dir(const char *root, const bc_release_t *r, char *out, size_t n);
 /* The file name of track t: "NN Title.mp3" (NN = its number, two digits; no number: "Title.mp3"). 0, -1 too long. */
 int  bc_dl_file(const bc_track_t *t, char *out, size_t n);
+/* A file of the release's download folder is track t (saved before: "NN Title.<ext>" as bc_dl_file, or Bandcamp's own
+ * name from its ZIP, "<artist> - <album> - NN Title.<ext>"; ext flac, mp3, ogg or m4a). 1 yes, 0 no. */
+int  bc_local_match(const char *fname, const bc_track_t *t);
 /* The size of an ID3v2 tag at the start of buf (header, footer and all), 0 when there is none. */
 size_t bc_id3_skip(const unsigned char *buf, size_t len);
 /* An ID3v2.4 tag (UTF-8) for track t of r (total = the release's track count): TIT2, TPE1, TALB, TPE2, TRCK "n/N",
