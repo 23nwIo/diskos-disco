@@ -538,6 +538,74 @@ static void test_radio(void){
     pb_close();
 }
 
+
+/* a stream list (0d14, Bandcamp): OPL_BC_LIST's tracks one after another in the radio work mode */
+static int slist_cb(void *ctx, int idx){ (void)ctx; pb_stream_mode(1); return pb_slist_play(idx); }   /* as main.c core_slist */
+static void test_slist(void){
+    pl_core_t c;
+    pl_core_init(&c, cap_send, NULL, NULL);
+    c.radio = radio_cb; c.slist = slist_cb;
+    pb_init(&c, dbp, sysp, quiet);
+    CHECK(pb_play_list(QD_ALBUM, 0, "Alpha") == 0);
+    pb_engine_event();
+    FILE *f = fopen(OPL_BC_LIST, "w");
+    CHECK(f != NULL);
+    if(!f) return;
+    fputs("181000\thttps://t4.example/stream/1?a=1&b=2\tFirst \"Song\"\tUnicorn Partisans\tRepression\n"
+          "bad line\n"
+          "200000\tftp://nope\tBad\tX\tY\n"
+          "95000\thttps://t4.example/stream/2\tSecond\tUnicorn Partisans\tRepression\n"
+          "60000\thttps://t4.example/stream/3\tThird\tUnicorn Partisans\tRepression\n", f);
+    fclose(f);
+    CHECK(pl_core_handle(&c, "0d14000C0000", 12) == -1);         /* not in the radio work mode */
+    CHECK(pl_core_handle(&c, "0657000C000C", 12) == 0);
+    pb_stream_mode(1);
+    nsent = 0;
+    CHECK(pl_core_handle(&c, "0d14000C0001", 12) == 0 && pb_slist_track() == 1 && !strcmp(e_cur, "https://t4.example/stream/2") && e_state == ENG_PLAY);
+    pb_engine_event();
+    if(getenv("PB_DUMP")){ printf("slist %d sent\n", nsent); for(int i = 0; i < nsent; i++) puts(sent[i]); }
+    CHECK(sent_count("Second") == 1 && sent_count("song_duration_time\\\":95000") == 1 && sent_count("Unicorn Partisans") == 1
+          && sent_count("\"playing_num\":\"2/3\"") == 1 && sent_count("Repression") == 1);
+    /* Next, Previous (near the start: the track before), seek */
+    CHECK(pb_transport(PL_T_NEXT, 0) == 0 && pb_slist_track() == 2 && !strcmp(e_cur, "https://t4.example/stream/3"));
+    pb_engine_event();
+    CHECK(pb_transport(PL_T_NEXT, 0) == -1 && pb_slist_track() == 2);   /* the last one */
+    CHECK(pb_transport(PL_T_PREV, 0) == 0 && pb_slist_track() == 1);
+    pb_engine_event();
+    CHECK(pb_transport(PL_T_SEEK, 30000) == 0 && e_ms == 30000);
+    /* far into the track, Previous starts it again */
+    e_ms = 50000; pb_engine_event();
+    CHECK(pb_transport(PL_T_PREV, 0) == 0 && pb_slist_track() == 1 && e_ms == 0);
+    pb_engine_event();
+    /* a track that stops at once did not play: ad14 with its index, nothing follows */
+    nsent = 0;
+    e_song_ends();
+    CHECK(sent_count("ad14000C0001") == 1 && pb_slist_track() == 1 && e_state == ENG_STOP);
+    /* the UI wrote fresh links and starts it again; once it has played a while, its end starts the next */
+    CHECK(pl_core_handle(&c, "0d14000C0001", 12) == 0 && e_state == ENG_PLAY);
+    pb_engine_event();
+    extern void pb_test_age_stream(double s);
+    pb_test_age_stream(100.0);
+    nsent = 0;
+    e_song_ends();
+    CHECK(pb_slist_track() == 2 && !strcmp(e_cur, "https://t4.example/stream/3") && e_state == ENG_PLAY && sent_count("ad14") == 0);
+    pb_engine_event();
+    pb_test_age_stream(100.0);
+    e_song_ends();                                                /* the last track ended: the list stops */
+    CHECK(e_state == ENG_STOP && pb_slist_track() == 2);
+    CHECK(pb_transport(PL_T_TOGGLE, 0) == 0 && e_state == ENG_PLAY && !strcmp(e_cur, "https://t4.example/stream/3"));   /* Play: again */
+    /* a station replaces the list */
+    CHECK(send_station(&c, "Rock", "https://radio.example/rock") == 0 && pb_slist_track() == -1);
+    CHECK(pb_transport(PL_T_NEXT, 0) == -1);
+    /* a track past the end starts the list at its first; leaving the mode ends the list */
+    CHECK(pl_core_handle(&c, "0d14000C0009", 12) == 0 && pb_slist_track() == 0 && !strcmp(e_cur, "https://t4.example/stream/1?a=1&b=2"));
+    CHECK(pl_core_handle(&c, "0657000C0008", 12) == 0);
+    pb_stream_mode(0);
+    CHECK(pb_slist_track() == -1 && !strcmp(e_cur, "/s/a1.flac"));
+    unlink(OPL_BC_LIST);
+    pb_close();
+}
+
 /* ---- after the list (0d11 / 0d12) ---- */
 static void test_list_end(void){
     pl_core_t c;
@@ -673,6 +741,7 @@ int main(void){
     test_playback();
     test_resume();
     test_radio();
+    test_slist();
     test_list_end();
     test_upnext();
     unlink(dbp); unlink(sysp);

@@ -382,6 +382,21 @@ static void test_core(void){
     r = req("POST", p("/api/radio_search"), ""); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RADIO_SEARCH && !r.cmd.q[0]);   /* popular */
     CHECK(req("GET", p("/api/radio_search"), NULL).kind == RMT_R_BAD_METHOD);           /* it downloads: POST only */
     r = req("GET", p("/api/library/radio_search"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_L_RADIO_HITS);
+    /* Bandcamp: GET = everything as JSON; POST action=search|open|play|stop */
+    r = req("GET", p("/api/bandcamp"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BANDCAMP && r.cmd.sub == RMT_BC_STATE);
+    r = req("POST", p("/api/bandcamp"), "action=search&q=aphex+twin"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_SEARCH && !strcmp(r.cmd.q, "aphex twin"));
+    CHECK(req("POST", p("/api/bandcamp"), "action=search&q=").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/bandcamp"), "action=open&url=https%3A%2F%2Faphextwin.bandcamp.com");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_OPEN && !strcmp(r.cmd.name, "https://aphextwin.bandcamp.com"));
+    CHECK(req("POST", p("/api/bandcamp"), "action=open&url=http%3A%2F%2Fx").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/bandcamp"), "action=play&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&track=3");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_PLAY && r.cmd.pos == 3 && !strcmp(r.cmd.name, "https://a.bandcamp.com/album/x"));
+    r = req("POST", p("/api/bandcamp"), "action=play&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx"); CHECK(r.kind == RMT_R_CMD && r.cmd.pos == -1);
+    CHECK(req("POST", p("/api/bandcamp"), "action=play&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&track=-2").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bandcamp"), "action=play").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/bandcamp"), "action=stop"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_STOP);
+    CHECK(req("POST", p("/api/bandcamp"), "action=dance").kind == RMT_R_BAD_PARAM && req("PUT", p("/api/bandcamp"), NULL).kind == RMT_R_BAD_METHOD);
+    CHECK(preq("POST", "/Fest_1/api/bandcamp", "action=stop").kind == RMT_R_NOT_FOUND);   /* not for party guests */
     r = req("POST", p("/api/play_item"), "kind=radio_hit&pos=3&url=http%3A%2F%2Fx"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_I_RADIO_HIT && r.cmd.pos == 3);
     CHECK(req("POST", p("/api/play_item"), "kind=radio_hit&pos=3").kind == RMT_R_BAD_PARAM);   /* hits need their url */
     r = req("POST", p("/api/radio_fav_add"), "kind=radio_hit&pos=1&url=http%3A%2F%2Fx");
@@ -430,7 +445,7 @@ static void test_core(void){
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
     memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0; memset(s.bt_device, 1, sizeof s.bt_device - 1); s.bt_device[sizeof s.bt_device - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
-    CHECK(strlen(RMT_PAGE_HTML) < 32768 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768 && strlen(RMT_HG_HTML) < 32768 && strlen(RMT_HGADMIN_HTML) < 32768);   /* each page stays light */
+    CHECK(strlen(RMT_PAGE_HTML) < 40960 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768 && strlen(RMT_HG_HTML) < 32768 && strlen(RMT_HGADMIN_HTML) < 32768);   /* each page stays light (the main page: 40 KB since the Bandcamp tab) */
 }
 
 /* ---------------------------------------------------------------- server round trip */

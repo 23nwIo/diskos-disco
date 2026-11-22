@@ -47,6 +47,15 @@ folder to open it; tap a song to play it in that context (the album, the artist'
 the whole library), or press **Play all**. A file in Folders plays only if the library already knows it (rescan the
 card on the Disc after copying new music). In Folders, **Play all** plays the open folder with its subfolders, in path order (A to Z), as one queue; files the library doesn't know are skipped. Folders never leave the card: `..` and links pointing elsewhere are refused.
 
+### Bandcamp
+
+The **Bandcamp** tab searches Bandcamp (artists, labels, albums and tracks; type at least two letters). Tap an artist
+to see their releases, a release to see its tracks with their lengths; tap a track to play the release from there, or
+press **Play all**. A track the artist doesn't let anyone stream is marked *not streamable*. The Disc does the
+downloading; the page shows covers straight from Bandcamp's image server (`f4.bcbits.com`, allowed by the page's
+Content-Security-Policy for images only). Bandcamp plays only with the diskOS player (docs/BANDCAMP.md); Now playing
+then shows the track, its album and cover, with Previous/Next, the position slider and **Stop Bandcamp**.
+
 ### Queue
 
 The **Queue** tab shows what plays next, the same list MPD clients see: the song playing now, the songs queued on the
@@ -305,6 +314,8 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `GET api/library/<list>` | `albums`, `artists`, `playlists`, `favorites`, `songs`, `radio` (items with `pos`, `name`, `url`, `codec`, `bitrate`, `country`, `fav`), `radio_search` (the last station search: also `"search":"idle"|"busy"|"done"|"failed"`); `album` and `artist` with `name=`, `playlist` with `id=`, `folder` with `path=` (relative to the card, empty for the top). All take `q=` (search), `offset=` and `limit=` (default 200, max 500). Answer: `{"ok":true,"total":N,"offset":N,"items":[…]}`. |
 | `POST api/play_item` | `kind=album` + `name` + `song_id`; `kind=artist` + `name` + `song_id`; `kind=playlist` + `id` + `pos`; `kind=favorites` + `pos`; `kind=song` + `song_id`; `kind=file` + `path`; `kind=folder` + `path` (empty: the whole card; subfolders included, path order); `kind=all`; `kind=radio` + `pos` (+ `url`: refused if that favourite has changed); `kind=radio_hit` + `pos` + `url` (a search hit). `pos` counts from 1. |
 | `POST api/radio_search` with `q` | Start a station search (`q` empty: popular stations); then poll `GET api/library/radio_search` until `search` is not `busy`. |
+| `GET api/bandcamp` | Bandcamp (own player only, docs/BANDCAMP.md): `{"ok":true,"own_player":bool,"search":{"state","q","items":[{"type":"b|a|t","name","artist","album","url","art"}]},"page":{"state","url","kind":"artist" with "name","items" \| "release" with "release":{"type","title","artist","album","url","art","tracks":[{"title","artist","ms","num","plays"}]}},"now":{"state":"off|starting|playing|error","active","error","track","release"}}`; `state` is `idle`, `busy`, `done` or `failed`. |
+| `POST api/bandcamp` with `action=search&q=…`, `action=open&url=…` (an artist's site, an album or track page), `action=play&url=…[&track=N]` (N: the track's index on the page) or `action=stop` | Start a download on the Disc (then poll `GET api/bandcamp`), play a release from a track, or go back to local playback. Not on the guests' link. |
 | `POST api/radio_fav_add`, `POST api/radio_fav_remove` | Save or remove a station: `kind=radio_hit` or `kind=radio`, with `pos` and `url`; or `kind=radio_now` (the station playing); or `kind=stream` with `name` and an http/https `url` (a stream address of your own; add only). |
 | `POST api/radio_stop` | Stop the web radio and return to local playback. |
 

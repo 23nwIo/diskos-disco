@@ -56,6 +56,7 @@ typedef enum {
     RMT_CMD_GAME,            /* a player's request in a game (party link while a game is the mode): sub = rmt_game_t */
     RMT_CMD_GAME_SEARCH,     /* the player whose turn it is searches the game's songs: q, offset, limit */
     RMT_CMD_GAME_ADMIN,      /* the host's game page: arg 0 read, 1 an action (sub) or the setup (game[], name = folder, id = playlist) */
+    RMT_CMD_BANDCAMP,        /* Bandcamp (bandcamp.h): sub = rmt_bc_t; q = search text, name = a Bandcamp address, pos = track */
     RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
                               * (1-based, 0 = keep the station), name = its url (checked) */
 } rmt_cmd_kind_t;
@@ -99,6 +100,10 @@ typedef enum { RMT_G_STATE = 0, RMT_G_JOIN, RMT_G_PICK, RMT_G_RANDOM, RMT_G_RERO
                RMT_G_START, RMT_G_SKIP, RMT_G_REMOVE, RMT_G_END, RMT_G_AGAIN, RMT_G_RESET, RMT_G_SETUP,
                RMT_G_FIXSONG } rmt_game_t;   /* corrections for a song (name = artist, text = title, offset = year, item = leave it
                                               * out): the player whose turn it is, or the host (pos = the turn, -1 the one now) */
+/* Bandcamp (own player only): GET api/bandcamp = search results, the page opened and what plays (JSON);
+ * POST api/bandcamp action=search q= | open url= (an artist's site, an album or track page) | play url= [track=N, the
+ * track's index on the page; absent = the first that plays] | stop. The downloads run on the Disc; the page polls. */
+typedef enum { RMT_BC_STATE = 0, RMT_BC_SEARCH, RMT_BC_OPEN, RMT_BC_PLAY, RMT_BC_STOP } rmt_bc_t;
 typedef enum { RMT_Q_LIST = 1, RMT_Q_JUMP, RMT_Q_REMOVE, RMT_Q_MOVE, RMT_Q_CLEAR, RMT_Q_ADD } rmt_queue_t;
 typedef enum { RMT_BT_ON = 1, RMT_BT_OFF, RMT_BT_REFRESH, RMT_BT_SEARCH, RMT_BT_CONNECT, RMT_BT_DISCONNECT, RMT_BT_FORGET, RMT_BT_RENAME, RMT_BT_CODEC } rmt_bt_t;
 typedef enum { RMT_E_PL_CREATE = 1, RMT_E_PL_RENAME, RMT_E_PL_DELETE, RMT_E_PL_ADD, RMT_E_PL_REMOVE, RMT_E_FAV } rmt_edit_t;

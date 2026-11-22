@@ -303,6 +303,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_BROWSE) return "library";
     if(k == RMT_CMD_PLAY_ITEM) return "play_item";
     if(k == RMT_CMD_RADIO_SEARCH) return "radio_search";
+    if(k == RMT_CMD_BANDCAMP) return "bandcamp";
     if(k == RMT_CMD_COVER) return "cover";
     if(k == RMT_CMD_STATUS) return "status";
     if(k == RMT_CMD_EDIT) return "edit";
@@ -513,6 +514,27 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
         if(k == 0){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
         rt.kind = !get ? RMT_R_BAD_METHOD : k < 0 ? RMT_R_BAD_PARAM : RMT_R_CMD;
         if(rt.kind != RMT_R_CMD) memset(&rt.cmd, 0, sizeof rt.cmd);
+        return rt;
+    }
+    if(!strcmp(ep, "bandcamp")){
+        rt.cmd.kind = RMT_CMD_BANDCAMP;
+        if(get){ rt.kind = RMT_R_CMD; rt.cmd.sub = RMT_BC_STATE; return rt; }
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        char a[8]; int ok = 0;
+        rt.kind = RMT_R_BAD_PARAM;
+        if(!param_str(r, "action", a, sizeof a)){
+            if(!strcmp(a, "search")){ rt.cmd.sub = RMT_BC_SEARCH; ok = !param_str(r, "q", rt.cmd.q, sizeof rt.cmd.q) && rt.cmd.q[0]; }
+            else if(!strcmp(a, "open")){ rt.cmd.sub = RMT_BC_OPEN; ok = !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name) && !strncmp(rt.cmd.name, "https://", 8); }
+            else if(!strcmp(a, "play")){
+                long t = -1; int pt = param(r, "track", &t);
+                rt.cmd.sub = RMT_BC_PLAY; rt.cmd.pos = pt == 0 ? t : -1;
+                ok = !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name) && !strncmp(rt.cmd.name, "https://", 8)
+                     && pt != -2 && (pt != 0 || (t >= 0 && t < 10000));
+            }
+            else if(!strcmp(a, "stop")){ rt.cmd.sub = RMT_BC_STOP; ok = 1; }
+        }
+        if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }
+        rt.kind = RMT_R_CMD;
         return rt;
     }
     if(!strcmp(ep, "radio_search")){                             /* starts a download on the Disc: POST */

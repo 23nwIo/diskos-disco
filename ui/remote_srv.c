@@ -290,7 +290,7 @@ static int handle(int c){
         int game; pthread_mutex_lock(&g_mu); game = g_party_game; pthread_mutex_unlock(&g_mu);
         reply(c, "200 OK", "text/html; charset=utf-8", rt.kind == RMT_R_PAGE ? RMT_PAGE_HTML : rt.kind == RMT_R_SYS_PAGE ? RMT_SYS_HTML
               : rt.kind == RMT_R_GAME_PAGE ? RMT_HGADMIN_HTML : game ? RMT_HG_HTML : RMT_PARTY_HTML,
-              "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'\r\n");
+              "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' https://f4.bcbits.com; frame-ancestors 'none'\r\n");
         break; }
     case RMT_R_STATE: {
         rmt_state_t s; int have;

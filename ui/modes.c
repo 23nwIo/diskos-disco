@@ -41,7 +41,7 @@ static const modeinfo_t MODES[] = {
 #define N_MODES ((int)(sizeof(MODES)/sizeof(MODES[0])))
 /* the one icon per working mode, used by every theme's Working mode screen and the Quick Settings Mode toggle */
 #define RADIO_GLYPH LV_SYMBOL_AUDIO   /* Web radio (source 6): not a row of the picker, it starts from the Radio app */
-const char *modes_glyph(int mode){ if(mode == 6) return RADIO_GLYPH; for(int i = 0; i < N_MODES; i++) if(MODES[i].mode == mode) return MODES[i].glyph; return MODES[0].glyph; }
+const char *modes_glyph(int mode){ if(mode == 6 || mode == 7) return RADIO_GLYPH;   /* 7: Bandcamp, a stream too */ for(int i = 0; i < N_MODES; i++) if(MODES[i].mode == mode) return MODES[i].glyph; return MODES[0].glyph; }
 #define ROW_USB_AUDIO 100 /* legacy test-only route ID; not 4 (= BT streaming's mode) */
 
 /* OUTPUT-ROUTE-BEGIN */

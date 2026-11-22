@@ -38,3 +38,4 @@ select{margin-bottom:.6em}#stv h2{font-size:.85em;color:var(--mut);font-weight:6
 .top a{color:var(--acc);text-decoration:none;font-weight:600}
 .qh{font-size:.85em;color:var(--mut);font-weight:600;margin:1em 0 .3em}#ql .r:disabled{opacity:1;color:var(--fg)}
 .blk label{display:block;margin:.6em 0 .2em}.blk b{display:block}
+.bcv{display:block;width:160px;height:160px;object-fit:cover;border-radius:8px;margin:8px auto}

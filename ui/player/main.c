@@ -120,6 +120,9 @@ static int core_radio(void *ctx, const char *name, const char *url){
     return 0;
 }
 
+/* 0d14: a stream list (Bandcamp); the radio mode may still be on its way, as with 0d10 */
+static int core_slist(void *ctx, int idx){ (void)ctx; pb_stream_mode(1); return pb_slist_play(idx); }
+
 /* ---- the headphones' buttons and volume (btavrcp.c, AVRCP through BlueZ) ---- */
 static pl_core_t *g_core;
 static int *g_bt_vol;                      /* main's bt_vol: the volume the headphones were last given */
@@ -294,6 +297,7 @@ int main(int argc, char **argv){
     core.play = core_play;
     core.radio = core_radio;
     core.upnext = core_upnext;
+    core.slist = core_slist;
     pb_init(&core, QD_SONG_DB, QD_SYSCONFIG_DB, logmsg);
     /* the key actions are kept in SYSCONFIG like the stock player keeps them; the UI sends them only when changed.
      * Not stored: every press changes the volume. */

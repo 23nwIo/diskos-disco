@@ -60,6 +60,11 @@ player_test: player_test.c $(PLAYER_SRCS) ../player/hw.c sqlite3_host.o ../playe
 btavrcp_test: btavrcp_test.c ../dbusmini.c ../dbusmini.h ../player/btavrcp.c ../player/btavrcp.h ../btbatt.c ../btbatt.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. btavrcp_test.c ../dbusmini.c ../player/btavrcp.c ../btbatt.c -o $@
 
+bandcamp_test: bandcamp_test.c ../bandcamp_core.c ../bandcamp_core.h ../jsmn.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. bandcamp_test.c ../bandcamp_core.c -o $@
+# bandcamp.c with a stand-in wget (fixtures/bandcamp/wget) and stubs for the UI around it
+bandcamp_app_test: bandcamp_app_test.c ../bandcamp.c ../bandcamp.h ../bandcamp_core.c ../bandcamp_core.h ../remote_core.c ../hitguess_core.c ../command_spawn.c
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DBC_OPL_RUNNING=test_opl_running -I.. bandcamp_app_test.c ../bandcamp.c ../bandcamp_core.c ../remote_core.c ../hitguess_core.c ../command_spawn.c -pthread -o $@
 radio_test: radio_test.c ../radio_core.c ../radio_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. radio_test.c ../radio_core.c -o $@
 
@@ -95,7 +100,7 @@ pytests: mpd_test
 	python3 run_pytests.py
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
+run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -105,6 +110,8 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wif
 	./mpd_test
 	@echo "--- radio ---"
 	./radio_test
+	./bandcamp_test
+	./bandcamp_app_test
 	@echo "--- wifi boot hold ---"
 	./wifi_reco_test
 	@echo "--- wifi_up.sh override ---"
@@ -129,7 +136,7 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test wif
 	./hitguess_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test $(EXTRA)
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test $(EXTRA)
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@

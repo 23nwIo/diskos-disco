@@ -27,6 +27,7 @@
 #include "sdio.h"
 #include "folderbrowser.h"
 #include "radio.h"
+#include "bandcamp.h"
 #include "scanner.h"
 #include "system.h"
 #include "modes.h"
@@ -144,6 +145,7 @@ static int music_assistant(void){ return ma_controls(); }
 static const char *source_name(void){
     if(music_assistant()) return "music_assistant";
     if(radio_active()) return "radio";
+    if(bandcamp_active()) return "bandcamp";
     return ui_get_source_mode() == 0 ? "local" : "other";
 }
 /* ---- the playing file's technical details: format and average rate on the main thread (a DB row, a stat), bit depth
@@ -247,7 +249,7 @@ static void snapshot(rmt_state_t *s){
     s->radio_state = radio_state();
     snprintf(s->station, sizeof s->station, "%s", radio_station_name());
     snprintf(s->radio_error, sizeof s->radio_error, "%s", radio_last_error());
-    s->controllable = music_assistant() || radio_active() || ui_local_playback_allowed();
+    s->controllable = music_assistant() || radio_active() || bandcamp_active() || ui_local_playback_allowed();
     s->favorite = -1; s->station_fav = -1;
     if(ui_route_mac()[0]){ ui_bt_live_codec(s->bt_codec, sizeof s->bt_codec); if(!bt_peer_name(s->bt_device, sizeof s->bt_device)) s->bt_device[0] = 0; }   /* cached; a thread refreshes it */
     s->eq = simple_cfg_get_int("eq_preset", 0); if(s->eq < 0 || s->eq > 20) s->eq = 0;
@@ -279,6 +281,7 @@ static int run(const rmt_cmd_t *c, const char **why){
     if(radio && (c->kind == RMT_CMD_NEXT || c->kind == RMT_CMD_PREV || c->kind == RMT_CMD_SEEK || c->kind == RMT_CMD_PLAY_MODE)){
         *why = "Not available for web radio"; return -1;
     }
+    if(!ma && bandcamp_active() && c->kind == RMT_CMD_PLAY_MODE){ *why = "Not available for Bandcamp"; return -1; }
     if(transport && !ma && !radio && !ui_local_playback_allowed()){ *why = NOT_LOCAL; return -1; }   /* say why here, no toast on the Disc */
     switch(c->kind){
     case RMT_CMD_PLAY_PAUSE: return ui_transport_command(PP);
@@ -1096,6 +1099,21 @@ static char *read_cover(const char **why){
     g_blob_len = (int)n;
     return b;
 }
+/* Bandcamp (bandcamp.h): the downloads run on its worker; the page polls GET api/bandcamp */
+static int bandcamp_cmd(const rmt_cmd_t *c, const char **why, char **body){
+    switch(c->sub){
+    case RMT_BC_STATE: *body = bandcamp_json(); if(!*body){ *why = "Out of memory"; return -1; } return 0;
+    case RMT_BC_SEARCH: return bandcamp_search(c->q, why);
+    case RMT_BC_OPEN: return bandcamp_open(c->name, why);
+    case RMT_BC_PLAY:
+        if(!opl_running()){ *why = "Bandcamp plays only with the diskOS player (Settings > About > Player)"; return -1; }
+        return bandcamp_play(c->name, (int)c->pos, why);
+    case RMT_BC_STOP:
+        if(!bandcamp_active() && !strcmp(bandcamp_state(), "off")){ *why = "Bandcamp is not playing"; return -1; }
+        bandcamp_stop(); return 0;
+    }
+    *why = "Unknown command"; return -1;
+}
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL; g_blob_len = 0;
     if(c->guest || c->kind == RMT_CMD_PARTY) return party_dispatch(c, why, body);
@@ -1112,6 +1130,7 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
         if(!*body) *why = "Out of memory";
         return *body ? 0 : -1;
     }
+    if(c->kind == RMT_CMD_BANDCAMP) return bandcamp_cmd(c, why, body);
     if(c->kind == RMT_CMD_EDIT) return edit(c, why, body);
     if(c->kind == RMT_CMD_QUEUE) return queue_cmd(c, why, body);
     if(c->kind == RMT_CMD_BT_LIST){ *body = bt_json(); if(!*body) *why = "Out of memory"; return *body ? 0 : -1; }

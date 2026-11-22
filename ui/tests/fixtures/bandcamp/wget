@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# A stand-in for wget in bandcamp_app_test: serves the fixtures for Bandcamp's addresses (-O file, the URL last).
+# BC_WGET_LOG gets one line per call; BC_WGET_FAIL=1 fails every call.
+out=""; url=""; post=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -O) out="$2"; shift ;;
+    --post-data=*) post="${1#--post-data=}" ;;
+    -*) ;;
+    *) url="$1" ;;
+  esac
+  shift
+done
+[ -n "$BC_WGET_LOG" ] && echo "$url $post" >> "$BC_WGET_LOG"
+[ "$BC_WGET_FAIL" = 1 ] && exit 4
+d=$(dirname "$0")
+case "$url" in
+  https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic) f=search.json ;;
+  https://aphextwin.bandcamp.com/music) f=artist-music.html ;;
+  https://unicornpartisans.bandcamp.com/album/repression-depression) f=album.html ;;
+  https://unicornpartisans.bandcamp.com/track/soko-linx) f=track.html ;;
+  *) exit 8 ;;
+esac
+cat "$d/$f" > "$out"

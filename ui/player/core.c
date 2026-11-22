@@ -350,6 +350,11 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         if(!c->upnext){ logf_(c, "up next: %d songs (no playback here)", n); return 0; }
         return c->upnext(c->ctx, ack, f.data[8] == '1', ids, n);
     }
+    case 0x0d14:          /* a stream list (Bandcamp): play OPL_BC_LIST from track v */
+        if(v < 0){ c->bad_frames++; logf_(c, "stream list: bad frame"); return -1; }
+        if(c->work_mode != PL_WORK_DLNA){ logf_(c, "stream list: not in the radio work mode (0657 0C), ignored"); return -1; }
+        if(!c->slist){ logf_(c, "stream list: track %d (no playback here)", v); return 0; }
+        return c->slist(c->ctx, v);
     case 0x0d11:
         if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }
         if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_UI ? "the UI picks" : "station");

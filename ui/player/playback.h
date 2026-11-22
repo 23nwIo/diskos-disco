@@ -74,6 +74,12 @@ int  pb_stream_pause(void);
 int  pb_stream_stop(void);
 int  pb_stream_start(const char *title, const char *uri);
 const char *pb_stream_uri(void);
+/* A stream list (0d14, Bandcamp; own_player.h OPL_BC_LIST): in the radio work mode, read the list and play track idx;
+ * the tracks follow one another, Next/Previous/seek work. A track that does not play stops the list and is told to the
+ * UI (ad14 with its index). A station (0d10), stop or the end of the mode ends the list. pb_slist_track: the track
+ * playing (0-based), -1 no list. */
+int  pb_slist_play(int idx);
+int  pb_slist_track(void);
 
 /* The last engine status and when it was read (CLOCK_MONOTONIC seconds); NULL before the first. */
 const eng_status_t *pb_status(double *when);

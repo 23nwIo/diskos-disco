@@ -69,6 +69,7 @@
 #include "remote.h"
 #include "mpd.h"
 #include "radio.h"
+#include "bandcamp.h"
 #include "playlog.h"
 #include "ui_instance.h"
 #include "power.h"
@@ -561,11 +562,12 @@ int ui_route_analog(void){
     /* the route commands MUST land; if either fails, keep g_route_mac set + return failure so a
      * retry re-runs - clearing it would falsely say "on analog" and leave the player stuck on BT. */
     if(ipc_send_cmd("0666000C0006") < 0) return -1;     /* out_dev = analog/local DAC */
-    if(ui_get_source_mode() == 6){                              /* Web radio: back into the DLNA mode, and the stream starts again */
+    if(ui_get_source_mode() == 6 || ui_get_source_mode() == BANDCAMP_SOURCE){   /* Web radio, Bandcamp: back into the DLNA
+                                                                                 * mode, and the stream starts again */
         if(ipc_send_cmd("0657000C000C") < 0) return -1;
         g_route_mac[0] = 0;
         ui_bt_codec_upgrade_cancel(); ui_route_hold_cancel(); ui_resume_guard_cancel();
-        radio_restart();
+        if(ui_get_source_mode() == 6) radio_restart(); else bandcamp_restart();
         fprintf(stderr,"route analog (radio)\n"); fflush(stderr);
         return 0;
     }
@@ -805,7 +807,9 @@ static int storage_player_guarded(void){
 static int source_send(int mode){
     /* Web radio <-> Playback keeps the output route (Bluetooth headphones included): only the work mode changes, the
      * exact frames dlnatest sent on the device (2026-11-06, played over Bluetooth). No 0666 re-init, no route reset. */
-    if(mode == 6 || (mode == 0 && g_source_mode == 6)) return ipc_send_cmd(mode == 6 ? "0657000C000C" : "0657000C0008");
+    /* Bandcamp (7) rides on the same work mode as the radio (0C): between 0, 6 and 7 only the work mode changes */
+    int stream = mode == 6 || mode == BANDCAMP_SOURCE, was_stream = g_source_mode == 6 || g_source_mode == BANDCAMP_SOURCE;
+    if(stream || (mode == 0 && was_stream)) return ipc_send_cmd(stream ? "0657000C000C" : "0657000C0008");
     { void bt_autoroute_reset(void); ui_route_forget("source change"); bt_autoroute_reset(); }   /* B02: the source owns the output now */
     if(ipc_send_cmd("0666000C0006") < 0) return -1;
     modes_output_reset();                                /* every source change starts from the internal DAC route */
@@ -856,17 +860,18 @@ static void storage_restart_for_card(void){
 }
 int ui_set_source_mode(int mode){
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
-    if(mode < 0 || mode > 6) return -1;                 /* 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay, 6 Web radio */
+    if(mode < 0 || mode > 7) return -1;                 /* 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay, 6 Web radio, 7 Bandcamp */
     if(modes_output_route()==OUT_USB){
         if(mode==0)return modes_output_mode_switch(OUT_INTERNAL);
         ui_toast("Return to playback before changing USB mode");return -1;
     }
-    if(mode != 0 && mode != 6 && usbdrive_state() != UD_OFF){   /* every other mode drives the USB port: eject a USB drive first */
+    if(mode != 0 && mode != 6 && mode != BANDCAMP_SOURCE && usbdrive_state() != UD_OFF){   /* every other mode drives the USB port: eject a USB drive first */
         if(usbdrive_state() == UD_STOPPING || usbdrive_stop() != 0){ ui_toast("Eject the USB drive first"); return -1; }
         ui_toast("USB drive ejected - switch again"); return -1;
     }
     if(mode != 5) ma_mode_leaving();                    /* MA Sendspin rides on AirPlay: another mode turns it off */
     if(mode != 6) radio_mode_leaving();                 /* the radio rides on the DLNA mode: another mode ends it */
+    if(mode != BANDCAMP_SOURCE) bandcamp_mode_leaving();   /* so does Bandcamp */
     if(ui_source_switch_pending()){ ui_toast("Storage is switching"); return -1; }
     if(g_sd_phase == SD_UNKNOWN || g_sd_hold || !sd_io_healthy()){ ui_toast("SD access is held this boot"); return -1; }
     /* Every source change drives the player (and USB/card ownership with it), so none may happen before this
@@ -902,7 +907,8 @@ int ui_set_source_mode(int mode){
     if(was_playing && ipc_send_cmd("0201000C0000") < 0){ ui_toast("Player is busy - try again"); return -1; }
     if(source_send(mode) < 0){ ui_toast("Couldn't switch mode"); return -1; }
     g_source_mode = mode;
-    if(mode == 0 && was_playing && was_mode != 6) ipc_send_cmd("0201000C0000");   /* leaving the radio resumes nothing */
+    if(mode == 0 && was_playing && was_mode != 6 && was_mode != BANDCAMP_SOURCE) ipc_send_cmd("0201000C0000");   /* leaving the radio
+                                                                                     * or Bandcamp resumes nothing */
     return 0;
 }
 static void storage_resume_local(void){
@@ -1425,7 +1431,7 @@ int ui_play_defer_transport(int is_toggle){
 }
 /* A local play while the Web radio holds the player (source 6, DLNA mode): back to Playback first, so the frames that
  * follow land in LOCALPLAYER mode. Same order modes_local_init uses (route, work mode, then the play). */
-static void radio_yield_local(void){ if(g_source_mode == 6) ui_set_source_mode(0); }
+static void radio_yield_local(void){ if(g_source_mode == 6 || g_source_mode == BANDCAMP_SOURCE) ui_set_source_mode(0); }
 static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_idx){
     radio_yield_local();
     if(modes_output_busy()){ ui_toast("Switching output - try again"); return 0; }   /* an output switch (0666 re-init) is in flight or recovering */
@@ -4097,6 +4103,11 @@ int main(int argc, char **argv){
                 if(!playing && !g_play_pending) radio_end_list_ended();
                 else fprintf(stderr, "list end: something plays already\n");
             }
+        }
+        {   /* Bandcamp: finished downloads; a track the player couldn't play (ad14: its links expired) */
+            static unsigned seen_fail;
+            if(st.slist_fail_seq != seen_fail){ seen_fail = st.slist_fail_seq; bandcamp_link_failed(st.slist_fail_line); }
+            bandcamp_tick();
         }
         { void ui_shufhist_tick(const track_state_t *); ui_shufhist_tick(&st); }   /* Previous on shuffle: what played */
         {void zthumb_tick(void);zthumb_tick();} if(th_zune()){void zune_ui_tick(void);zune_ui_tick();}

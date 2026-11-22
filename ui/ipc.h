@@ -22,6 +22,8 @@ typedef struct {
     int  volume;      /* 0..VOL_MAX, from a714 frames */
     unsigned volume_seq; /* bumps on each volume update (drives the on-screen bar) */
     unsigned list_end_seq; /* bumps on each ad11 (own player: the list ended, the UI picks what follows; radio.h) */
+    unsigned slist_fail_seq; /* bumps on each ad14 (own player: stream-list line slist_fail_line didn't play; bandcamp.h) */
+    int  slist_fail_line;
     unsigned seq;
     unsigned path_seq;   /* value of seq when path last CHANGED (a track-identity epoch) */
     unsigned pos_seq;    /* value of seq when position was last reported (an a1 frame). pos_seq > path_seq

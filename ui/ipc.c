@@ -337,6 +337,11 @@ static void parse_frame(const char*buf,int n){
             g_up_ring[g_up_n].seq=(unsigned)strtoul(h1,0,16); g_up_ring[g_up_n].id=(int)strtol(h2,0,16); g_up_n++;
         }
         pthread_mutex_unlock(&g_mu);
+    } else if(buf[0]=='a'&&buf[1]=='d'&&buf[2]=='1'&&buf[3]=='4' && n>=12){
+        /* "ad14000C<line 4h>" - diskOS, own player only: a line of the stream list (0d14, Bandcamp) didn't play */
+        char h[5]={buf[8],buf[9],buf[10],buf[11],0};
+        if(!all_hex(h,4)) return;
+        pthread_mutex_lock(&g_mu); g_state.slist_fail_line=(int)strtol(h,0,16); g_state.slist_fail_seq++; pthread_mutex_unlock(&g_mu);
     } else if(buf[0]=='a'&&buf[1]=='d'&&buf[2]=='1'&&buf[3]=='1'){
         /* "ad11000C0000" - diskOS, own player only: the list ended and 0d11 said the UI picks what follows */
         pthread_mutex_lock(&g_mu); g_state.list_end_seq++; pthread_mutex_unlock(&g_mu);

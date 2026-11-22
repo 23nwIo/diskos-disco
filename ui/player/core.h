@@ -43,6 +43,9 @@ typedef int (*pl_radio_fn)(void *ctx, const char *name, const char *url);
  * (0d11), it does not go on. 0 or -1. */
 #define PL_UP_MAX 400
 typedef int (*pl_upnext_fn)(void *ctx, unsigned ack, int party, const int *ids, int n);
+/* 0d14: play the stream list the UI wrote to OPL_BC_LIST (Bandcamp, ui/bandcamp.c) from track idx (0-based), in the
+ * radio work mode. 0 or -1. */
+typedef int (*pl_slist_fn)(void *ctx, int idx);
 
 typedef struct {
     /* applied settings (Step 2 "do") */
@@ -97,6 +100,7 @@ typedef struct {
     pl_play_fn play;               /* set after pl_core_init; NULL = 0100 is only logged */
     pl_radio_fn radio;             /* set after pl_core_init; NULL = 0d10 is only logged */
     pl_upnext_fn upnext;           /* set after pl_core_init; NULL = 0d13 is only logged */
+    pl_slist_fn slist;             /* set after pl_core_init; NULL = 0d14 is only logged */
 } pl_core_t;
 
 void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx);

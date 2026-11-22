@@ -70,6 +70,7 @@ static double g_mem_t;
 #define PB_RESUME_WAIT_S   30.0
 #define PB_RESUME_STABLE_S 1.0
 #define PB_RESUME_OK_S     10.0
+#define PB_SL_MIN_S        5.0     /* a stream-list track that stops sooner did not play (expired link, no network) */
 static int g_rs;
 static double g_rs_until, g_rs_mounted, g_rs_check;
 /* Web radio (pb_stream_*): the DLNA work mode (0657 0C), the station the renderer was given, whether it is in MPD, when
@@ -84,6 +85,14 @@ static double g_st_t;
 static int g_st_local = -1;
 static long g_st_local_ms;
 static void stream_a2(int state);
+/* A stream list (0d14, Bandcamp): the tracks of OPL_BC_LIST, the one playing (g_sl_cur, -1 none). They play one after
+ * another in the radio work mode; a track that does not play is told to the UI with ad14 (its links have expired). */
+typedef struct { long ms; char *url, *title, *artist, *album; } sl_track_t;
+static sl_track_t *g_sl;
+static char *g_sl_text;
+static int g_sl_n, g_sl_cur = -1;
+static void sl_clear(void);
+static int sl_play(int idx);
 static int (*g_rs_mounted_fn)(void);
 static char g_rs_flag[256];
 static double g_rs_flag_t;          /* the resumed song started (the flag goes once it has played PB_RESUME_OK_S), 0 none */
@@ -372,6 +381,8 @@ static void update_status(void){
 static void stream_file(int on);
 static void stream_frame(int state, const char *uri, const char *title, const char *artist, const char *album,
                          const char *work_mode);
+static void stream_frame_at(int state, const char *uri, const char *title, const char *artist, const char *album,
+                            const char *work_mode, long dur_ms, int num, int total);
 /* ---- after the list (0d11 PL_END_*, 0d12 the station) ---- */
 static void tail_frame(int force){
     const char *t = g_es_valid && !strcmp(g_es.file, g_tl_url) && g_es.title[0] ? g_es.title : g_tl_name;
@@ -419,7 +430,18 @@ void pb_engine_event(void){
     if(g_stream){                                     /* the radio: no queue, no bookmark */
         if(g_st_loaded && g_es.state == ENG_PLAY && !g_st_told){ stream_a2(0); g_st_told = 1; }
         stream_file(1);
-        if(g_st_loaded && was == ENG_PLAY && g_es.state == ENG_STOP) L("radio: the stream stopped (%s)", g_st_uri);
+        if(g_st_loaded && was == ENG_PLAY && g_es.state == ENG_STOP){
+            L("radio: the stream stopped (%s)", g_st_uri);
+            if(g_sl_cur >= 0){                       /* a stream list: the track ended, or it didn't play at all */
+                double played = now_s() - g_st_t;
+                g_st_loaded = 0;
+                if(played < PB_SL_MIN_S){
+                    L("stream list: track %d stopped after %.1f s - asking the UI for fresh links (ad14)", g_sl_cur, played);
+                    char f[24]; snprintf(f, sizeof f, "ad14000C%04X", (unsigned)g_sl_cur & 0xFFFFu); send_lit(f);
+                } else if(g_sl_cur + 1 < g_sl_n){ sl_play(g_sl_cur + 1); return; }
+                else L("stream list: the last track (%d) ended", g_sl_cur);
+            }
+        }
         tell_state(g_es.state, 0);
         return;
     }
@@ -491,7 +513,7 @@ static int load_tables(sqlite3 *d, int pos, int row){
 
 int pb_play_list(int type, int pos, const char *name){
     if(!eng_ready()){ L("play list: no engine"); return -1; }
-    if(g_stream){ L("play list: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; }
+    if(g_stream){ L("play list: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; sl_clear(); }
     if(g_tail){ L("play list: ends the station after the list"); tail_end(); }
     sqlite3 *d = db();
     if(!d) return -1;
@@ -656,6 +678,19 @@ void pb_shutdown(void){
 
 int pb_transport(int op, long arg){
     if(!eng_ready() && op != PL_T_MODE){ L("transport %d: no engine", op); return -1; }
+    if(g_stream && g_sl_cur >= 0) switch(op){        /* a stream list: play/pause, skip, seek */
+    case PL_T_TOGGLE: if(!g_st_loaded) return sl_play(g_sl_cur); return eng_toggle();   /* after its end: again */
+    case PL_T_PAUSE: pb_pause(); return 0;
+    case PL_T_MODE: return 0;
+    case PL_T_STATE: if(!g_st_loaded) return -1; update_status(); stream_a2(g_es.state == ENG_PLAY ? 0 : 1); return 0;
+    case PL_T_NEXT: if(g_sl_cur + 1 >= g_sl_n){ L("next: the last track of the list"); return -1; } return sl_play(g_sl_cur + 1);
+    case PL_T_PREV: {                                  /* as on a CD: back to the start, or the track before near it */
+        long ms = g_st_loaded && g_es_valid ? g_es.elapsed_ms + (g_es.state == ENG_PLAY ? (long)((now_s() - g_es_t) * 1000.0) : 0) : 0;
+        return sl_play(ms > 3000 || g_sl_cur == 0 ? g_sl_cur : g_sl_cur - 1);
+    }
+    case PL_T_SEEK: if(!g_st_loaded || eng_seek_ms(arg) != 0) return -1; update_status(); return 0;
+    default: return -1;
+    }
     if(g_stream) switch(op){                         /* the radio: play/pause and the state; no skip, no seek */
     case PL_T_TOGGLE: if(!g_st_loaded){ L("play/pause: no station"); return -1; } return eng_toggle();
     case PL_T_PAUSE: pb_pause(); return 0;
@@ -775,15 +810,19 @@ void pb_mode_changed(void){
 /* a station's track frame: the DLNA one for the Radio app, a local one for the station after the list (g_tail) */
 static void stream_frame(int state, const char *uri, const char *title, const char *artist, const char *album,
                          const char *work_mode){
+    stream_frame_at(state, uri, title, artist, album, work_mode, 0, 1, 1);
+}
+static void stream_frame_at(int state, const char *uri, const char *title, const char *artist, const char *album,
+                            const char *work_mode, long dur_ms, int num, int total){
     char *song = malloc(PP_MAX_FRAME), *json = malloc(PP_MAX_FRAME), *frame = malloc(PP_MAX_FRAME);
     if(!song || !json || !frame){ L("radio: out of memory for the track frame"); goto out; }
     unsigned rate = g_es_valid ? g_es.rate : 0;
     int bits = g_es_valid && g_es.bits ? g_es.bits : 16, ch = g_es_valid && g_es.channels ? g_es.channels : 2;
     jbuf_t j = { song, 0, PP_MAX_FRAME, 1 };
     song[0] = 0;
-    jraw(&j, "{\"id\":0,\"pos_id\":0,\"song_name\":\"");
+    jraw(&j, "{\"id\":0,\"pos_id\":%d,\"song_name\":\"", total > 1 || dur_ms > 0 ? num : 0);
     jstr(&j, title);
-    jraw(&j, "\",\"song_duration_time\":0,\"song_file_path\":\"");
+    jraw(&j, "\",\"song_duration_time\":%ld,\"song_file_path\":\"", dur_ms);
     jstr(&j, uri);
     jraw(&j, "\",\"song_sample_rate\":%u,\"song_encoding_rate\":%d,\"song_bit_rate\":%d,\"song_artist_name\":\"", rate, bits,
          g_es_valid ? g_es.kbps : 0);
@@ -796,7 +835,8 @@ static void stream_frame(int state, const char *uri, const char *title, const ch
     json[0] = 0;
     jraw(&o, "{\"song\":\"");
     jstr(&o, song);
-    jraw(&o, "\",\"love\":false,\"playerflag\":3,\"state\":%d,\"playing_num\":\"1/1\",\"work_mode\":\"%s\"}", state, work_mode);
+    jraw(&o, "\",\"love\":false,\"playerflag\":3,\"state\":%d,\"playing_num\":\"%d/%d\",\"work_mode\":\"%s\"}", state, num, total,
+         work_mode);
     int n = o.ok ? pp_fmt_a2(frame, PP_MAX_FRAME, json) : -1;
     if(n < 0){ L("radio: track frame too long"); goto out; }
     send_(frame, n);
@@ -804,6 +844,11 @@ out:
     free(song); free(json); free(frame);
 }
 static void stream_a2(int state){
+    if(g_sl_cur >= 0){
+        const sl_track_t *t = &g_sl[g_sl_cur];
+        stream_frame_at(state, t->url, t->title, t->artist, t->album, "DLNA", t->ms, g_sl_cur + 1, g_sl_n);
+        return;
+    }
     stream_frame(state, g_st_uri, g_st_title[0] ? g_st_title : g_st_uri, "Web radio", "", "DLNA");
 }
 /* OPL_STREAM: the song the station names now, as MPD has it, for ui/radio.c (no second connection to the station).
@@ -846,6 +891,7 @@ void pb_stream_mode(int on){
         L("radio: DLNA mode (local song %d at %ld ms kept)", g_st_local, g_st_local >= 0 ? g_st_local_ms : 0L);
     } else if(!on && g_stream){
         g_stream = 0;
+        sl_clear();
         if(g_st_loaded){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); }
         g_st_loaded = 0;
         stream_file(0);
@@ -890,6 +936,7 @@ int pb_stream_pause(void){
 }
 int pb_stream_stop(void){
     if(!g_stream) return -1;
+    sl_clear();
     if(g_st_loaded){ char r[256]; eng_cmd("stop", r, sizeof r); eng_cmd("clear", r, sizeof r); g_st_loaded = 0; update_status(); tell_state(ENG_PAUSE, 0); }
     stream_file(0);
     return 0;
@@ -899,6 +946,76 @@ const char *pb_stream_uri(void){ return g_stream ? g_st_uri : ""; }
 /* 0d10: a new station; the one playing stops first */
 int pb_stream_start(const char *title, const char *uri){
     if(pb_stream_set(uri, title) != 0) return -1;
+    sl_clear();                                          /* a station replaces a stream list */
     if(g_st_loaded){ char x[256]; eng_cmd("stop", x, sizeof x); g_st_loaded = 0; }
     return pb_stream_play();
 }
+
+/* ================================================================ a stream list (0d14, Bandcamp) */
+static void sl_clear(void){
+    free(g_sl); free(g_sl_text); g_sl = NULL; g_sl_text = NULL; g_sl_n = 0; g_sl_cur = -1;
+}
+/* OPL_BC_LIST's text into tracks (in place); bad lines are skipped. Returns the count. */
+static int sl_parse(char *text, sl_track_t *out, int max){
+    int n = 0;
+    for(char *l = text; l && *l && n < max; ){
+        char *e = strchr(l, '\n'); if(e) *e = 0;
+        char *f[5] = { l, NULL, NULL, NULL, NULL };
+        for(int k = 1; k < 5 && f[k - 1]; k++){ char *t = strchr(f[k - 1], '\t'); if(t){ *t = 0; f[k] = t + 1; } }
+        char *end;
+        long ms = f[4] ? strtol(f[0], &end, 10) : -1;
+        if(f[4] && !*end && ms >= 0 && (!strncmp(f[1], "http://", 7) || !strncmp(f[1], "https://", 8))
+           && strlen(f[1]) < sizeof g_st_uri){
+            out[n].ms = ms; out[n].url = f[1]; out[n].title = f[2]; out[n].artist = f[3]; out[n].album = f[4]; n++;
+        } else L("stream list: line %d skipped", n + 1);
+        l = e ? e + 1 : NULL;
+    }
+    return n;
+}
+static int sl_load(const char *path){
+    sl_clear();
+    FILE *f = fopen(path, "re");
+    if(!f){ L("stream list: open %s: %s", path, strerror(errno)); return -1; }
+    size_t cap = 0, len = 0; char *b = NULL; size_t r;
+    do {
+        if(len + 4096 + 1 > cap){
+            if(cap >= (size_t)OPL_SLIST_MAX * 4096){ L("stream list: %s too big", path); free(b); fclose(f); return -1; }
+            char *nb = realloc(b, cap += 16384);
+            if(!nb){ free(b); fclose(f); L("stream list: out of memory"); return -1; }
+            b = nb;
+        }
+        r = fread(b + len, 1, 4096, f); len += r;
+    } while(r > 0);
+    fclose(f);
+    if(!b) return -1;
+    b[len] = 0;
+    g_sl = calloc(OPL_SLIST_MAX, sizeof *g_sl);
+    if(!g_sl){ free(b); L("stream list: out of memory"); return -1; }
+    g_sl_text = b;
+    g_sl_n = sl_parse(b, g_sl, OPL_SLIST_MAX);
+    if(g_sl_n <= 0){ L("stream list: no tracks in %s", path); sl_clear(); return -1; }
+    return 0;
+}
+static int sl_play(int idx){
+    if(!g_stream || idx < 0 || idx >= g_sl_n) return -1;
+    const sl_track_t *t = &g_sl[idx];
+    g_sl_cur = idx;
+    if(pb_stream_set(t->url, t->title) != 0) return -1;
+    if(g_st_loaded){ char x[256]; eng_cmd("stop", x, sizeof x); g_st_loaded = 0; }
+    L("stream list: track %d of %d, \"%s\" (%ld ms)", idx + 1, g_sl_n, t->title, t->ms);
+    if(pb_stream_play() != 0){
+        char f[24]; snprintf(f, sizeof f, "ad14000C%04X", (unsigned)idx & 0xFFFFu); send_lit(f);
+        return -1;
+    }
+    return 0;
+}
+int pb_slist_play(int idx){
+    if(!g_stream){ L("stream list: not in the radio work mode"); return -1; }
+    if(sl_load(OPL_BC_LIST) != 0) return -1;
+    if(idx >= g_sl_n){ L("stream list: track %d, the list has %d", idx, g_sl_n); idx = 0; }
+    return sl_play(idx);
+}
+int pb_slist_track(void){ return g_stream ? g_sl_cur : -1; }
+#ifdef PB_RESUME
+void pb_test_age_stream(double sec){ g_st_t -= sec; }   /* host test: the track has played sec seconds */
+#endif

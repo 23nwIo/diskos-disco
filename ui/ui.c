@@ -10,6 +10,7 @@
 #include "lvgl/src/draw/lv_image_decoder_private.h"   /* poster: decode the cover once into RAM */
 #include "art.h"
 #include "ipc.h"
+#include "bandcamp.h"
 #include "sdio.h"
 #include "musicdb.h"   /* persistent per-song accent cache */
 #include "scanner.h"   /* scan_read_chapters: Now Playing shows a book's current chapter */
@@ -535,6 +536,12 @@ static int transport_now(const char *cmd)
     {   /* headphones just connected: Play waits for the codec switch (a second Play starts at once) */
         int ui_play_defer_transport(int is_toggle);
         if(ui_play_defer_transport(!strcmp(cmd, "0201000C0000"))) return 0;
+    }
+    if(bandcamp_active()){                         /* Bandcamp: the player's own list (no books, queue or shuffle history) */
+        ui_note_transport_sent();
+        if(ipc_send_cmd(cmd) < 0){ ui_toast("Player busy - try again"); return -1; }
+        if(is_toggle){ ui_pp_tap_hint(); ui_pp_glyph(btn_pp, ui_pp_icon_playing(ui_is_playing())); }
+        return 0;
     }
     if(is_next || is_prev){
         track_state_t st; ipc_get_state(&st);
