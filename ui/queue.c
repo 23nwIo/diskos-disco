@@ -92,7 +92,7 @@ void queue_log(const char *fmt, ...){
  * the List Ends (Settings > Playback; the party's "queue empty" action) decides what plays (Jo, 2026-11-22: the Disc
  * kept going back to the song after the last Hit&Guess song instead of the radio). Its order is the guests' (round
  * robin), never shuffled. */
-static int party_on(void){ return party_mode() == 1; }
+static int party_on(void){ return party_mode() == PUBLIC_JUKEBOX; }
 /* RAM mode (own player; Jo, 2026-11-22): the queue goes to the player as it is (0d13: SONG.IDs), the player keeps it in
  * RAM and plays it before its list goes on (in party mode: then the list ends). No copy of the list in song.db, no
  * /usr/data/diskos_queue.tsv - both are on the internal flash; the queue is lost at a reboot (Jo: fine). The player
@@ -471,7 +471,7 @@ static void pop_through(int k){ queue_log("started: %s - %s (guest %d)%s", QNAME
 static void remember_resume(const track_state_t *st, int inclusive){
     if(g_active && g_resume_type >= 0) return;                    /* a running queue keeps its way back */
     g_resume_type = -1;
-    if(party_on()){ queue_log("way back: none (party mode - After the List Ends follows the queue)"); return; }
+    if(party_on()){ queue_log("way back: none (Jukebox - After the List Ends follows the queue)"); return; }
     if(!st->have_track || st->pos_id <= 0) return;
     int type = ui_play_context(&g_resume_type, g_resume_name, sizeof g_resume_name, &g_resume_pid);
     if(type < 0 || (type == 5 && g_resume_pid <= 0)){ g_resume_type = -1; return; }   /* a single song, or the queue's own copy */
@@ -514,7 +514,7 @@ int queue_next(void){
     int current=mdb_queue_current_id(st.path,st.pos_id,st.title);
     if(!current){ fprintf(stderr, "queue next: playing song not identified - the queue plays on its own\n");
                   queue_log("next: playing song not identified (%s) - the queue plays on its own", st.path); remember_resume(&st, 0); return start_fresh(0); }
-    if(!g_active && party_on()){ queue_log("next: party mode - the queue plays on its own"); remember_resume(&st, 0); return start_fresh(0); }
+    if(!g_active && party_on()){ queue_log("next: Jukebox - the queue plays on its own"); remember_resume(&st, 0); return start_fresh(0); }
     if(!g_active && !capture_context(current, 0)){ fprintf(stderr, "queue next: list unreadable - the queue plays on its own\n");
                                                    queue_log("next: the playing list is unreadable (%d rows) - the queue plays on its own", g_nctx);
                                                    remember_resume(&st, 0); return start_fresh(0); }
@@ -546,7 +546,7 @@ void queue_jump(int i){                                       /* play queued son
         return;
     }
     if(!g_active && (party_on() || !capture_context(current, 0))){
-        queue_log("jump: %s - the queue plays on its own", party_on() ? "party mode" : "the playing list is unreadable");
+        queue_log("jump: %s - the queue plays on its own", party_on() ? "Jukebox" : "the playing list is unreadable");
         fprintf(stderr, "queue: the playing list couldn't be read (song %d, type %d, %d rows) - starting the queue on its own\n", current, g_ctx_type, g_nctx);
         remember_resume(&st, 0);
         if(start_fresh(i) < 0){ fprintf(stderr, "queue: start_fresh failed\n"); ui_toast("Couldn't start queued song - try again"); }
@@ -631,7 +631,7 @@ void queue_tick(const track_state_t *st, int playing){
              * RMAX songs, as Jo's) or in party mode, the queue plays on its own now - it waited for Next before
              * (Jo, 2026-11-22) - and, outside party mode, that song comes back after it. */
             if(party_on() || !capture_context(current, 1)){
-                queue_log("  %s - the queue plays on its own", party_on() ? "party mode" : "the playing list is unreadable");
+                queue_log("  %s - the queue plays on its own", party_on() ? "Jukebox" : "the playing list is unreadable");
                 remember_resume(st, 1);
                 if(start_fresh(0) < 0) fprintf(stderr, "queue: start_fresh failed\n");
                 return;
@@ -651,7 +651,7 @@ void queue_tick(const track_state_t *st, int playing){
     if(g_active && g_resume_type >= 0 && g_qn == 0 && g_ncopy > 0 && current == g_copy[g_ncopy - 1]
        && was_playing && !playing && g_last_dur > 0 && g_last_pos >= g_last_dur - 2500){
         int type = g_resume_type; g_resume_type = -1;
-        if(party_on()){ queue_log("queue done: party mode - no way back, After the List Ends follows"); g_active = 0; return; }
+        if(party_on()){ queue_log("queue done: Jukebox - no way back, After the List Ends follows"); g_active = 0; return; }
         queue_log("queue done: back to the interrupted list type %d \"%s\" at position %d", type, g_resume_name, g_resume_pos);
         if(ui_play_restore(type, g_resume_name, g_resume_pid, g_resume_pos)) g_active = 0;
         else fprintf(stderr, "queue: returning to the interrupted list failed (type %d, pos %d)\n", type, g_resume_pos);

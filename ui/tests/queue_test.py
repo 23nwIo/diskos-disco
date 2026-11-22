@@ -174,7 +174,7 @@ int main(int argc,char **argv){
     queue_clear();party=0;work_mode=0;
     puts("PASS party mode keeps the guests' order in the Shuffle play mode");
     {FILE *f=fopen(QUEUE_LOG,"r");assert(f);char l[400];int way=0,party_line=0;
-     while(fgets(l,sizeof l,f)){if(strstr(l,"way back: list type 3"))way=1;if(strstr(l,"way back: none (party mode"))party_line=1;}
+     while(fgets(l,sizeof l,f)){if(strstr(l,"way back: list type 3"))way=1;if(strstr(l,"way back: none (Jukebox"))party_line=1;}
      fclose(f);assert(way&&party_line);}
     puts("PASS the decision log says why the queue went back or not");
     /* RAM mode (own player, Jo 2026-11-22): the queue goes to the player as SONG.IDs (0d13), nothing is written - not
