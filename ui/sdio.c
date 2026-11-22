@@ -13,6 +13,10 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static unsigned g_users;
 static int g_allowed;
 static int (*g_media_local)(void);
+static void (*g_on_hold)(void), (*g_on_resume)(void);
+void sd_io_hooks(void (*on_hold)(void), void (*on_resume)(void)){
+    pthread_mutex_lock(&g_mu); g_on_hold = on_hold; g_on_resume = on_resume; pthread_mutex_unlock(&g_mu);
+}
 
 void sd_io_init(int (*media_local)(void)){
     pthread_mutex_lock(&g_mu);
@@ -39,7 +43,9 @@ void sd_io_hold(void){
     pthread_mutex_lock(&g_mu);
     g_allowed = 0;
     g_fault = g_fault || access(SD_IO_FAULT_MARKER, F_OK) == 0;
+    void (*h)(void) = g_on_hold;
     pthread_mutex_unlock(&g_mu);
+    if(h) h();
 }
 unsigned sd_io_active(void){
     pthread_mutex_lock(&g_mu);
@@ -51,7 +57,9 @@ int sd_io_resume(void){
     pthread_mutex_lock(&g_mu);
     int ok = !g_fault && g_users == 0 && g_media_local && g_media_local();
     if(ok) g_allowed = 1;
+    void (*h)(void) = ok ? g_on_resume : NULL;
     pthread_mutex_unlock(&g_mu);
+    if(h) h();
     return ok;
 }
 void sd_io_fault(void){

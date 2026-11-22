@@ -300,7 +300,7 @@ int main(int argc, char **argv){
     core.upnext = core_upnext;
     core.slist = core_slist;
     core.playsong = core_playsong;
-    pb_init(&core, QD_SONG_DB, QD_SYSCONFIG_DB, logmsg);
+    pb_init(&core, "", QD_SYSCONFIG_DB, logmsg);   /* "": follow libdb_path() on every open */
     /* the key actions are kept in SYSCONFIG like the stock player keeps them; the UI sends them only when changed.
      * Not stored: every press changes the volume. */
     int key_saved[3];

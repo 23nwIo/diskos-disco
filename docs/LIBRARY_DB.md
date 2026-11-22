@@ -22,8 +22,29 @@ Roulette, SongSphere and Disc Shelf.
 - **In every other case**, the flash DB is used, the same as before.
 
 **Status:** the card DB is switched off for now (`LIBDB_CARD_ENABLED 0`), so `libdb_path()` always gives the flash DB.
-It goes on once the UI closes its long-lived connections when the card goes away (USB storage, format, removal).
-An open card DB would otherwise keep the card busy.
+It goes on together with the migration screen.
+
+## When the card goes away
+
+mq_ui keeps connections open for a long time: the writer, the accent writer, a reader per thread and the Up Next
+reader. Any of them can be in use on another thread at any moment. An open file on the card would make the plain
+umount fail in USB storage mode and in Format SD Card, and closing a connection from outside is not safe.
+
+So in mq_ui the card DB opens through a small pass-through VFS (`ui/libdb_vfs.c`, registered in `storage_init`).
+
+1. **SD access held** (`sd_io_hold`: USB storage, format, card pulled, Restart). `libdb_vfs_detach()` releases the
+   locks and closes the real files under every connection. The connections stay valid objects, and every further
+   read or write on them fails with an I/O error. New opens are refused.
+2. **SD access resumed** (`sd_io_resume`). New opens work again. A detached file is never reopened, because the card
+   may be a different one by then and SQLite's page cache would not notice.
+3. **Replacing connections.** musicdb replaces a shared connection on its next use when the detach generation
+   (`libdb_gen()`) or `libdb_path()` has changed. It retires the old one (frees its memory and parks the handle) rather
+   than closing it, because another thread may still hold it. Per-thread readers are closed by their own thread.
+4. **Reloading the library.** `libdb_watch()` in `ui/main.c` reloads the in-memory library when the library in use
+   changes or comes back.
+
+The own player opens the DB per operation, using `libdb_path()` each time (`player/playback.c`), and closes it again
+before it unmounts the card.
 
 ## Connection settings on the card DB
 
@@ -104,5 +125,7 @@ brings its library up to date (still to do).
 
 - `ui/tests/libdb_test.c` covers the copy, the connection settings, SOURCE_ID and the refusals.
 - `ui/tests/scanner_srcid_test.c` covers reading the tags and writing SOURCE_ID.
+- `ui/tests/libdb_vfs_test.c` covers closing the files under open connections, including four threads querying
+  through a hold, and checks via `/proc/self/fd` that no file stays open on the card.
 
 Both run in `make -C ui/tests run`.

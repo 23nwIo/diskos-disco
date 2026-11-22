@@ -173,9 +173,12 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
 }
 void pb_close(void){ pq_free(&Q); free(g_songs); g_songs = NULL; g_nsongs = 0; g_next = g_pending = -1; }
 
+/* g_song_db empty (the device): the library in use now, decided per open (ui/libdb.h): the card DB can come and go
+ * with the card. Tests pass a fixed path. */
+static const char *song_db(void){ return g_song_db[0] ? g_song_db : libdb_path(); }
 static sqlite3 *db(void){
-    sqlite3 *d = qd_open(g_song_db);
-    if(!d) L("queue: can't open %s", g_song_db);
+    sqlite3 *d = qd_open(song_db());
+    if(!d) L("queue: can't open %s", song_db());
     return d;
 }
 

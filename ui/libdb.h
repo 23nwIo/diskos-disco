@@ -68,8 +68,19 @@ static inline void libdb_setup(sqlite3 *d, const char *path, int flags){
     }
 }
 
+/* The card DB's file layer in mq_ui (libdb_vfs.c): files that can be closed under open connections when SD access
+ * is held. Registered by mq_ui only; elsewhere (the own player, host tests) the card DB opens with SQLite's own VFS.
+ * Weak, so code built without libdb_vfs.c still links: libdb_vfs_gen is then NULL. */
+#define LIBDB_VFS "diskos-libdb"
+int libdb_vfs_register(void);                         /* 0 ok */
+int libdb_vfs_detach(void);                           /* SD held: close every card DB file; how many */
+void libdb_vfs_allow(int on);                         /* SD resumed (1): card DB opens work again */
+__attribute__((weak)) unsigned libdb_vfs_gen(void);   /* bumped by each detach that closed something */
+static inline unsigned libdb_gen(void){ return libdb_vfs_gen ? libdb_vfs_gen() : 0; }
+
 static inline int libdb_open_v2(const char *path, sqlite3 **out, int flags, const char *vfs){
     *out = NULL;
+    if(!vfs && libdb_is_card(path) && sqlite3_vfs_find(LIBDB_VFS)) vfs = LIBDB_VFS;
     int rc = sqlite3_open_v2(path, out, flags, vfs);
     if(rc != SQLITE_OK){ if(*out) sqlite3_close(*out); *out = NULL; return rc; }
     libdb_setup(*out, path, flags);

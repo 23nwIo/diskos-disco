@@ -59,6 +59,7 @@
 #include "config.h"
 #include "lastfm.h"
 #include "scanner.h"
+#include "libdb.h"         /* the library DB in use: flash or the card (docs/LIBRARY_DB.md) */
 #include "playstate.h"
 #include "stats.h"
 #include "menu_apps.h"
@@ -988,8 +989,18 @@ static void storage_tick(lv_timer_t *t){
             g_sd_reissue = 0;
     }
 }
+/* The card library's files follow SD access (ui/libdb_vfs.c): closed under every open connection when access is held
+ * (USB storage, format, card pulled, Restart), so the card can be unmounted; opens work again when it resumes. */
+static void libdb_on_hold(void){
+    int n = libdb_vfs_detach();
+    if(n){ fprintf(stderr, "libdb: SD held, %d card library file(s) closed\n", n); fflush(stderr); }
+}
+static void libdb_on_resume(void){ libdb_vfs_allow(1); }
 static void storage_init(void){
     sd_io_init(storage_media_local);
+    if(libdb_vfs_register() != 0){ fprintf(stderr, "libdb: card VFS not registered\n"); fflush(stderr); }
+    libdb_vfs_allow(0);                                  /* like sd_io: closed until the first sd_io_resume */
+    sd_io_hooks(libdb_on_hold, libdb_on_resume);
     FILE *f = fopen(SD_EXPORT_MARKER, "r");
     if(f){
         char phase = 0; int mode = 0;
@@ -1267,8 +1278,29 @@ static void playlist_port_cb(lv_timer_t *t){
     static int tries;
     if(mdb_playlist_sync_registry() == 2 || ++tries >= 60) lv_timer_del(t);
 }
+/* Reload the in-memory library when the library in use changes (ui/libdb.h): a card with its own library came or went,
+ * or the card library came back after SD access was held (its files were closed meanwhile). On the flash DB nothing
+ * here changes, so nothing reloads. */
+static void libdb_watch(void){
+    static char last[512]; static unsigned last_gen; static int last_ok = -1;
+    const char *p = libdb_path();
+    int card = libdb_is_card(p), ok = card ? sd_io_allowed() : 1;
+    unsigned g = libdb_gen();
+    if(last_ok >= 0 && !strcmp(last, p) && g == last_gen && ok == last_ok) return;
+    if(ok && scanner_active()) return;                   /* the scan reloads when it ends; look again after it */
+    int first = last_ok < 0;
+    snprintf(last, sizeof last, "%s", p); last_gen = g; last_ok = ok;
+    if(!ok) return;                                      /* held: nothing to read yet */
+    /* boot: library.c loaded it already, unless the card library was not open yet then */
+    if(first && !(card && (mdb_song_count() <= 0 || mdb_load_failed()))) return;
+    fprintf(stderr, "libdb: library now %s, reloading\n", p); fflush(stderr);
+    mdb_load();
+    library_ensure_capacity();
+    library_refresh();
+}
 static void scanner_poll(lv_timer_t *t){
     (void)t;
+    libdb_watch();
     ui_scan_orbit(scanner_active());   /* fork: the dot runs around the rim while a scan runs (lost in the 1.2.0 merge) */
     if(scanner_take_finished()){
         mdb_load();               /* reload the in-memory library (also invalidates the group caches) */

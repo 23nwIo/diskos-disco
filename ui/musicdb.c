@@ -168,9 +168,29 @@ static void mdb_index_start(void){
 }
 static pthread_mutex_t g_db_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t writer_owner;static int writer_owner_set;
+/* The shared connections (g_db, g_db_w, g_qdb) follow the library in use (ui/libdb.h, docs/LIBRARY_DB.md): when
+ * libdb_path() names another file (a card with its own library came or went), or the card DB's files were closed
+ * under them (libdb_vfs_detach: SD access held), they are replaced on their next use. The old connection is never
+ * closed: another thread may still hold its handle. It is retired: its memory released, the handle parked. Rare
+ * (a card change, USB storage, a format), so a few parked handles per boot at most. */
+typedef struct { unsigned gen; char path[512]; } conn_tag_t;
+static sqlite3 *g_retired[32]; static int g_nretired;
+static pthread_mutex_t g_retired_mu = PTHREAD_MUTEX_INITIALIZER;
+static void conn_tag(conn_tag_t *t){ t->gen = libdb_gen(); snprintf(t->path, sizeof t->path, "%s", DB_PATH); }
+static int conn_stale(const conn_tag_t *t){ return t->gen != libdb_gen() || strcmp(t->path, DB_PATH) != 0; }
+static void conn_retire(sqlite3 *d){
+    if(!d) return;
+    sqlite3_db_release_memory(d);
+    pthread_mutex_lock(&g_retired_mu);
+    if(g_nretired < (int)(sizeof g_retired / sizeof *g_retired)) g_retired[g_nretired++] = d;   /* else: leaked */
+    pthread_mutex_unlock(&g_retired_mu);
+}
+static conn_tag_t g_db_tag, g_db_w_tag, g_qdb_tag;
 static sqlite3 *db(void){
     pthread_mutex_lock(&g_db_mu);
+    if(g_db && conn_stale(&g_db_tag)){ conn_retire(g_db); g_db = NULL; }
     if(!g_db){
+        conn_tag(&g_db_tag);
         if(!writer_owner_set){writer_owner=pthread_self();writer_owner_set=1;}
         sqlite3 *tmp = NULL;
         if(libdb_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) == SQLITE_OK){
@@ -225,7 +245,9 @@ static sqlite3 *db_w(void){
     db();   /* ensure the main connection (and its ACCENT-column ALTER) is initialised first,
              * so g_db_w never races an ALTER and the SONG.ACCENT column always exists. */
     pthread_mutex_lock(&g_db_w_mu);
+    if(g_db_w && conn_stale(&g_db_w_tag)){ conn_retire(g_db_w); g_db_w = NULL; }
     if(!g_db_w){
+        conn_tag(&g_db_w_tag);
         sqlite3 *tmp = NULL;
         if(libdb_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX, NULL) == SQLITE_OK){
             sqlite3_busy_timeout(tmp, 500);
@@ -239,7 +261,7 @@ static sqlite3 *db_w(void){
 /* Read-only lookups never wait behind the player's writer on the UI thread.
  * Each worker owns its connection; SQLite handles cannot leak between transactions
  * or threads. Main-thread reads inside a UI write transaction keep that transaction. */
-typedef struct {sqlite3*d;dev_t dev;ino_t ino;} mdb_reader_t;
+typedef struct {sqlite3*d;dev_t dev;ino_t ino;unsigned gen;} mdb_reader_t;   /* owned by one thread: closed by it */
 static pthread_key_t reader_key;static pthread_once_t reader_once=PTHREAD_ONCE_INIT;
 static int reader_key_ok;
 static void reader_destroy(void*p){mdb_reader_t*r=p;if(r){if(r->d)sqlite3_close(r->d);free(r);}}
@@ -253,8 +275,8 @@ static sqlite3*db_read_wait(int wait_ms){
     mdb_reader_t*r=pthread_getspecific(reader_key);
     if(!r){r=calloc(1,sizeof*r);if(!r)return NULL;if(pthread_setspecific(reader_key,r)){free(r);return NULL;}}
     struct stat st;if(stat(DB_PATH,&st))return NULL;
-    if(r->d&&(r->dev!=st.st_dev||r->ino!=st.st_ino)){sqlite3_close(r->d);r->d=NULL;}
-    if(!r->d){if(libdb_open_v2(DB_PATH,&r->d,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL)!=SQLITE_OK){if(r->d)sqlite3_close(r->d);r->d=NULL;return NULL;}
+    if(r->d&&(r->dev!=st.st_dev||r->ino!=st.st_ino||r->gen!=libdb_gen())){sqlite3_close(r->d);r->d=NULL;}
+    if(!r->d){r->gen=libdb_gen();if(libdb_open_v2(DB_PATH,&r->d,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL)!=SQLITE_OK){if(r->d)sqlite3_close(r->d);r->d=NULL;return NULL;}
         r->dev=st.st_dev;r->ino=st.st_ino;}
     sqlite3_busy_timeout(r->d,wait_ms);   /* set on every call: the connection is shared by all reads on this thread */
     return r->d;
@@ -3497,7 +3519,9 @@ int mdb_playlist_export(long pid, const char *name, char *outname, int cap){
  * queue row itself: the player copies SONG.DURATION into LIST_SONG_n when it builds a queue (0 = unknown). */
 static sqlite3 *g_qdb;
 static sqlite3 *qdb(void){
+    if(g_qdb && conn_stale(&g_qdb_tag)){ conn_retire(g_qdb); g_qdb = NULL; }
     if(!g_qdb){
+        conn_tag(&g_qdb_tag);
         sqlite3 *tmp = NULL;
         if(libdb_open_v2(DB_PATH, &tmp, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
             sqlite3_busy_timeout(tmp, 200);

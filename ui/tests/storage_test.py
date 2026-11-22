@@ -88,6 +88,10 @@ static int scanner_active(void){ return test_scan; }
 static int scanner_start(void){ return 0; }
 static int mdb_total_song_count(void){ return 1; }
 static int mdb_load_failed(void){ return 0; }
+static int test_vfs_detaches, test_vfs_allowed = 1;   /* the card library's file layer (ui/libdb_vfs.c) */
+static int libdb_vfs_register(void){ return 0; }
+static int libdb_vfs_detach(void){ test_vfs_detaches++; test_vfs_allowed = 0; return 0; }
+static void libdb_vfs_allow(int on){ test_vfs_allowed = on; }
 static void albumwall_prewarm_seed(void){ test_seed++; }
 static int ipc_send_cmd(const char *s){
     test_sends++;
