@@ -38,6 +38,7 @@ Files on the device:
 | `/usr/data/sshd/start-ssh.sh` | boot hook ([`tools/disc-ssh/start-ssh.sh`](../tools/disc-ssh/start-ssh.sh)); `mq_ui` runs it at every start if it is executable (`ui/main.c`, search `start-ssh.sh`) |
 | `/usr/data/sshd/home/.ssh/authorized_keys` | your public keys (one per line) |
 | `/usr/data/sshd/bin/rsync` | static MIPS rsync (optional) |
+| `/usr/data/sshd/bin/diskos-update` | signed SD update from the shell ([`tools/disc-ssh/diskos-update.sh`](../tools/disc-ssh/diskos-update.sh), see [UPDATING.md](UPDATING.md#5-install-and-keep-the-trial)) |
 | `/usr/data/sshd/start-ssh.log` | what the hook did on each start |
 
 ## Use

@@ -6,6 +6,7 @@
 #                                            after a reboot if it was on, and enables public-key login
 #   - /usr/data/sshd/home/.ssh/authorized_keys  your public key (appended once, never duplicated)
 #   - /usr/data/sshd/bin/rsync               optional static MIPS rsync (build/build-rsync-static.sh)
+#   - /usr/data/sshd/bin/diskos-update       signed SD update from the shell (tools/disc-ssh/diskos-update.sh)
 # then activates the key mount immediately. See docs/SSH_ACCESS.md.
 #
 # Usage (Debug Mode ON; you are asked for the Debug Mode password once):
@@ -19,6 +20,7 @@ set -eu
 IP="${DISKOS_IP:?set DISKOS_IP to the device IP (shown in Debug Mode)}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HOOK="$HERE/disc-ssh/start-ssh.sh"
+UPDATER="$HERE/disc-ssh/diskos-update.sh"
 KEY=""; RSYNC=""; UNINSTALL=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -64,6 +66,7 @@ fi
 "${SSH[@]}" "root@$IP" true   # opens the shared connection (password prompt)
 
 push "$HOOK" /usr/data/sshd/start-ssh.sh 755
+[ -f "$UPDATER" ] && push "$UPDATER" /usr/data/sshd/bin/diskos-update 755
 
 # Append the key only if that exact key line is not there yet.
 "${SSH[@]}" "root@$IP" 'mkdir -p /usr/data/sshd/home/.ssh && chmod 755 /usr/data/sshd/home && chmod 700 /usr/data/sshd/home/.ssh &&

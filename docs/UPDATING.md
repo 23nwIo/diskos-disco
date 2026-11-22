@@ -127,6 +127,19 @@ over SSH (`mount /dev/mmcblk0p1 /tmp/sdcard`, or `/dev/mmcblk0` without a partit
    build by itself; otherwise answer **Keep** when asked (or **Go back** to revert). Just browsing doesn't count.
 4. Restart once more and check it still runs: the build is now kept.
 
+**From an SSH shell instead of the menu.** With [SSH access](SSH_ACCESS.md) set up (`tools/disc-ssh-setup.sh` installs
+`/usr/data/sshd/bin/diskos-update`), copy the folder to the card as in step 4, for example
+`rsync -rt --progress --rsync-path=/usr/data/sshd/bin/rsync diskos-update root@<ip>:/tmp/sdcard/`, then run:
+
+```sh
+ssh -t root@<ip> /usr/data/sshd/bin/diskos-update
+```
+
+It shows the running and the new version, checks the signatures, asks before staging and again before restarting.
+It does the same as the menu entry: nothing is installed until the next boot verifies the build again and starts its
+trial. An optional argument names another folder than `/tmp/sdcard/diskos-update`. Exit code 0 = staged, 1 = error or
+rejected, 2 = cancelled.
+
 A trial that never proves itself gets two boots, then rolls back; one that keeps crashing rolls back sooner. A
 rollback returns to the previous kept build (or the flashed one); stock is the last fallback. Avoid restarting
 repeatedly before the trial is accepted.
