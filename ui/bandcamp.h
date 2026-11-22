@@ -52,6 +52,16 @@ int  bandcamp_page(char *url, size_t ulen, int *state, int *kind, char *name, si
 typedef struct { char title[BC_NAME_LEN], artist[BC_NAME_LEN], err[96]; int state, done, total; } bc_dl_info_t;
 int  bandcamp_downloads(bc_dl_info_t *out, int max);              /* newest first; the count */
 
+/* Favourites: artists, albums and tracks (its page), on the SD card only, apart from the radio's and the library's
+ * (bandcamp_core.h has the file). Main thread. */
+int  bandcamp_fav_list(bc_item_t **out);        /* the count, *out malloc'd (NULL when none) */
+int  bandcamp_fav_has(const char *url);
+int  bandcamp_fav_add(const bc_item_t *it, const char **why);       /* 0 saved (or already there), -1 (*why) */
+int  bandcamp_fav_remove(const char *url, const char **why);        /* 0 gone (or never there), -1 (*why) */
+int  bandcamp_fav_nocard(void);                 /* 1 = no SD card: no favourites */
+unsigned bandcamp_fav_gen(void);                /* changes when the list changed (or was read again) */
+char *bandcamp_fav_json(void);                  /* {"ok":true,"nocard":bool,"items":[...]} malloc'd */
+
 /* main.c */
 void bandcamp_mode_leaving(void);               /* another source takes over */
 void bandcamp_restart(void);                    /* the output was re-initialised: start the track again */

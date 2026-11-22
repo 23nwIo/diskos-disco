@@ -89,6 +89,15 @@ size_t bc_id3_skip(const unsigned char *buf, size_t len);
 /* An ID3v2.4 tag (UTF-8) for track t of r (total = the release's track count): TIT2, TPE1, TALB, TPE2, TRCK "n/N",
  * TDRC, and the cover as APIC when jpg is not NULL. malloc'd, *len its size; NULL out of memory. */
 unsigned char *bc_id3_tag(const bc_release_t *r, const bc_track_t *t, int total, const unsigned char *jpg, size_t jlen, size_t *len);
+/* ---- favourites (docs/BANDCAMP.md "Favourites"): <card>/bandcamp_favorites.txt, one per line, TAB-separated:
+ *   <a|b|t> TAB name TAB artist TAB album TAB url TAB art
+ * 'b' artist or label, 'a' album, 't' track (its page); lines starting with '#' are comments. At most BC_MAX_FAV. */
+#define BC_MAX_FAV 1000
+#define BC_FAV_NAME "bandcamp_favorites.txt"
+int  bc_fav_parse(const char *text, bc_item_t *out, int max);        /* the count; bad lines and duplicates are left out */
+int  bc_fav_format(const bc_item_t *it, int n, char *out, size_t cap);   /* the length, -1 did not fit */
+int  bc_fav_find(const bc_item_t *it, int n, const char *url);       /* its index, -1 */
+
 /* ---- the best quality: Bandcamp's own download (free / name-your-price releases, r.free_dl)
  * 1. GET r.free_dl: its data-blob has digital_items[0].downloads{enc:{url}}; bc_parse_dlpage picks the first of
  *    prefs (e.g. "flac", "mp3-v0", ...) it offers: the format's url and "album" | "track".

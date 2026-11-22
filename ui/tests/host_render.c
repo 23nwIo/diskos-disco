@@ -1463,7 +1463,8 @@ int main(int argc, char **argv){
                 {"Go away","Unicorn Partisans","https://t4.bcbits.com/stream/y","",159000,2},{"Everybody is arrested","Guest Singer","","",0,3}};
             void bandcamp_ui_test_hits(const bc_item_t*,int); void bandcamp_ui_test_release(const bc_release_t*,const bc_track_t*,int);
             if(!strcmp(page,"bandcamp-results"))bandcamp_ui_test_hits(bi,3);
-            if(!strcmp(page,"bandcamp-release"))bandcamp_ui_test_release(&br,bt,3);}
+            if(!strcmp(page,"bandcamp-release"))bandcamp_ui_test_release(&br,bt,3);
+            if(!strcmp(page,"bandcamp-item")){void bandcamp_ui_test_item(const bc_item_t*);bandcamp_ui_test_item(&bi[1]);}}
         else if(!strcmp(page,"battery")){void usage_demo(int);scr=SCR_USAGE;screen_show(scr);usage_demo(getenv("CHG")!=NULL);}
         else if(!strcmp(page,"discoopts")){void settings_open_disco(void);setlist_open("Display");scr=SCR_SETLIST;screen_show(scr);settings_open_disco();}
         else if(!strncmp(page,"scr",3)){scr=atoi(page+3);}

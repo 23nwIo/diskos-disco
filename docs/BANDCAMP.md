@@ -14,10 +14,12 @@ Previous / Next / seek work.
 
 On the Disc: the app **Bandcamp** (Apps, `builtin:bandcamp`, `ui/bandcamp_ui.c`, SCR_BANDCAMP), a plain list in the
 Radio screen's look:
-- **Search Bandcamp** (the keyboard), **Downloads**, **Download quality**, **Stop Bandcamp** (while it plays),
+- **Search Bandcamp** (the keyboard), **Favourites**, **Downloads**, **Download quality**, **Stop Bandcamp** (while it plays),
   **Last search**.
-- Results: an artist or album opens its page; a track plays (hold: save it).
-- An artist: the releases. A release: **Play all**, **Save the album**, the tracks (tap: play from it, hold: save it).
+- Results: an artist or album opens its page; a track plays. Hold anything: its actions (Open, Play, Save to the SD
+  card, Add to / Remove from favourites).
+- An artist: the releases. A release: **Play all**, **Add to favourites**, **Save the album**, the tracks (tap: play
+  from it, hold: its actions).
 - Downloads: waiting / saving n/N / saved / failed with the reason, **Stop the downloads**.
 - Back goes one view up; pages already seen are kept. Playing opens Now Playing once it starts.
 
@@ -59,6 +61,22 @@ Any local play, the radio or another working mode ends Bandcamp (as with the rad
   as a failing `bandcamp_test` once new pages are saved there.
 - Artists can cap how often a fan may stream a track (`play_cap_data`); diskOS doesn't count plays.
 - Without an account the quality is 128 kbit/s MP3.
+
+## Favourites
+
+Artists, albums and tracks (Jo, 2026-11-22), kept apart from the radio's and the library's favourites:
+`<card>/bandcamp_favorites.txt`, one per line, TAB-separated `type name artist album address cover` (`b` artist or
+label, `a` album, `t` a track's own page; `#` lines are comments), at most 1000 (`bc_fav_parse` / `bc_fav_format`).
+Only on the SD card for now (user data belongs on the card; a place on the player, as the radio's setting, can
+follow): without the card there are none and nothing is written; a file that can't be read is never overwritten; an
+edit on a computer is read again (checked at most once a second).
+
+- Disc: **Favourites** on the Bandcamp screen (tap: open / play). Hold any artist, album or track for its actions:
+  Open, Play, Save to the SD card, **Add to / Remove from favourites**. A release's page has its own row.
+- Remote page: a heart next to every artist, album and track; the menu's **Favourites…** lists them, the release
+  menu adds or removes the release. `GET api/bandcamp?favs=1`, `POST action=fav_add` / `fav_remove`.
+- Later (Jo): one favourites list for every source (library, radio, Bandcamp) with sources chosen on and off. The
+  file keeps a type per line so it can join that list.
 
 ## Downloads
 

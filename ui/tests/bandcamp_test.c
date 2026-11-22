@@ -201,8 +201,29 @@ static void test_free(void){
     CHECK(bc_parse_stat("<html>busy</html>", s, sizeof s) == -1);
 }
 
+static void test_fav(void){
+    static bc_item_t it[8];
+    const char *txt = "# comment\nb\tAphex Twin\t\t\thttps://aphextwin.bandcamp.com\thttps://f4.bcbits.com/img/a1_2.jpg\r\n"
+                      "a\tGeogaddi\tBoC\t\thttps://boc.bandcamp.com/album/geogaddi\t\n"
+                      "t\tSoko Linx\tUnicorn Partisans\tRepression Depression\thttps://unicornpartisans.bandcamp.com/track/soko-linx\tjavascript:x\n"
+                      "x\tbad type\t\t\thttps://a.bandcamp.com\t\n"
+                      "a\tno url\t\t\tftp://a\t\n"
+                      "a\tGeogaddi again\tBoC\t\thttps://boc.bandcamp.com/album/geogaddi\t\n";
+    int n = bc_fav_parse(txt, it, 8);
+    CHECK(n == 3 && it[0].type == 'b' && !strcmp(it[0].name, "Aphex Twin") && !strcmp(it[0].art, "https://f4.bcbits.com/img/a1_2.jpg"));
+    CHECK(!strcmp(it[1].artist, "BoC") && !strcmp(it[2].album, "Repression Depression") && !it[2].art[0]);
+    CHECK(bc_fav_find(it, n, "https://boc.bandcamp.com/album/geogaddi") == 1 && bc_fav_find(it, n, "https://x") == -1);
+    snprintf(it[1].name, sizeof it[1].name, "Tab\there\nand newline");
+    char out[2048]; int len = bc_fav_format(it, n, out, sizeof out);
+    CHECK(len > 0 && out[0] == '#' && strstr(out, "\na\tTab here and newline\tBoC\t\thttps://boc.bandcamp.com/album/geogaddi\t\n"));
+    static bc_item_t back[8];
+    CHECK(bc_fav_parse(out, back, 8) == 3 && !strcmp(back[1].name, "Tab here and newline") && !strcmp(back[2].url, it[2].url));
+    CHECK(bc_fav_format(it, n, out, 40) == -1 && bc_fav_parse(txt, it, 1) == 1);
+}
+
 int main(void){
     test_urls();
+    test_fav();
     test_free();
     test_download();
     test_search();

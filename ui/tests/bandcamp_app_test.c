@@ -31,7 +31,8 @@ static int card_ok = 1, scanning; static char added[16][512]; static int nadded;
 int  sd_io_begin(void){ return card_ok; }
 void sd_io_end(void){}
 int  scanner_active(void){ return scanning; }
-static int cfg_q = 0;
+static int cfg_q = 0, card_in = 1;
+int  test_card_mounted(void){ return card_in; }
 int  cfg_get_int(const char *k, int def){ (void)def; return !strcmp(k, "bc_quality") ? cfg_q : def; }
 int  cfg_set_int(const char *k, int v){ if(!strcmp(k, "bc_quality")) cfg_q = v; return 0; }
 int  scanner_add_file(const char *p){ if(nadded < 16) snprintf(added[nadded++], sizeof added[0], "%s", p); return nadded; }
@@ -160,6 +161,29 @@ int main(void){
       snprintf(p, sizeof p, "%s/cover.jpg", fd); b = file_text(p, &len);
       CHECK(b && len == 9 && !memcmp(b, "\377\330\377\340cover", 9));   /* ours was there first: theirs isn't written over */
       snprintf(p, sizeof p, "%s/.bandcamp-download", fd); CHECK(access(p, F_OK) != 0); }
+    /* favourites: on the card only, apart from the rest */
+    { bc_item_t it; memset(&it, 0, sizeof it); it.type = 'a';
+      snprintf(it.name, sizeof it.name, "Ambulocetus"); snprintf(it.artist, sizeof it.artist, "Skycolourgirl");
+      snprintf(it.url, sizeof it.url, "https://skycolourgirl.bandcamp.com/album/ambulocetus?from=search");
+      CHECK(!bandcamp_fav_has("https://skycolourgirl.bandcamp.com/album/ambulocetus"));
+      CHECK(bandcamp_fav_add(&it, &why) == 0 && bandcamp_fav_has("https://skycolourgirl.bandcamp.com/album/ambulocetus"));   /* the query goes */
+      CHECK(bandcamp_fav_add(&it, &why) == 0);
+      size_t len; char *b = file_text("/tmp/bc_test_card/" BC_FAV_NAME, &len);
+      CHECK(b && len < 4096 && (b[len < 4096 ? len : 4095] = 0, strstr(b, "\na\tAmbulocetus\tSkycolourgirl\t\thttps://skycolourgirl.bandcamp.com/album/ambulocetus\t\n")));
+      bc_item_t *l = NULL; CHECK(bandcamp_fav_list(&l) == 1 && l && l[0].type == 'a'); free(l);
+      char *j = bandcamp_fav_json(); CHECK(j && strstr(j, "\"nocard\":false") && strstr(j, "\"name\":\"Ambulocetus\"")); free(j);
+      it.type = 'x'; CHECK(bandcamp_fav_add(&it, &why) == -1);
+      /* an edit on a computer: read again */
+      FILE *f = fopen("/tmp/bc_test_card/" BC_FAV_NAME, "a"); if(f){ fputs("b\tAphex Twin\t\t\thttps://aphextwin.bandcamp.com\t\n", f); fclose(f); }
+      sleep(1);
+      CHECK(bandcamp_fav_has("https://aphextwin.bandcamp.com"));
+      CHECK(bandcamp_fav_remove("https://skycolourgirl.bandcamp.com/album/ambulocetus", &why) == 0 && !bandcamp_fav_has("https://skycolourgirl.bandcamp.com/album/ambulocetus"));
+      /* no card: none, and nothing written */
+      card_in = 0; sleep(1);
+      CHECK(bandcamp_fav_nocard() && !bandcamp_fav_has("https://aphextwin.bandcamp.com"));
+      it.type = 'a'; CHECK(bandcamp_fav_add(&it, &why) == -1 && strstr(why, "SD card"));
+      card_in = 1; sleep(1);
+      CHECK(!bandcamp_fav_nocard() && bandcamp_fav_has("https://aphextwin.bandcamp.com")); }
     if(system("rm -rf /tmp/bc_test_card")) fails++;
 
     /* stop: back to local playback */

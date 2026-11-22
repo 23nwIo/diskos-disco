@@ -518,7 +518,7 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
     }
     if(!strcmp(ep, "bandcamp")){
         rt.cmd.kind = RMT_CMD_BANDCAMP;
-        if(get){ rt.kind = RMT_R_CMD; rt.cmd.sub = RMT_BC_STATE; return rt; }
+        if(get){ long f = 0; rt.kind = RMT_R_CMD; rt.cmd.sub = param(r, "favs", &f) == 0 && f ? RMT_BC_FAVS : RMT_BC_STATE; return rt; }
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         char a[16]; int ok = 0;
         rt.kind = RMT_R_BAD_PARAM;
@@ -533,6 +533,21 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
             }
             else if(!strcmp(a, "stop")){ rt.cmd.sub = RMT_BC_STOP; ok = 1; }
             else if(!strcmp(a, "stop_downloads")){ rt.cmd.sub = RMT_BC_DL_STOP; ok = 1; }
+            else if(!strcmp(a, "fav_add")){                 /* text = the favourite as a line of bandcamp_favorites.txt */
+                char ty[4], nm[BC_FAV_FIELD], ar[BC_FAV_FIELD], al[BC_FAV_FIELD], art[512];
+                rt.cmd.sub = RMT_BC_FAV_ADD;
+                ok = !param_str(r, "type", ty, sizeof ty) && strlen(ty) == 1 && strchr("abt", ty[0]) && !param_str(r, "name", nm, sizeof nm) && nm[0]
+                     && param_str(r, "artist", ar, sizeof ar) != -2 && param_str(r, "album", al, sizeof al) != -2 && param_str(r, "art", art, sizeof art) != -2
+                     && !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name) && !strncmp(rt.cmd.name, "https://", 8);
+                if(ok){
+                    if(param_str(r, "artist", ar, sizeof ar)) ar[0] = 0;
+                    if(param_str(r, "album", al, sizeof al)) al[0] = 0;
+                    if(param_str(r, "art", art, sizeof art)) art[0] = 0;
+                    for(char *f[] = { nm, ar, al, art, NULL }, **x = f; *x; x++) for(char *c = *x; *c; c++) if(*c == '\t') *c = ' ';
+                    snprintf(rt.cmd.text, sizeof rt.cmd.text, "%c\t%s\t%s\t%s\t%s\t%s", ty[0], nm, ar, al, rt.cmd.name, art);
+                }
+            }
+            else if(!strcmp(a, "fav_remove")){ rt.cmd.sub = RMT_BC_FAV_REMOVE; ok = !param_str(r, "url", rt.cmd.name, sizeof rt.cmd.name) && rt.cmd.name[0]; }
             else if(!strcmp(a, "quality")){ long q = -1; rt.cmd.sub = RMT_BC_QUALITY; ok = param(r, "q", &q) == 0 && q >= 0 && q <= 3; rt.cmd.pos = q; }
         }
         if(!ok){ memset(&rt.cmd, 0, sizeof rt.cmd); return rt; }

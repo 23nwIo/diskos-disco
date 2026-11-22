@@ -584,3 +584,57 @@ int bc_parse_stat(const char *text, char *url, size_t n){
     free(t);
     return r;
 }
+
+/* ================================================================ favourites */
+static char *tab_field(char **p){                          /* the next TAB-separated field, NULL at the end */
+    if(!*p) return NULL;
+    char *f = *p, *t = strchr(f, '\t');
+    if(t){ *t = 0; *p = t + 1; } else *p = NULL;
+    return f;
+}
+int bc_fav_find(const bc_item_t *it, int n, const char *url){
+    for(int i = 0; i < n; i++) if(!strcmp(it[i].url, url)) return i;
+    return -1;
+}
+int bc_fav_parse(const char *text, bc_item_t *out, int max){
+    int n = 0;
+    for(const char *line = text; line && *line && n < max; ){
+        const char *end = strpbrk(line, "\r\n");
+        size_t len = end ? (size_t)(end - line) : strlen(line);
+        char buf[3 * BC_NAME_LEN + 2 * BC_URL_LEN + 16];
+        if(len > 2 && len < sizeof buf && line[0] != '#'){
+            memcpy(buf, line, len); buf[len] = 0;
+            char *p = buf, *ty = tab_field(&p), *nm = tab_field(&p), *ar = tab_field(&p), *al = tab_field(&p), *u = tab_field(&p), *art = tab_field(&p);
+            if(ty && u && nm && nm[0] && strlen(ty) == 1 && strchr("abt", ty[0]) && bc_url_ok(u) && bc_fav_find(out, n, u) < 0){
+                bc_item_t *x = &out[n++]; memset(x, 0, sizeof *x);
+                x->type = ty[0];
+                snprintf(x->name, sizeof x->name, "%s", nm);
+                snprintf(x->artist, sizeof x->artist, "%s", ar ? ar : "");
+                snprintf(x->album, sizeof x->album, "%s", al ? al : "");
+                snprintf(x->url, sizeof x->url, "%s", u);
+                if(art && bc_url_ok(art)) snprintf(x->art, sizeof x->art, "%s", art);
+            }
+        }
+        line = end ? end + 1 : NULL;
+    }
+    return n;
+}
+static void clean(char *d, size_t n, const char *s){       /* no TAB or newline inside a field */
+    snprintf(d, n, "%s", s);
+    for(char *c = d; *c; c++) if(*c == '\t' || *c == '\n' || *c == '\r') *c = ' ';
+}
+int bc_fav_format(const bc_item_t *it, int n, char *out, size_t cap){
+    size_t at = 0;
+    if(!cap) return -1;
+    int k = snprintf(out, cap, "# diskOS Bandcamp favourites: type (b artist, a album, t track), name, artist, album, address, cover\n");
+    if(k < 0 || (size_t)k >= cap) return -1;
+    at = (size_t)k;
+    for(int i = 0; i < n; i++){
+        char nm[BC_NAME_LEN], ar[BC_NAME_LEN], al[BC_NAME_LEN];
+        clean(nm, sizeof nm, it[i].name); clean(ar, sizeof ar, it[i].artist); clean(al, sizeof al, it[i].album);
+        k = snprintf(out + at, cap - at, "%c\t%s\t%s\t%s\t%s\t%s\n", it[i].type, nm, ar, al, it[i].url, it[i].art);
+        if(k < 0 || (size_t)k >= cap - at){ out[at] = 0; return -1; }
+        at += (size_t)k;
+    }
+    return (int)at;
+}

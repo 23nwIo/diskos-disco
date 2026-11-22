@@ -24,8 +24,9 @@
 #include <string.h>
 
 void screen_show(int which);
+LV_FONT_DECLARE(font_theme_20);
 
-enum { V_HOME, V_HITS, V_PAGE, V_DL };
+enum { V_HOME, V_HITS, V_PAGE, V_DL, V_FAV, V_ITEM };
 #define DEPTH 8
 typedef struct {
     int v;                                  /* V_* */
@@ -35,6 +36,9 @@ typedef struct {
     int kind;                               /* V_PAGE: 'b' artist, 'r' release */
     bc_item_t *items; int n;                /* V_HITS, V_PAGE 'b' */
     bc_release_t rel; bc_track_t *tracks;   /* V_PAGE 'r' (n tracks) */
+    bc_item_t it;                           /* V_ITEM: the artist, album or track held */
+    char rurl[BC_URL_LEN]; int ridx;        /* V_ITEM of a release's track: the release and the track's index (-1 none) */
+    unsigned fav_gen;                       /* V_FAV: the list it shows */
     int scroll;
 } view_t;
 static view_t g_st[DEPTH]; static int g_depth;
@@ -49,11 +53,14 @@ static char g_play_state[16];
 #define ROW_W 268
 #define ROW_H TH_ROW_H
 /* the action rows (ids < 0); items are ids >= 0 */
-enum { A_SEARCH = -1, A_DOWNLOADS = -2, A_STOP = -3, A_RESULTS = -4, A_PLAYALL = -5, A_SAVEALL = -6, A_DLSTOP = -7, A_QUALITY = -8 };
+enum { A_SEARCH = -1, A_DOWNLOADS = -2, A_STOP = -3, A_RESULTS = -4, A_PLAYALL = -5, A_SAVEALL = -6, A_DLSTOP = -7, A_QUALITY = -8, A_FAVS = -9, A_FAVREL = -10,
+       A_I_OPEN = -20, A_I_PLAY = -21, A_I_SAVE = -22, A_I_FAV = -23 };
 
 static view_t *top(void){ return g_depth ? &g_st[g_depth - 1] : NULL; }
 static void view_free(view_t *v){ free(v->items); free(v->tracks); v->items = NULL; v->tracks = NULL; v->n = 0; }
 static void rebuild(void);
+static void item_act(view_t *v, intptr_t id);
+static void fill_favs(view_t *v);
 static void poll_cb(lv_timer_t *t);
 static void poll_start(void){ if(!g_poll) g_poll = lv_timer_create(poll_cb, 400, NULL); }
 
@@ -85,8 +92,9 @@ static lv_obj_t *add_row(intptr_t id, const char *glyph, const char *name, const
     if(hold) lv_obj_add_event_cb(r, row_long_cb, LV_EVENT_LONG_PRESSED, (void *)id);
     lv_obj_t *ic = lv_label_create(r);
     lv_label_set_text(ic, glyph);
-    lv_obj_set_pos(ic, 12, 17);
-    lv_obj_set_style_text_font(ic, TF(UI_16), 0);
+    int heart = !strcmp(glyph, TH_IC_HEART);                                 /* the hearts are in the theme icon font */
+    lv_obj_set_pos(ic, heart ? 10 : 12, heart ? 15 : 17);
+    lv_obj_set_style_text_font(ic, heart ? &font_theme_20 : TF(UI_16), 0);
     lv_obj_set_style_text_color(ic, accent ? ui_current_accent() : TC(TEXT_DISABLED), 0);
     int has_detail = detail && detail[0];
     lv_obj_t *nm = lv_label_create(r);
@@ -115,10 +123,10 @@ static const char *type_name(char t){ return t == 'b' ? "Artist" : t == 'a' ? "A
 static void item_row(int i){
     view_t *v = top(); if(!v || i < 0 || i >= v->n) return;
     const bc_item_t *it = &v->items[i];
-    char d[300]; const char *ty = v->v == V_HITS ? type_name(it->type) : it->type == 't' ? "Track" : "";
+    char d[300]; const char *ty = v->v != V_PAGE ? type_name(it->type) : it->type == 't' ? "Track" : "";
     snprintf(d, sizeof d, "%s%s%s%s%s", ty, ty[0] && it->artist[0] ? " \xC2\xB7 " : "", it->artist,
              it->album[0] && it->type == 't' ? " \xC2\xB7 " : "", it->type == 't' ? it->album : "");
-    add_row(i, it->type == 't' ? LV_SYMBOL_AUDIO : it->type == 'b' ? LV_SYMBOL_HOME : LV_SYMBOL_LIST, it->name, d, 0, it->type == 't');
+    add_row(i, it->type == 't' ? LV_SYMBOL_AUDIO : it->type == 'b' ? LV_SYMBOL_HOME : LV_SYMBOL_LIST, it->name, d, 0, 1);
 }
 static void track_row(int i){
     view_t *v = top(); if(!v || i < 0 || i >= v->n) return;
@@ -129,7 +137,7 @@ static void track_row(int i){
     int other = strcmp(t->artist, v->rel.artist) != 0;
     snprintf(d, sizeof d, "%s%s%s%s", other ? t->artist : "", other && tm[0] ? " \xC2\xB7 " : "", tm,
              t->stream[0] ? "" : (other || tm[0]) ? " \xC2\xB7 not streamable" : "not streamable");
-    add_row(i, LV_SYMBOL_AUDIO, name, d, 0, t->stream[0] != 0);
+    add_row(i, LV_SYMBOL_AUDIO, name, d, 0, 1);
 }
 static void vl_scroll_cb(lv_event_t *e){ (void)e; vlist_follow(&g_vl); }
 static void rows(int n, void (*add)(int)){                  /* n rows after the action rows already in the list */
@@ -151,6 +159,9 @@ static void rebuild(void){
     if(v->v == V_HOME){
         title("Bandcamp");
         add_row(A_SEARCH, LV_SYMBOL_EDIT, "Search Bandcamp", "Artists, albums, tracks", 1, 0);
+        { bc_item_t *f = NULL; int nf = bandcamp_fav_list(&f); free(f); char fd[64];
+          snprintf(fd, sizeof fd, bandcamp_fav_nocard() ? "Kept on the SD card" : nf ? "%d saved" : "Hold an artist, album or track", nf);
+          add_row(A_FAVS, TH_IC_HEART, "Favourites", fd, 1, 0); }
         bc_dl_info_t d[4]; int n = bandcamp_downloads(d, 4), run = 0;
         for(int i = 0; i < n; i++) run += d[i].state == BC_DL_WAITING || d[i].state == BC_DL_SAVING;
         char dd[64]; snprintf(dd, sizeof dd, run ? "%d saving to the SD card" : n ? "Saved to BandcampDownloads" : "Nothing saved yet", run);
@@ -175,6 +186,8 @@ static void rebuild(void){
             int plays = 0; for(int i = 0; i < v->n; i++) plays += v->tracks[i].stream[0] != 0;
             if(plays){
                 add_row(A_PLAYALL, LV_SYMBOL_PLAY, "Play all", v->rel.artist, 1, 0);
+                add_row(A_FAVREL, TH_IC_HEART, bandcamp_fav_has(v->rel.url) ? "Remove from favourites" : "Add to favourites",
+                        v->rel.type == 't' ? "This track" : "This album", 1, 0);
                 add_row(A_SAVEALL, LV_SYMBOL_DOWNLOAD, v->rel.type == 't' ? "Save to the SD card" : "Save the album",
                         v->rel.free_dl[0] && bandcamp_quality() != BC_Q_STREAM ? "To the SD card, free download" : "To the SD card, 128 kbit/s", 1, 0);
             }
@@ -182,6 +195,18 @@ static void rebuild(void){
             else if(!plays) note("The artist doesn't let these be streamed", NULL);
             rows(v->n, track_row);
         }
+    } else if(v->v == V_FAV){
+        title("Favourites");
+        if(bandcamp_fav_nocard()) note("No SD card", "Bandcamp favourites are kept on the SD card.");
+        else if(!v->n) note("No favourites yet", "Hold an artist, album or track to add it.");
+        else rows(v->n, item_row);
+    } else if(v->v == V_ITEM){
+        const bc_item_t *it = &v->it;
+        title(it->name);
+        if(it->type != 't') add_row(A_I_OPEN, LV_SYMBOL_RIGHT, it->type == 'b' ? "Open the artist" : "Open the album", it->artist, 1, 0);
+        if(it->type != 'b') add_row(A_I_PLAY, LV_SYMBOL_PLAY, it->type == 't' ? (v->ridx >= 0 ? "Play from here" : "Play") : "Play all", it->artist, 1, 0);
+        if(it->type != 'b') add_row(A_I_SAVE, LV_SYMBOL_DOWNLOAD, "Save to the SD card", bandcamp_quality_name(bandcamp_quality()), 1, 0);
+        if(it->url[0]) add_row(A_I_FAV, TH_IC_HEART, bandcamp_fav_has(it->url) ? "Remove from favourites" : "Add to favourites", type_name(it->type), 1, 0);
     } else {
         title("Downloads");
         static bc_dl_info_t d[32]; int n = bandcamp_downloads(d, 32), run = 0;
@@ -264,6 +289,17 @@ static void row_cb(lv_event_t *e){
     case A_PLAYALL: play(v->rel.url, -1); return;
     case A_SAVEALL: save(v->rel.url, -1, v->rel.title); return;
     case A_QUALITY: bandcamp_set_quality((bandcamp_quality() + 1) % (BC_Q_STREAM + 1)); rebuild(); return;   /* tap: the next one */
+    case A_FAVS: { view_t *f = push(V_FAV, "Favourites"); fill_favs(f); rebuild(); return; }
+    case A_FAVREL: { bc_item_t it; memset(&it, 0, sizeof it); const char *why = NULL;
+        it.type = v->rel.type == 't' ? 't' : 'a';
+        snprintf(it.name, sizeof it.name, "%s", v->rel.title); snprintf(it.artist, sizeof it.artist, "%s", v->rel.artist);
+        snprintf(it.album, sizeof it.album, "%s", v->rel.type == 't' ? v->rel.album : ""); snprintf(it.url, sizeof it.url, "%s", v->rel.url);
+        snprintf(it.art, sizeof it.art, "%s", v->rel.art);
+        int on = !bandcamp_fav_has(it.url);
+        if(on ? bandcamp_fav_add(&it, &why) : bandcamp_fav_remove(it.url, &why)) ui_toast(why ? why : "Couldn't save favourites");
+        else ui_toast(on ? "Added to favourites" : "Removed from favourites");
+        v->scroll = lv_obj_get_scroll_y(g_list); rebuild(); return; }
+    case A_I_OPEN: case A_I_PLAY: case A_I_SAVE: case A_I_FAV: item_act(v, id); return;
     case A_DLSTOP: bandcamp_download_cancel(); ui_toast("The downloads stop after this track"); rebuild(); return;
     }
     if(id < 0 || id >= v->n) return;
@@ -272,18 +308,44 @@ static void row_cb(lv_event_t *e){
         else ui_toast("The artist doesn't let this track be streamed");
         return;
     }
-    if(v->v == V_HITS || (v->v == V_PAGE && v->kind == 'b')){
+    if(v->v == V_HITS || v->v == V_FAV || (v->v == V_PAGE && v->kind == 'b')){
         bc_item_t it = v->items[id];
-        if(it.type == 't' && v->v == V_HITS) play(it.url, -1);
+        if(it.type == 't' && v->v != V_PAGE) play(it.url, -1);
         else open_page(&it);
     }
 }
-static void row_long_cb(lv_event_t *e){                     /* hold a track: save it */
+static void row_long_cb(lv_event_t *e){                     /* hold: what can be done with it */
     intptr_t id = (intptr_t)lv_event_get_user_data(e);
     view_t *v = top(); if(!v || id < 0 || id >= v->n) return;
-    if(v->v == V_PAGE && v->kind == 'r'){ if(v->tracks[id].stream[0]) save(v->rel.url, (int)id, v->tracks[id].title); }
-    else if(v->items && v->items[id].type == 't') save(v->items[id].url, -1, v->items[id].name);
+    bc_item_t it; memset(&it, 0, sizeof it);
+    char rurl[BC_URL_LEN] = ""; int ridx = -1;
+    if(v->v == V_PAGE && v->kind == 'r'){
+        const bc_track_t *t = &v->tracks[id];
+        it.type = 't';
+        snprintf(it.name, sizeof it.name, "%s", t->title); snprintf(it.artist, sizeof it.artist, "%s", t->artist);
+        snprintf(it.album, sizeof it.album, "%s", v->rel.type == 't' ? v->rel.album : v->rel.title);
+        snprintf(it.url, sizeof it.url, "%s", t->page); snprintf(it.art, sizeof it.art, "%s", v->rel.art);
+        if(t->stream[0] || !t->page[0]){ snprintf(rurl, sizeof rurl, "%s", v->rel.url); ridx = (int)id; }
+    } else if(v->items) it = v->items[id];
+    else return;
+    view_t *n = push(V_ITEM, it.name);
+    n->it = it; snprintf(n->rurl, sizeof n->rurl, "%s", rurl); n->ridx = ridx;
+    rebuild();
 }
+static void item_act(view_t *v, intptr_t id){
+    const bc_item_t *it = &v->it;
+    const char *url = v->ridx >= 0 ? v->rurl : it->url;
+    if(id == A_I_OPEN){ bc_item_t c = *it; open_page(&c); }
+    else if(id == A_I_PLAY) play(url, v->ridx);
+    else if(id == A_I_SAVE) save(url, v->ridx, it->name);
+    else if(id == A_I_FAV){
+        const char *why = NULL; int on = !bandcamp_fav_has(it->url);
+        if(on ? bandcamp_fav_add(it, &why) : bandcamp_fav_remove(it->url, &why)) ui_toast(why ? why : "Couldn't save favourites");
+        else ui_toast(on ? "Added to favourites" : "Removed from favourites");
+        rebuild();
+    }
+}
+static void fill_favs(view_t *v){ view_free(v); v->n = bandcamp_fav_list(&v->items); v->fav_gen = bandcamp_fav_gen(); v->state = BC_DONE; }
 static void poll_cb(lv_timer_t *t){
     (void)t;
     view_t *v = top();
@@ -319,6 +381,8 @@ static void poll_cb(lv_timer_t *t){
 int bandcamp_ui_back_consumed(void){
     if(g_depth <= 1) return 0;
     view_free(&g_st[--g_depth]);
+    view_t *v = top();
+    if(v->v == V_FAV && v->fav_gen != bandcamp_fav_gen()){ int y = v->scroll; fill_favs(v); v->scroll = y; }   /* changed meanwhile */
     rebuild();
     return 1;
 }
@@ -370,5 +434,10 @@ void bandcamp_ui_test_release(const bc_release_t *r, const bc_track_t *t, int n)
     v->kind = 'r'; v->rel = *r; v->state = BC_DONE;
     v->tracks = malloc(sizeof *t * (size_t)(n > 0 ? n : 1)); v->n = v->tracks ? n : 0;
     if(v->n) memcpy(v->tracks, t, sizeof *t * (size_t)n);
+    rebuild();
+}
+void bandcamp_ui_test_item(const bc_item_t *it){
+    bandcamp_ui_open();
+    view_t *v = push(V_ITEM, it->name); v->it = *it; v->ridx = -1;
     rebuild();
 }

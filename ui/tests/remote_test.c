@@ -398,6 +398,12 @@ static void test_core(void){
     r = req("POST", p("/api/bandcamp"), "action=stop_downloads"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_DL_STOP);
     r = req("POST", p("/api/bandcamp"), "action=quality&q=2"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_QUALITY && r.cmd.pos == 2);
     CHECK(req("POST", p("/api/bandcamp"), "action=quality&q=4").kind == RMT_R_BAD_PARAM);
+    r = req("GET", p("/api/bandcamp?favs=1"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_FAVS);
+    r = req("POST", p("/api/bandcamp"), "action=fav_add&type=t&name=Soko+Linx&artist=UP&url=https%3A%2F%2Fa.bandcamp.com%2Ftrack%2Fs");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_FAV_ADD && !strcmp(r.cmd.text, "t\tSoko Linx\tUP\t\thttps://a.bandcamp.com/track/s\t"));
+    CHECK(req("POST", p("/api/bandcamp"), "action=fav_add&type=q&name=x&url=https%3A%2F%2Fa.bandcamp.com").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/bandcamp"), "action=fav_add&type=a&url=https%3A%2F%2Fa.bandcamp.com").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/bandcamp"), "action=fav_remove&url=https%3A%2F%2Fa.bandcamp.com"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_FAV_REMOVE);
     CHECK(req("POST", p("/api/bandcamp"), "action=play").kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/bandcamp"), "action=stop"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_BC_STOP);
     CHECK(req("POST", p("/api/bandcamp"), "action=dance").kind == RMT_R_BAD_PARAM && req("PUT", p("/api/bandcamp"), NULL).kind == RMT_R_BAD_METHOD);

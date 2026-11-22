@@ -1116,6 +1116,9 @@ static int bandcamp_cmd(const rmt_cmd_t *c, const char **why, char **body){
         if(!bandcamp_downloading()){ *why = "Nothing is being saved"; return -1; }
         bandcamp_download_cancel(); return 0;
     case RMT_BC_QUALITY: bandcamp_set_quality((int)c->pos); return 0;
+    case RMT_BC_FAVS: *body = bandcamp_fav_json(); if(!*body){ *why = "Out of memory"; return -1; } return 0;
+    case RMT_BC_FAV_ADD: { bc_item_t it; if(bc_fav_parse(c->text, &it, 1) != 1){ *why = "That can't be a favourite"; return -1; } return bandcamp_fav_add(&it, why); }
+    case RMT_BC_FAV_REMOVE: return bandcamp_fav_remove(c->name, why);
     }
     *why = "Unknown command"; return -1;
 }

@@ -711,6 +711,115 @@ void bandcamp_tick(void){
     send_line(line);
 }
 
+static void item_json(rmt_buf_t *b, const bc_item_t *it);
+/* ================================================================ favourites (main thread; docs/BANDCAMP.md "Favourites")
+ * Only on the SD card (Jo: user data on the card; a place on the player can follow as for the radio): read again
+ * when the card comes or goes or the file changed (at most once a second); never written without the card or when
+ * the file couldn't be read. Kept apart from the radio's and the library's favourites. */
+#ifndef BC_CARD_MOUNTED
+#include "system.h"
+#define BC_CARD_MOUNTED() sys_is_mounted("/proc/mounts", BC_CARD_ROOT)
+#else
+int BC_CARD_MOUNTED(void);
+#endif
+#define BC_FAV_PATH BC_CARD_ROOT "/" BC_FAV_NAME
+static bc_item_t *g_fav; static int g_nfav, g_fav_loaded, g_fav_nocard, g_fav_bad;
+static struct { ino_t ino; off_t size; time_t mt; long mns; int have; } g_fav_sig;
+static time_t g_fav_checked;
+static unsigned g_fav_gen;
+static void fav_sig(void){
+    struct stat st; memset(&g_fav_sig, 0, sizeof g_fav_sig);
+    if(stat(BC_FAV_PATH, &st)) return;
+    g_fav_sig.ino = st.st_ino; g_fav_sig.size = st.st_size; g_fav_sig.mt = st.st_mtim.tv_sec; g_fav_sig.mns = st.st_mtim.tv_nsec; g_fav_sig.have = 1;
+}
+static void fav_load(void){
+    g_fav_loaded = 1; g_fav_checked = time(NULL); g_fav_gen++;
+    free(g_fav); g_fav = NULL; g_nfav = 0; g_fav_bad = 0; g_fav_nocard = 0;
+    if(!BC_CARD_MOUNTED() || !sd_io_begin()){ g_fav_nocard = 1; memset(&g_fav_sig, 0, sizeof g_fav_sig); return; }
+    size_t len = 0; errno = 0;
+    char *t = slurp(BC_FAV_PATH, (size_t)BC_MAX_FAV * 1500, &len);
+    if(!t && errno != ENOENT) g_fav_bad = 1;
+    fav_sig();
+    sd_io_end();
+    if(!t) return;
+    g_fav = malloc(sizeof *g_fav * BC_MAX_FAV);
+    if(g_fav) g_nfav = bc_fav_parse(t, g_fav, BC_MAX_FAV); else g_fav_bad = 1;
+    free(t);
+}
+static void fav_fresh(int force){
+    if(!g_fav_loaded){ fav_load(); return; }
+    if(!force && time(NULL) == g_fav_checked) return;
+    g_fav_checked = time(NULL);
+    int card = BC_CARD_MOUNTED();
+    if(!card){ if(!g_fav_nocard) fav_load(); return; }
+    if(g_fav_nocard || !sd_io_begin()){ if(g_fav_nocard) fav_load(); return; }
+    struct stat st; int have = stat(BC_FAV_PATH, &st) == 0;
+    sd_io_end();
+    if(have != g_fav_sig.have || (have && (st.st_ino != g_fav_sig.ino || st.st_size != g_fav_sig.size ||
+       st.st_mtim.tv_sec != g_fav_sig.mt || st.st_mtim.tv_nsec != g_fav_sig.mns))) fav_load();
+}
+static int fav_save(void){
+    if(g_fav_bad || g_fav_nocard || !BC_CARD_MOUNTED() || !sd_io_begin()) return -1;
+    size_t cap = (size_t)g_nfav * 1500 + 256;
+    char *buf = malloc(cap), tmp[sizeof BC_FAV_PATH + 8];
+    int len = buf ? bc_fav_format(g_fav, g_nfav, buf, cap) : -1, r = -1;
+    snprintf(tmp, sizeof tmp, "%s.XXXXXX", BC_FAV_PATH);
+    int fd = len >= 0 ? mkstemp(tmp) : -1;
+    if(fd >= 0){
+        int ok = write(fd, buf, (size_t)len) == len && fsync(fd) == 0;
+        if(close(fd)) ok = 0;
+        if(ok && !rename(tmp, BC_FAV_PATH)) r = 0; else unlink(tmp);
+    }
+    if(!r){ fav_sig(); g_fav_gen++; }
+    sd_io_end();
+    free(buf);
+    return r;
+}
+int bandcamp_fav_list(bc_item_t **out){
+    fav_fresh(0);
+    *out = g_nfav ? malloc(sizeof **out * (size_t)g_nfav) : NULL;
+    if(!*out) return 0;
+    memcpy(*out, g_fav, sizeof **out * (size_t)g_nfav);
+    return g_nfav;
+}
+int bandcamp_fav_has(const char *url){ fav_fresh(0); return url && bc_fav_find(g_fav, g_nfav, url) >= 0; }
+int bandcamp_fav_nocard(void){ fav_fresh(0); return g_fav_nocard; }
+unsigned bandcamp_fav_gen(void){ fav_fresh(0); return g_fav_gen; }
+static const char *const FAV_NOCARD = "Insert the SD card to keep Bandcamp favourites";
+int bandcamp_fav_add(const bc_item_t *it, const char **why){
+    char u[BC_URL_LEN];
+    if(!it || !it->name[0] || !strchr("abt", it->type) || bc_url_join(NULL, it->url, u, sizeof u)){ *why = "That can't be a favourite"; return -1; }
+    fav_fresh(1);
+    if(bc_fav_find(g_fav, g_nfav, u) >= 0) return 0;
+    if(g_fav_nocard){ *why = FAV_NOCARD; return -1; }
+    if(g_fav_bad){ *why = "The favourites file couldn't be read - it is left as it is"; return -1; }
+    if(g_nfav >= BC_MAX_FAV){ *why = "Favourites are full"; return -1; }
+    if(!g_fav && !(g_fav = malloc(sizeof *g_fav * BC_MAX_FAV))){ *why = "Out of memory"; return -1; }
+    g_fav[g_nfav] = *it; snprintf(g_fav[g_nfav].url, sizeof g_fav[g_nfav].url, "%s", u);
+    if(g_fav[g_nfav].art[0] && !bc_url_ok(g_fav[g_nfav].art)) g_fav[g_nfav].art[0] = 0;
+    g_nfav++;
+    if(fav_save()){ fav_load(); *why = "Couldn't save favourites"; return -1; }
+    return 0;
+}
+int bandcamp_fav_remove(const char *url, const char **why){
+    char u[BC_URL_LEN];
+    if(!url || bc_url_join(NULL, url, u, sizeof u)) snprintf(u, sizeof u, "%s", url ? url : "");
+    fav_fresh(1);
+    int i = bc_fav_find(g_fav, g_nfav, u);
+    if(i < 0) return 0;
+    if(g_fav_nocard){ *why = FAV_NOCARD; return -1; }
+    memmove(&g_fav[i], &g_fav[i + 1], sizeof g_fav[0] * (size_t)(g_nfav - i - 1)); g_nfav--;
+    if(fav_save()){ fav_load(); *why = "Couldn't save favourites"; return -1; }
+    return 0;
+}
+static void fav_json(rmt_buf_t *b){
+    fav_fresh(0);
+    rmt_buf_printf(b, "{\"ok\":true,\"nocard\":%s,\"items\":[", g_fav_nocard ? "true" : "false");
+    for(int i = 0; i < g_nfav; i++){ if(i) rmt_buf_put(b, ","); item_json(b, &g_fav[i]); }
+    rmt_buf_put(b, "]}");
+}
+char *bandcamp_fav_json(void){ rmt_buf_t b = { 0 }; fav_json(&b); return rmt_buf_take(&b); }
+
 /* ================================================================ for the Disc's screen */
 unsigned bandcamp_gen(void){ pthread_mutex_lock(&g_mu); unsigned g = g_wake_bump; pthread_mutex_unlock(&g_mu); return g; }
 int bandcamp_hits(bc_item_t *out, int max, int *state){
@@ -769,6 +878,7 @@ static void release_json(rmt_buf_t *b, const bc_release_t *r, const bc_track_t *
     for(int i = 0; i < n; i++){
         rmt_buf_printf(b, "%s{\"title\":", i ? "," : ""); rmt_buf_str(b, t[i].title);
         rmt_buf_put(b, ",\"artist\":"); rmt_buf_str(b, t[i].artist);
+        rmt_buf_put(b, ",\"page\":"); rmt_buf_str(b, t[i].page);
         rmt_buf_printf(b, ",\"ms\":%ld,\"num\":%d,\"plays\":%s}", t[i].ms, t[i].num, t[i].stream[0] ? "true" : "false");
     }
     rmt_buf_put(b, "]}");
