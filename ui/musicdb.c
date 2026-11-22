@@ -5,6 +5,7 @@
 #include "bookmarks.h"
 #include "fwcaps.h"
 #include "sqlite3.h"
+#include "own_player.h"
 #define JSMN_HEADER      /* declarations only; the implementation lives in ipc.c */
 #include "jsmn.h"
 #include <stdio.h>
@@ -24,6 +25,59 @@
 #ifndef DB_PATH
 #define DB_PATH libdb_path()
 #endif
+
+/* ---- the own player's playing list (OPL_LIST in /tmp, own_player.h) --------------------------------------------
+ * The own player keeps the list as SONG.IDs in RAM and writes no LIST_SONG_0/LIST_SONG_3 (Jo, 2026-11-22); it
+ * publishes the list to OPL_LIST. While that file exists, the queue reads below (Up Next, the current song, jumps,
+ * the Queue's list) use it instead of the tables: position k (1-based, the a2 pos_id) = g_vl.songs[k - 1], and in
+ * shuffle the play order is g_vl.order (positions). The stock player never writes it (the launcher removes it then).
+ * Read again whenever the file changed (the player renames a new one in place). */
+static struct { int n, shuffled, *songs, *order; dev_t dev; ino_t ino; off_t size; struct timespec mt; int ok; } g_vl;
+static pthread_mutex_t g_vl_mu = PTHREAD_MUTEX_INITIALIZER;
+static int vl_parse(const char *buf){
+    const char *p = buf; char *e;
+    int n = 0, sh = 0;
+    if(sscanf(p, "diskos-list 1 %d %d", &n, &sh) != 2 || n < 0 || n > 10000000) return -1;
+    p = strchr(p, '\n'); if(!p) return -1;
+    int *songs = n ? malloc((size_t)n * sizeof *songs) : NULL, *order = (n && sh) ? malloc((size_t)n * sizeof *order) : NULL;
+    if(n && (!songs || (sh && !order))){ free(songs); free(order); return -1; }
+    for(int i = 0; i < n; i++){ long v = strtol(p, &e, 10); if(e == p || v <= 0){ free(songs); free(order); return -1; } songs[i] = (int)v; p = e; }
+    for(int i = 0; sh && i < n; i++){ long v = strtol(p, &e, 10); if(e == p || v < 1 || v > n){ free(songs); free(order); return -1; } order[i] = (int)v; p = e; }
+    free(g_vl.songs); free(g_vl.order);
+    g_vl.songs = songs; g_vl.order = order; g_vl.n = n; g_vl.shuffled = sh && n > 0;
+    return 0;
+}
+/* 1 = the own player's list is in force: g_vl is current and g_vl_mu is HELD (vl_unlock after use); 0 = no such file
+ * (the tables are used; the lock is not held); -1 = the file is there but can't be read (lock not held). */
+static int vl_lock(void){
+    struct stat sb;
+    if(stat(OPL_LIST, &sb) != 0) return 0;
+    pthread_mutex_lock(&g_vl_mu);
+    if(!g_vl.ok || sb.st_ino != g_vl.ino || sb.st_dev != g_vl.dev || sb.st_size != g_vl.size
+       || sb.st_mtim.tv_sec != g_vl.mt.tv_sec || sb.st_mtim.tv_nsec != g_vl.mt.tv_nsec){
+        g_vl.ok = 0;
+        FILE *f = fopen(OPL_LIST, "re");
+        char *buf = NULL; long len = 0;
+        if(f && fseek(f, 0, SEEK_END) == 0 && (len = ftell(f)) >= 0 && fseek(f, 0, SEEK_SET) == 0 && (buf = malloc((size_t)len + 1))){
+            size_t got = fread(buf, 1, (size_t)len, f); buf[got] = 0;
+            if(vl_parse(buf) == 0){ g_vl.ok = 1; g_vl.dev = sb.st_dev; g_vl.ino = sb.st_ino; g_vl.size = sb.st_size; g_vl.mt = sb.st_mtim; }
+        }
+        free(buf);
+        if(f) fclose(f);
+        if(!g_vl.ok){ pthread_mutex_unlock(&g_vl_mu); return -1; }
+    }
+    return 1;
+}
+static void vl_unlock(void){ pthread_mutex_unlock(&g_vl_mu); }
+/* SONG.ID at list position pos (1-based) of the own player's list: >0, 0 = not in the list, -1 = no own list (use
+ * the tables), -2 = the list can't be read. */
+static int vl_song_at(int pos){
+    int r = vl_lock();
+    if(r <= 0) return r == 0 ? -1 : -2;
+    int id = (pos >= 1 && pos <= g_vl.n) ? g_vl.songs[pos - 1] : 0;
+    vl_unlock();
+    return id;
+}
 
 /* The whole library is held in a dynamically-sized array (no fixed cap): sized to
  * the actual SONG count at load. Loaded ONCE at startup, so the realloc never moves
@@ -2257,12 +2311,17 @@ int mdb_playlist_add_song(long pid, const char *path){
 static int song_subtrack_core(const char *path, int pos_id, const char *title, int need_title, int *track, int *is_cue, int *is_iso){
     if(!path || !path[0] || pos_id <= 0) return 0;
     if(need_title && (!title || !title[0])) return 0;
+    int song = vl_song_at(pos_id);                    /* the own player: the list is in RAM, the row is the SONG row */
+    if(song == 0 || song == -2) return 0;
     sqlite3 *d = db_read(); if(!d) return 0;
     sqlite3_stmt *st; int r = 0;
-    if(sqlite3_prepare_v2(d, "SELECT IFNULL(TRACK,0),IFNULL(IS_CUE,0),IFNULL(IS_ISO,0) FROM LIST_SONG_0 WHERE ID=?1 AND PATH=?2 "
-                          "AND (?4=0 OR TITLE=?3 OR NAME=?3);",
+    if(sqlite3_prepare_v2(d, song > 0
+                          ? "SELECT IFNULL(TRACK,0),IFNULL(IS_CUE,0),IFNULL(IS_ISO,0) FROM SONG WHERE ID=?1 AND PATH=?2 "
+                            "AND (?4=0 OR TITLE=?3 OR NAME=?3);"
+                          : "SELECT IFNULL(TRACK,0),IFNULL(IS_CUE,0),IFNULL(IS_ISO,0) FROM LIST_SONG_0 WHERE ID=?1 AND PATH=?2 "
+                            "AND (?4=0 OR TITLE=?3 OR NAME=?3);",
                           -1, &st, NULL) != SQLITE_OK) return 0;
-    sqlite3_bind_int(st, 1, pos_id); sqlite3_bind_text(st, 2, path, -1, SQLITE_STATIC);
+    sqlite3_bind_int(st, 1, song > 0 ? song : pos_id); sqlite3_bind_text(st, 2, path, -1, SQLITE_STATIC);
     sqlite3_bind_text(st, 3, title ? title : "", -1, SQLITE_STATIC); sqlite3_bind_int(st, 4, need_title ? 1 : 0);
     if(sqlite3_step(st) == SQLITE_ROW && (sqlite3_column_int(st, 1) || sqlite3_column_int(st, 2))){
         if(track) *track = sqlite3_column_int(st, 0);
@@ -3469,16 +3528,106 @@ static int q_int(sqlite3 *d, const char *sql, int a, const char *s, int *out){  
 int mdb_queue_ord(int base_id, const char *path){
     sqlite3 *d = qdb(); if(!d || !path || base_id <= 0) return -1;
     int same = 0, ord = 0;
+    int song = vl_song_at(base_id);                   /* the own player: position = base_id, the row is a SONG row */
+    if(song == -2) return -1;
+    if(song == 0) return 0;
+    if(song > 0){
+        int r = q_int(d, "SELECT PATH=?2 FROM SONG WHERE ID=?1;", song, path, &same);
+        return r < 0 ? -1 : (r == 1 && same) ? base_id : 0;
+    }
     int r = q_int(d, "SELECT PATH=?2 FROM LIST_SONG_0 WHERE ID=?1;", base_id, path, &same);
     if(r < 0) return -1;
     if(r == 0 || !same) return 0;
     if(q_int(d, "SELECT COUNT(*) FROM LIST_SONG_0 WHERE ID<=?1;", base_id, NULL, &ord) != 1) return -1;
     return ord;
 }
+/* Up Next from the own player's list (OPL_LIST): positions from the RAM list, the rows from SONG by ID. */
+static int upnext_own(sqlite3 *d, int shuffle, int cur_pos_id, const char *cur_path, mdb_qrow_t *out, int cap, int *more){
+    int *ids = NULL;                                  /* SONG.IDs with cur_path (the current song without a pos_id) */
+    int nids = 0;
+    if(cur_pos_id <= 0){
+        if(!cur_path || !cur_path[0]) return MDB_UPNEXT_NOTFOUND;
+        sqlite3_stmt *q = NULL;
+        if(sqlite3_prepare_v2(d, "SELECT ID FROM SONG WHERE PATH=?1;", -1, &q, NULL) != SQLITE_OK){ int b = q_busy(sqlite3_extended_errcode(d)); if(q) sqlite3_finalize(q); return b ? MDB_UPNEXT_BUSY : MDB_UPNEXT_ERROR; }
+        sqlite3_bind_text(q, 1, cur_path, -1, SQLITE_TRANSIENT);
+        int rc;
+        while((rc = sqlite3_step(q)) == SQLITE_ROW && nids < 64){
+            int *nv = realloc(ids, (size_t)(nids + 1) * sizeof *ids);
+            if(!nv) break;
+            ids = nv; ids[nids++] = sqlite3_column_int(q, 0);
+        }
+        int bad = rc != SQLITE_ROW && rc != SQLITE_DONE, busy = bad && q_busy(sqlite3_extended_errcode(d));
+        sqlite3_finalize(q);
+        if(bad){ free(ids); return busy ? MDB_UPNEXT_BUSY : MDB_UPNEXT_ERROR; }
+    }
+    int *pos = malloc((size_t)cap * sizeof *pos), np = 0, left = 0, tid = cur_pos_id, r = 0;
+    if(!pos){ free(ids); return MDB_UPNEXT_ERROR; }
+    int lk = vl_lock();
+    if(lk <= 0){ free(ids); free(pos); return MDB_UPNEXT_ERROR; }
+    int n = g_vl.n;
+    if(n == 0) r = MDB_UPNEXT_EMPTY;
+    else if(tid <= 0){                                /* the path when exactly one list position has it */
+        int hits = 0;
+        for(int k = 0; k < n && hits < 2; k++) for(int j = 0; j < nids; j++) if(g_vl.songs[k] == ids[j]){ tid = k + 1; hits++; break; }
+        if(hits != 1) r = MDB_UPNEXT_NOTFOUND;
+    }
+    if(!r && (tid < 1 || tid > n)) r = MDB_UPNEXT_NOTFOUND;
+    if(!r && shuffle && !g_vl.shuffled) r = MDB_UPNEXT_NOTFOUND;       /* the shuffle order is not there yet */
+    if(!r){
+        int start = tid - 1;
+        if(shuffle){ start = -1; for(int k = 0; k < n; k++) if(g_vl.order[k] == tid){ start = k; break; } }
+        if(start < 0) r = MDB_UPNEXT_NOTFOUND;
+        else {
+            left = n - start;
+            for(int k = start; k < n && np < cap; k++) pos[np++] = shuffle ? g_vl.order[k] : k + 1;
+        }
+    }
+    int *song = NULL;
+    if(!r && np > 0 && (song = malloc((size_t)np * sizeof *song))) for(int k = 0; k < np; k++) song[k] = g_vl.songs[pos[k] - 1];
+    vl_unlock();
+    free(ids);
+    if(!r && !song) r = MDB_UPNEXT_ERROR;
+    if(r){ free(pos); free(song); return r; }
+    sqlite3_stmt *q = NULL;
+    if(sqlite3_prepare_v2(d, "SELECT TITLE,NAME,ARTIST,PATH,DURATION FROM SONG WHERE ID=?1;", -1, &q, NULL) != SQLITE_OK){
+        int b = q_busy(sqlite3_extended_errcode(d)); if(q) sqlite3_finalize(q); free(pos); free(song);
+        return b ? MDB_UPNEXT_BUSY : MDB_UPNEXT_ERROR;
+    }
+    int got = 0;
+    for(int k = 0; k < np; k++){
+        sqlite3_bind_int(q, 1, song[k]);
+        int rc = sqlite3_step(q);
+        if(rc != SQLITE_ROW){
+            int busy = rc != SQLITE_DONE && q_busy(sqlite3_extended_errcode(d));
+            sqlite3_finalize(q); free(pos); free(song);
+            return busy ? MDB_UPNEXT_BUSY : rc == SQLITE_DONE ? MDB_UPNEXT_NOTFOUND : MDB_UPNEXT_ERROR;   /* a song left the library: rescan */
+        }
+        mdb_qrow_t *o = &out[got++];
+        memset(o, 0, sizeof *o);
+        o->base_id = pos[k];
+        o->ord = shuffle ? 0 : pos[k];                /* sequential: the position is the ord; shuffle: found when tapped */
+        const char *t = (const char *)sqlite3_column_text(q, 0);
+        if(!t || !t[0]) t = (const char *)sqlite3_column_text(q, 1);
+        const char *p = (const char *)sqlite3_column_text(q, 3);
+        if(!t || !t[0]){ const char *sl = p ? strrchr(p, '/') : NULL; t = sl ? sl + 1 : p; }
+        snprintf(o->title, sizeof o->title, "%s", t ? t : "");
+        const char *ar = (const char *)sqlite3_column_text(q, 2);
+        snprintf(o->artist, sizeof o->artist, "%s", ar ? ar : "");
+        snprintf(o->path, sizeof o->path, "%s", p ? p : "");
+        sqlite3_int64 dm = sqlite3_column_int64(q, 4);
+        o->dur_ms = (dm > 0 && dm <= 2147483647) ? (int)dm : 0;
+        sqlite3_reset(q);
+    }
+    sqlite3_finalize(q); free(pos); free(song);
+    if(got == 0) return MDB_UPNEXT_NOTFOUND;
+    if(more) *more = left > got ? left - got : 0;
+    return got;
+}
 int mdb_upnext(int shuffle, int cur_pos_id, const char *cur_path, mdb_qrow_t *out, int cap, int *more){
     if(more) *more = 0;
     if(!out || cap < 1) return MDB_UPNEXT_ERROR;
     sqlite3 *d = qdb(); if(!d) return MDB_UPNEXT_ERROR;
+    { struct stat sb; if(stat(OPL_LIST, &sb) == 0) return upnext_own(d, shuffle, cur_pos_id, cur_path, out, cap, more); }
     #define QI(sql, a, s, outp) do { int _r = q_int(d, sql, a, s, outp); if(_r == -2) return MDB_UPNEXT_BUSY; if(_r < 0) return MDB_UPNEXT_ERROR; got = _r; } while(0)
     int got = 0, n0 = 0, n3 = 0, tid = 0, start = 0, left = 0;
     QI("SELECT COUNT(*) FROM LIST_SONG_0;", 0, NULL, &n0);
@@ -4002,6 +4151,21 @@ int mdb_playlist_index_of(long pid, const char *path){
 static int mdb_listsong0_paths_leased(char (*out)[256], int cap){
     sqlite3 *d = db_read(); if(!d || cap <= 0) return 0;
     sqlite3_stmt *st; int n = 0;
+    int lk = vl_lock();                               /* the own player: its list's songs, in list order */
+    if(lk < 0) return 0;
+    if(lk > 0){
+        int m = g_vl.n < cap ? g_vl.n : cap, *ids = m ? malloc((size_t)m * sizeof *ids) : NULL;
+        if(ids) memcpy(ids, g_vl.songs, (size_t)m * sizeof *ids);
+        vl_unlock();
+        if(!ids || sqlite3_prepare_v2(d, "SELECT PATH FROM SONG WHERE ID=?1;", -1, &st, NULL) != SQLITE_OK){ free(ids); return 0; }
+        for(int i = 0; i < m; i++){
+            sqlite3_bind_int(st, 1, ids[i]);
+            if(sqlite3_step(st) == SQLITE_ROW){ const char *p = (const char*)sqlite3_column_text(st, 0); if(p && p[0]) snprintf(out[n++], 256, "%s", p); }
+            sqlite3_reset(st);
+        }
+        sqlite3_finalize(st); free(ids);
+        return n;
+    }
     if(sqlite3_prepare_v2(d, "SELECT PATH FROM LIST_SONG_0 ORDER BY ID;", -1, &st, NULL) != SQLITE_OK) return 0;
     while(n < cap && sqlite3_step(st) == SQLITE_ROW){
         const char *p = (const char*)sqlite3_column_text(st, 0);
@@ -4128,6 +4292,9 @@ int mdb_queue_live_ids(int *out, int cap){
     /* One statement for the whole list (not one lookup per row), in the player's list order. Every row must match
      * exactly one song on the same identity as before (PATH, TRACK IS, IS_CUE IS, IS_ISO IS): none or several, or more
      * rows than fit, is an error, never a silently shorter or guessed list. */
+    int lk=vl_lock();                                 /* the own player: its list IS the SONG.IDs */
+    if(lk<0){ sd_io_end(); return -1; }
+    if(lk>0){ int n=g_vl.n; if(n<=cap) memcpy(out,g_vl.songs,(size_t)n*sizeof *out); vl_unlock(); sd_io_end(); return n<=cap?n:-1; }
     sqlite3 *d=db_read_wait(QUEUE_READ_WAIT_MS); sqlite3_stmt *st=NULL; int n=0,rc=SQLITE_ERROR,ok=0;
     if(d && sqlite3_prepare_v2(d,
         "SELECT COUNT(S.ID),MIN(S.ID) FROM LIST_SONG_0 L LEFT JOIN SONG S ON S.PATH=L.PATH AND S.TRACK IS L.TRACK "
@@ -4144,9 +4311,11 @@ int mdb_queue_live_ids(int *out, int cap){
 /* The playing song's SONG.ID on connection d; *busy = the database was locked (the answer is unknown, not "none"). */
 static int queue_current_id_on(sqlite3 *d, const char *path, int pos, const char *title, int *busy){
     sqlite3_stmt *st=NULL; int id=0,hits=0,rc;
-    if(d && pos>0 && sqlite3_prepare_v2(d,
-        "SELECT S.ID FROM SONG S JOIN LIST_SONG_0 L ON S.PATH=L.PATH AND S.TRACK IS L.TRACK AND S.IS_CUE IS L.IS_CUE AND S.IS_ISO IS L.IS_ISO WHERE L.ID=?1 AND L.PATH=?2 AND IFNULL(L.TITLE,'')=?3;",-1,&st,NULL)==SQLITE_OK){
-        sqlite3_bind_int(st,1,pos); sqlite3_bind_text(st,2,path,-1,SQLITE_TRANSIENT); sqlite3_bind_text(st,3,title?title:"",-1,SQLITE_TRANSIENT);
+    int song=pos>0?vl_song_at(pos):-1;               /* the own player: the list position names the SONG row */
+    if(d && pos>0 && song!=0 && song!=-2 && sqlite3_prepare_v2(d, song>0
+        ? "SELECT ID FROM SONG WHERE ID=?1 AND PATH=?2 AND IFNULL(TITLE,'')=?3;"
+        : "SELECT S.ID FROM SONG S JOIN LIST_SONG_0 L ON S.PATH=L.PATH AND S.TRACK IS L.TRACK AND S.IS_CUE IS L.IS_CUE AND S.IS_ISO IS L.IS_ISO WHERE L.ID=?1 AND L.PATH=?2 AND IFNULL(L.TITLE,'')=?3;",-1,&st,NULL)==SQLITE_OK){
+        sqlite3_bind_int(st,1,song>0?song:pos); sqlite3_bind_text(st,2,path,-1,SQLITE_TRANSIENT); sqlite3_bind_text(st,3,title?title:"",-1,SQLITE_TRANSIENT);
         while((rc=sqlite3_step(st))==SQLITE_ROW){ id=sqlite3_column_int(st,0); hits++; }
         if(rc!=SQLITE_DONE){ hits=0; if(busy && (rc==SQLITE_BUSY || rc==SQLITE_LOCKED)) *busy=1; }
         sqlite3_finalize(st); st=NULL;

@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 /* Host test of the own player's queue (ui/player/queue.c, queuedb.c) and playback (playback.c) against a real SQLite
  * song.db and an in-process stand-in for the MPD engine (the eng_* and dac_* functions below), so the queue logic, the
- * LIST_SONG tables and the frames to the UI are checked without MPD or the Disc.
+ * list in RAM (published to OPL_LIST, never to LIST_SONG_0) and the frames to the UI are checked without MPD or the Disc.
  * Run: make -C ui/tests playback_test && ./ui/tests/playback_test */
 #include "../player/btout.h"
 #include "../player/core.h"
@@ -123,18 +123,40 @@ static int count(sqlite3 *d, const char *q){
     sqlite3_finalize(st);
     return n;
 }
-/* the queue's paths in LIST_SONG_0 ID order, joined by ',' (file names only) */
-static const char *queue_names(sqlite3 *d){
+/* the songs' file names (SONG.IDs in list order), joined by ',' */
+static const char *names_of(sqlite3 *d, const int *ids, int n){
     static char out[1024]; out[0] = 0;
     sqlite3_stmt *st;
-    if(sqlite3_prepare_v2(d, "SELECT PATH FROM LIST_SONG_0 ORDER BY ID;", -1, &st, NULL) != SQLITE_OK) return "?";
-    while(sqlite3_step(st) == SQLITE_ROW){
-        const char *p = (const char *)sqlite3_column_text(st, 0), *b = strrchr(p, '/');
-        snprintf(out + strlen(out), sizeof out - strlen(out), "%s%s", out[0] ? "," : "", b ? b + 1 : p);
+    if(sqlite3_prepare_v2(d, "SELECT PATH FROM SONG WHERE ID=?1;", -1, &st, NULL) != SQLITE_OK) return "?";
+    for(int i = 0; i < n; i++){
+        sqlite3_bind_int(st, 1, ids[i]);
+        if(sqlite3_step(st) == SQLITE_ROW){
+            const char *p = (const char *)sqlite3_column_text(st, 0), *b = strrchr(p, '/');
+            snprintf(out + strlen(out), sizeof out - strlen(out), "%s%s", out[0] ? "," : "", b ? b + 1 : p);
+        }
+        sqlite3_reset(st);
     }
     sqlite3_finalize(st);
     return out;
 }
+/* the list the player published (OPL_LIST): n, shuffled, the SONG.IDs and the play order; -1 when unreadable */
+static int pub_n, pub_sh, pub_songs[64], pub_order[64];
+static int read_pub(void){
+    FILE *f = fopen(OPL_LIST, "r");
+    if(!f) return -1;
+    int ok = fscanf(f, "diskos-list 1 %d %d", &pub_n, &pub_sh) == 2 && pub_n >= 0 && pub_n <= 64;
+    for(int i = 0; ok && i < pub_n; i++) ok = fscanf(f, "%d", &pub_songs[i]) == 1;
+    for(int i = 0; ok && pub_sh && i < pub_n; i++) ok = fscanf(f, "%d", &pub_order[i]) == 1;
+    fclose(f);
+    return ok ? 0 : -1;
+}
+static int *L_ids; static int L_n;
+static int list_of(sqlite3 *d, int type, const char *name, int cls, char *err, int errcap){
+    free(L_ids); L_ids = NULL;
+    L_n = qd_list(d, type, name, cls, &L_ids, NULL, err, errcap);
+    return L_n;
+}
+#define queue_names(d) names_of(d, L_ids, L_n)
 
 static void make_db(void){
     snprintf(dbp, sizeof dbp, "/tmp/pbtest_%d_song.db", (int)getpid());
@@ -212,45 +234,41 @@ static void test_queuedb(void){
     CHECK(d != NULL);
     char err[200];
     /* all songs: title code order, the CUE row last (as ui/musicdb.c mdb_play_pos counts) */
-    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 9);
+    CHECK(list_of(d, QD_ALL, "", 0, err, sizeof err) == 9);
     CHECK(!strcmp(queue_names(d), "a2.flac,b1.flac,b2.flac,c.flac,m1.flac,m2-96k.flac,m3-96k.flac,a1.flac,cue.flac"));
-    CHECK(count(d, "SELECT MIN(ID) FROM LIST_SONG_0;") == 1 && count(d, "SELECT COUNT(*) FROM LIST_SONG_0 WHERE SONG_TYPE=3;") == 9);
-    CHECK(count(d, "SELECT DURATION FROM LIST_SONG_0 WHERE ID=1;") == 200000);
-    /* rebuilt: IDs start at 1 again (DROP + CREATE like the stock player) */
-    CHECK(qd_build(d, QD_ALBUM, "Alpha", 0, err, sizeof err) == 3);
-    CHECK(count(d, "SELECT MIN(ID) FROM LIST_SONG_0;") == 1);
+    CHECK(list_of(d, QD_ALBUM, "Alpha", 0, err, sizeof err) == 3);
     CHECK(!strcmp(queue_names(d), "a1.flac,a2.flac,c.flac"));      /* album order: disc, track */
-    CHECK(qd_build(d, QD_ARTIST, "Ann", 0, err, sizeof err) == 3);
+    CHECK(list_of(d, QD_ARTIST, "Ann", 0, err, sizeof err) == 3);
     CHECK(!strcmp(queue_names(d), "a2.flac,b2.flac,a1.flac"));
-    CHECK(qd_build(d, QD_ARTIST, "Various", 1, err, sizeof err) == 2);   /* album artist grouping */
+    CHECK(list_of(d, QD_ARTIST, "Various", 1, err, sizeof err) == 2);   /* album artist grouping */
     CHECK(!strcmp(queue_names(d), "b1.flac,b2.flac"));
-    CHECK(qd_build(d, QD_GENRE, "Jazz", 0, err, sizeof err) == 2);
-    CHECK(qd_build(d, QD_ARTIST_ALBUM, "{\"artist\":\"Various\", \"album\":\"Bravo\"}", 1, err, sizeof err) == 2);
+    CHECK(list_of(d, QD_GENRE, "Jazz", 0, err, sizeof err) == 2);
+    CHECK(list_of(d, QD_ARTIST_ALBUM, "{\"artist\":\"Various\", \"album\":\"Bravo\"}", 1, err, sizeof err) == 2);
     CHECK(!strcmp(queue_names(d), "b2.flac,b1.flac"));               /* disc 0 after disc 1 */
-    CHECK(qd_build(d, QD_ARTIST_ALBUM, "{\"artist\":\"Ann\", \"album\":\"Bravo\"}", 0, err, sizeof err) == 1);
-    CHECK(qd_build(d, QD_GENRE_ALBUM, "{\"style\":\"Rock\", \"album\":\"Alpha\"}", 0, err, sizeof err) == 3);
-    CHECK(qd_build(d, QD_ARTIST_ALBUM, "{\"album\":\"x\"}", 0, err, sizeof err) == -1 && strstr(err, "payload"));
-    CHECK(qd_build(d, QD_FAVOURITES, "", 0, err, sizeof err) == 2);   /* MY_LOVE without the M3U columns */
+    CHECK(list_of(d, QD_ARTIST_ALBUM, "{\"artist\":\"Ann\", \"album\":\"Bravo\"}", 0, err, sizeof err) == 1);
+    CHECK(list_of(d, QD_GENRE_ALBUM, "{\"style\":\"Rock\", \"album\":\"Alpha\"}", 0, err, sizeof err) == 3);
+    CHECK(list_of(d, QD_ARTIST_ALBUM, "{\"album\":\"x\"}", 0, err, sizeof err) == -1 && strstr(err, "payload"));
+    CHECK(list_of(d, QD_FAVOURITES, "", 0, err, sizeof err) == 2);   /* MY_LOVE without the M3U columns */
     CHECK(!strcmp(queue_names(d), "b1.flac,c.flac"));
-    CHECK(qd_build(d, QD_PLAYLIST, "", 0, err, sizeof err) == 2);     /* seq 0 = LIST_ID 2, in row order */
+    CHECK(list_of(d, QD_PLAYLIST, "", 0, err, sizeof err) == 2);     /* seq 0 = LIST_ID 2, in row order */
     CHECK(!strcmp(queue_names(d), "c.flac,a1.flac"));
-    CHECK(qd_build(d, QD_PLAYLIST, "1", 0, err, sizeof err) == 1);
-    CHECK(qd_build(d, 4, "", 0, err, sizeof err) == -1);
-    CHECK(qd_build(d, QD_ALBUM, "it's", 0, err, sizeof err) == 0);    /* a quote is bound, not interpolated */
+    CHECK(list_of(d, QD_PLAYLIST, "1", 0, err, sizeof err) == 1);
+    CHECK(list_of(d, 4, "", 0, err, sizeof err) == -1);
+    CHECK(list_of(d, QD_ALBUM, "it's", 0, err, sizeof err) == 0);    /* a quote is bound, not interpolated */
 
-    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 9);
-    int *ids = NULL; CHECK(qd_ids(d, &ids) == 9 && ids[0] == 1 && ids[8] == 9); free(ids);
-    int ord[6] = { 4, 1, 2, 3, 6, 5 }, *o = NULL;
-    CHECK(qd_shuffle_write(d, ord, 6) == 0 && qd_shuffle_read(d, &o) == 6 && o[0] == 4 && o[5] == 5); free(o);
-    CHECK(count(d, "SELECT MIN(ID) FROM LIST_SONG_3;") == 1);
-    CHECK(qd_build(d, QD_ALL, "", 0, err, sizeof err) == 9 && count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name='LIST_SONG_3';") == 0);
-    CHECK(qd_shuffle_read(d, &o) == 0);
+    /* nothing is written: no list tables (the stock player's LIST_SONG_0/3) */
+    CHECK(count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'LIST_SONG_%';") == 0);
+    /* a favourite whose song left the library is left out */
+    sql(d, "INSERT INTO MY_LOVE (PATH, TITLE, TITLE_CODE, NAME_CODE) VALUES ('/s/gone.flac', 'Gone', 'Gone', 'Gone');");
+    int dropped = 0; free(L_ids); L_ids = NULL;
+    CHECK((L_n = qd_list(d, QD_FAVOURITES, "", 0, &L_ids, &dropped, err, sizeof err)) == 2 && dropped == 1);
+    sql(d, "DELETE FROM MY_LOVE WHERE PATH='/s/gone.flac';");
+    free(L_ids); L_ids = NULL; L_n = 0;
 
     qd_row_t r;
-    CHECK(qd_row(d, 4, &r) == 1 && !strcmp(r.path, "/s/c.flac") && r.song_id == 5 && r.love && r.duration_ms == 150000);
-    CHECK(qd_row(d, 1, &r) == 1 && !strcmp(r.title, "Beta") && r.song_id == 1 && !r.love);
-    CHECK(qd_row(d, 9, &r) == 1 && r.is_cue);
-    CHECK(qd_row(d, 99, &r) == 0);
+    CHECK(qd_song(d, 5, &r) == 1 && !strcmp(r.path, "/s/c.flac") && r.song_id == 5 && r.love && r.duration_ms == 150000 && r.id == 0);
+    CHECK(qd_song(d, 1, &r) == 1 && !strcmp(r.title, "Beta") && r.song_id == 1 && !r.love);
+    CHECK(qd_song(d, 999, &r) == 0);
     sqlite3_close(d);
     CHECK(qd_artist_class(sysp) == 0 && qd_artist_class("/nonexistent/sys.db") == -1);
 }
@@ -309,19 +327,22 @@ static void test_playback(void){
     CHECK(!strcmp(e_next, "/s/c.flac"));                      /* the same song again */
     c.play_mode = PQ_SINGLE; pb_mode_changed();
     CHECK(e_next[0] == 0);
-    /* shuffle: LIST_SONG_3 written, an exact permutation with the current song first */
-    c.play_mode = PQ_SHUFFLE; pb_mode_changed();
+    /* the list is published to OPL_LIST (RAM), never written to song.db: album Alpha = SONG.IDs 4 (a1), 1 (a2), 5 (c) */
     sqlite3 *d = qd_open(dbp);
-    CHECK(count(d, "SELECT COUNT(*) FROM LIST_SONG_3;") == 3 && count(d, "SELECT POS_ID FROM LIST_SONG_3 WHERE ID=1;") == 3);
-    CHECK(count(d, "SELECT COUNT(DISTINCT POS_ID) FROM LIST_SONG_3 WHERE POS_ID IN (SELECT ID FROM LIST_SONG_0);") == 3);
+    CHECK(read_pub() == 0 && pub_n == 3 && !pub_sh && !strcmp(names_of(d, pub_songs, pub_n), "a1.flac,a2.flac,c.flac"));
+    CHECK(count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'LIST_SONG_%';") == 0);
+    /* shuffle: the play order is published, an exact permutation of the positions with the current song first */
+    c.play_mode = PQ_SHUFFLE; pb_mode_changed();
+    CHECK(read_pub() == 0 && pub_n == 3 && pub_sh && pub_order[0] == 3 && pub_order[0] + pub_order[1] + pub_order[2] == 6);
     CHECK(e_next[0] != 0);
     c.play_mode = PQ_IN_ORDER; pb_mode_changed();
-    CHECK(count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name='LIST_SONG_3';") == 0);
-    /* a play list in shuffle: the tapped song plays first, LIST_SONG_3 starts with it */
+    CHECK(read_pub() == 0 && pub_n == 3 && !pub_sh);
+    /* a play list in shuffle: the tapped song plays first, the play order starts with it */
     c.play_mode = PQ_SHUFFLE;
     CHECK(pb_play_list(QD_ALL, 3, "") == 0 && !strcmp(e_cur, "/s/c.flac"));
-    CHECK(count(d, "SELECT POS_ID FROM LIST_SONG_3 WHERE ID=1;") == 4 && count(d, "SELECT COUNT(*) FROM LIST_SONG_3;") == 9);
-    /* type 0 jumps by LIST_SONG_0 position, also in shuffle */
+    CHECK(read_pub() == 0 && pub_n == 9 && pub_sh && pub_order[0] == 4);
+    CHECK(count(d, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'LIST_SONG_%';") == 0);
+    /* type 0 jumps by list position, also in shuffle */
     CHECK(pb_play_list(QD_RESUME, 0, "") == 0 && !strcmp(e_cur, "/s/a2.flac"));
     c.play_mode = PQ_IN_ORDER; pb_mode_changed();
     /* a CUE track plays the part of its file from OFFSET for DURATION; a whole file has no part */
@@ -337,16 +358,19 @@ static void test_playback(void){
     CHECK(pb_play_list(QD_ALL, 0, "") == 0 && !strcmp(e_next, "/s/b2.flac"));
     CHECK(pb_play_list(QD_ALL, 1, "") == 0 && !strcmp(e_cur, "/s/b2.flac"));
     e_missing[0] = 0;
-    /* a fresh player (no queue in memory) takes type 0 from the tables */
+    /* a fresh player has no list (RAM only): type 0 has nothing to jump in; the published list is empty */
     pb_close();
-    CHECK(pb_play_list(QD_RESUME, 2, "") == 0 && !strcmp(e_cur, "/s/b2.flac"));
+    CHECK(pb_play_list(QD_RESUME, 2, "") == -1);
+    pb_init(&c, dbp, sysp, quiet);
+    CHECK(read_pub() == 0 && pub_n == 0);
+    CHECK(pb_play_list(QD_ALL, 1, "") == 0 && !strcmp(e_cur, "/s/b1.flac"));
     /* 0202 while a track is loaded: the full a2 with the real state */
     nsent = 0; pb_engine_event(); nsent = 0;
     CHECK(pb_transport(PL_T_STATE, 0) == 0 && nsent == 1 && strstr(sent[0], "\"state\":0"));
     /* the Artist grouping comes from 0648 and is written to SYSCONFIG, as the UI predicts the queue from there */
     c.artist_grouping = 1;
     CHECK(pb_play_list(QD_ARTIST, 0, "Various") == 0 && qd_artist_class(sysp) == 1);
-    CHECK(!strcmp(queue_names(d), "b1.flac,b2.flac"));
+    CHECK(read_pub() == 0 && !strcmp(names_of(d, pub_songs, pub_n), "b1.flac,b2.flac"));
     /* a song at another sample rate is not queued in MPD: it starts after the current one ends, with the DAC
      * started for its rate before MPD opens the PCM; the same rate queues gaplessly again */
     c.play_mode = PQ_IN_ORDER; pb_mode_changed();
@@ -425,10 +449,10 @@ static void test_resume(void){
     CHECK(count(d, "SELECT TRACK FROM MEMORY_PLAY;") == 2 && count(d, "SELECT IS_PLAYING FROM MEMORY_PLAY;") == 1);
     e_ms = 42000; e_state = ENG_PAUSE; pb_engine_event();
     CHECK(count(d, "SELECT POSITION FROM MEMORY_PLAY;") == 42000);
-    /* mode 1 (position): the same song from the same spot, in the same queue (Up Next stays), playing, guarded by the
+    /* mode 1 (position): the same song from the same spot, on its own (the list is RAM only), playing, guarded by the
      * flag until it has played 10 s */
     restart_and_resume(&c, 1);
-    CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && e_ms == 42000 && e_state == ENG_PLAY && !strcmp(e_next, "/s/m3-96k.flac"));
+    CHECK(!strcmp(e_cur, "/s/m2-96k.flac") && e_ms == 42000 && e_state == ENG_PLAY && e_next[0] == 0);   /* on its own: no list over a restart */
     CHECK(access(flagp, F_OK) == 0);
     pb_engine_event();
     pb_tick(mono() + 11.0);
@@ -461,10 +485,11 @@ static void test_resume(void){
     FILE *f = fopen(flagp, "w"); CHECK(f != NULL); if(f) fclose(f);
     restart_and_resume(&c, 1);
     CHECK(e_cur[0] == 0 && access(flagp, F_OK) != 0 && count(d, "SELECT MUSIC_ID FROM MEMORY_PLAY;") == 0);
-    /* a song that is not in the queue: no resume (the stock "get list song idx fail") */
-    sql(d, "UPDATE MEMORY_PLAY SET MUSIC_ID=5, POSITION=1000;");   /* c.flac; the queue is album Bravo */
+    /* any library song resumes, on its own (there is no list after a restart) */
+    sql(d, "UPDATE MEMORY_PLAY SET MUSIC_ID=5, POSITION=1000;");   /* c.flac */
     restart_and_resume(&c, 1);
-    CHECK(e_cur[0] == 0 && access(flagp, F_OK) != 0);
+    CHECK(!strcmp(e_cur, "/s/c.flac") && e_ms == 1000);
+    unlink(flagp);
     sqlite3_close(d);
     pb_close();
     unlink(flagp);

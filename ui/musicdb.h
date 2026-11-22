@@ -105,7 +105,7 @@ int  mdb_subtrack_plan(const char *const *paths, int npaths, mdb_plan_t *plan); 
  * the LIST_SONG_0.ID it plays. The current song is found by the a2 pos_id (a LIST_SONG_0.ID). Every row carries
  * its 1-based position in LIST_SONG_0 ID order - what a type-0 jump takes, in shuffle too (device-verified). */
 typedef struct {
-    int  base_id;            /* LIST_SONG_0.ID */
+    int  base_id;            /* LIST_SONG_0.ID (the own player: its list position, OPL_LIST) */
     int  ord;                /* 1-based position in LIST_SONG_0 ID order (the type-0 jump index + 1); 0 in shuffle (mdb_queue_ord on tap) */
     int  dur_ms;
     char title[MDB_STR];     /* TITLE, else the file NAME */

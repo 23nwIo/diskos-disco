@@ -60,7 +60,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d12 | `0d12<len 4h><name len 4h><name><url>` | diskOS, own player only: the station for `0d11` 2, as `0d10`; no URL = none | radio.c (`radio_end_sync`, `rc_station_frame_tag`) | do (stored) |
 | 0d13 | `0d13<len 4h><ack 8h><party 0/1><SONG.ID 8h>...` | diskOS, own player only: the UI's Queue (at most 400 songs), kept in the player's RAM only: they play after the current song, before the list goes on (party 1: then the list ends, `0d11`). Natural ends wait in Repeat One and Single; Next starts the first at once, also on the station after the list. Each song that starts or can't be played leaves it and is told with `ad13`; ack = the last `ad13` number the UI has taken, so a list sent before the UI heard of a start doesn't bring that song back. An up-next song's track frame has `pos_id` 0 | queue.c (`ram_sync`: every change of the queue, party on/off, the player start) | do |
 | 0d14 | `0d14000C<line 4h>` | diskOS, own player only, in work mode 12: play the stream list the UI wrote to `/tmp/diskos-stream-list` (Bandcamp; `own_player.h` `OPL_BC_LIST`: one track per line, `<ms>\t<url>\t<title>\t<artist>\t<album>`) from that line. The tracks follow one another; Next, Previous (after 3 s: the same track from its start) and seek work; the track frame has `pos_id` = line + 1, `playing_num` `k/n` and the duration. A station (`0d10`), stop or leaving the mode ends the list. A track that stops within 5 s did not play: the player stops and sends `ad14` | bandcamp.c (`send_line`) | do (MPD) |
-| 0d15 | `0d150010<SONG.ID 8h>` | diskOS, own player only: play this one SONG row now, on its own: no list is built (LIST_SONG_0 is left as it is, nothing is written), Next/Prev have no list; it repeats in Repeat One and Repeat All, and when it ends the up-next songs (`0d13`) or the list end (`0d11`) follow. The track frame has `pos_id` 0 | main.c `ui_play_song_alone` (Hit&Guess) | do |
+| 0d15 | `0d150010<SONG.ID 8h>` | diskOS, own player only: play this one SONG row now, on its own: the list is let go (nothing is written), Next/Prev have no list; it repeats in Repeat One and Repeat All, and when it ends the up-next songs (`0d13`) or the list end (`0d11`) follow. The track frame has `pos_id` 0 | main.c `ui_play_song_alone` (Hit&Guess) | do |
 | 06c1 | `06c1000C0000` | Start the player's Bluetooth init | main.c | ack |
 | 0711 | `0711000C<v 4h>` | Maximum volume 0..120 | main.c | do |
 | 0713 | `0713000C<v 4h>` | Balance: 0 centre, `00NN` one side, `01NN` the other, N 1..10 | main.c `ui_set_balance` | do |
@@ -124,7 +124,8 @@ The UI decides "playing" from the `a1` position advancing (ui/playstate.c, 1.6 s
   fixed `ORDER BY` clauses, and in shuffle a permutation `LIST_SONG_3`; it copies `SONG.DURATION` into the rows. The
   UI reads these tables for Up Next and to land on the tapped song, and copies the exact orderings (ui/musicdb.c:
   `mdb_play_pos`, `MDB_FAV_ORDER`, the Up Next reader), so the own player must build them identically; `a2`
-  `pos_id` is the `LIST_SONG_0.ID` playing. The player also keeps `MY_LOVE` (favourites), `CUSTOM_PLAYLIST` /
+  `pos_id` is the `LIST_SONG_0.ID` playing. The own player writes none of these tables: its list is SONG.IDs in RAM,
+  published to `/tmp/diskos-list` (docs/MPD_CORE.md "Queue"), and its `pos_id` is the 1-based list position. The player also keeps `MY_LOVE` (favourites), `CUSTOM_PLAYLIST` /
   `PLAYLIST_INFO` and `MEMORY_PLAY` (resume) there. All keyed by file path.
 - Queue table schema (V2.57, `sqlite3 .schema` on a Disc, 2026-11-15): `LIST_SONG_0 (ID INTEGER PRIMARY KEY
   autoincrement, LIST_ID INT, POS_ID INT, PATH TEXT, NAME TEXT, TITLE TEXT, ALBUM TEXT, ARTIST TEXT, GENRE TEXT, DISC

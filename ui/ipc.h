@@ -15,7 +15,7 @@ typedef struct {
                        * playing); never test it for play-state. The main loop overwrites ITS LOCAL copy
                        * with the normalized 2=playing / 1=paused inference (and publishes g_playing). */
     int  have_track;
-    int  pos_id;      /* the current row of the player queue (LIST_SONG_0.ID, from a2 song.pos_id); 0 = unknown */
+    int  pos_id;      /* the current row of the player queue (LIST_SONG_0.ID, or the own player's list position; a2 song.pos_id); 0 = unknown */
     int  sample_rate; /* Hz, from song_sample_rate */
     int  is_dsd;      /* DSD stream */
     int  is_favorite; /* outer "love" flag */

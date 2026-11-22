@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* Playback: ties the queue (queue.c, the LIST_SONG tables via queuedb.c) to the audio engine (engine.c, MPD) and the
+/* Playback: ties the queue (queue.c, the list in RAM, read via queuedb.c) to the audio engine (engine.c, MPD) and the
  * DAC (dac.c), and tells the UI what plays (docs/PLAYER_PROTOCOL.md, "Measured on a live stream"):
  *   - 0100 builds the queue like the stock player and starts the song at the given position;
  *   - Next/Previous and the end of a song move through the queue by the play mode (0102);
- *   - every track start sends the full a2 frame (song JSON with pos_id = LIST_SONG_0.ID), play/pause the partial
+ *   - every track start sends the full a2 frame (song JSON with pos_id = the list position), play/pause the partial
  *     state frames, a1 the position once a second while playing (main.c).
  * MPD holds only the current song and the next one, so a big library queue never has to be copied into it. */
 #ifndef DISKOS_PLAYER_PLAYBACK_H
@@ -40,7 +40,7 @@ void pb_engine_event(void);
 /* Once per main loop turn: a1 while playing, and a track announcement whose stream format did not come in time. */
 void pb_tick(double now);
 /* Resume at start (the stock player's "memory play"): once the card has been mounted for a second and MPD is up,
- * play the song in MEMORY_PLAY from the queue in LIST_SONG_0 (and LIST_SONG_3 in shuffle) - at the remembered
+ * play the song in MEMORY_PLAY on its own (the list is RAM only) - at the remembered
  * position with resume mode 1 (0684), from its start with mode 2, not at all with 0. Given up after 30 s without a
  * card, or when something was played first. mounted() says whether the card is mounted (NULL: always).
  * flag_path: created while a resumed song has not played 10 s yet, removed then and by pb_shutdown; found at the

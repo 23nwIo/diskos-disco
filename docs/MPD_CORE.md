@@ -47,17 +47,21 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
 - **Engine** (`engine.c`): the player starts MPD as a child with a generated config (`/tmp/diskos-mpd`), owns the DAC
   (`dac.c`: start sequence with the stream's rate code, volume/balance/gain as attenuation bytes) and reads MPD's
   changes from a second connection that sits in `idle`.
-- **Queue** (`queue.c`, `queuedb.c`, `playback.c`, 2026-11-15): on `0100` the player rebuilds `LIST_SONG_0` in
-  song.db exactly like the stock player (DROP and CREATE with the stock schema, so the IDs start at 1;
-  `INSERT ... SELECT` from `SONG`, `MY_LOVE` or `CUSTOM_PLAYLIST` with the stock filter and `ORDER BY`), and in shuffle
-  writes `LIST_SONG_3` (one `POS_ID` per song, the tapped song first). The UI's Up Next and positions read these
-  tables, so they must stay identical (`ui/tests/playback_test.c` checks the orderings against ui/musicdb.c).
+- **Queue** (`queue.c`, `queuedb.c`, `playback.c`; RAM only since 2026-11-22): on `0100` the player reads the list's
+  SONG.IDs (`qd_list`: `SONG`, `MY_LOVE` or `CUSTOM_PLAYLIST` with the stock filter and `ORDER BY`; favourite and
+  playlist rows are matched to their library song by PATH, TRACK, IS_CUE, IS_ISO) into RAM. Nothing is written to
+  song.db: no `LIST_SONG_0`, no `LIST_SONG_3` (the stock player wrote the whole list, 5,000+ rows for All Songs, to the
+  internal flash at every list start). Positions are 1-based (the `a2` `pos_id`, the `0100` type 0 jump); in shuffle
+  the play order is a permutation of the positions, the tapped song first. The player publishes the list to
+  `/tmp/diskos-list` (own_player.h `OPL_LIST`, tmpfs) at every new list, shuffle change and its start; ui/musicdb.c
+  reads it for Up Next, the current song and jumps while it exists. The list is lost at a restart. The orderings must
+  stay identical to ui/musicdb.c's (`ui/tests/playback_test.c` checks them).
 - **MPD holds two songs only**: the current one and the one after it (for gapless). The queue itself stays the
   player's, so a library of tens of thousands of songs is never copied into MPD. When MPD moves on to the queued
   song, the player queues the next one by the play mode: in order (stop after the last), shuffle and repeat all (wrap
   around), repeat one (the same song again), single (stop after it). Next/Previous always move one song, wrapping.
 - **Frames**: every track start sends the stock sequence (`a102` mode on a play command or `{"state":1}` on a natural
-  change, `aa1c`, the full `a2` with the song JSON and `pos_id` = `LIST_SONG_0.ID`, `aa05`, `aa1c`, `{"state":0}`
+  change, `aa1c`, the full `a2` with the song JSON and `pos_id` = the list position, `aa05`, `aa1c`, `{"state":0}`
   twice); `0202` with a track loaded is answered with the full `a2`.
 - **Resume** (`MEMORY_PLAY`, mode `0684`): switched off for now (no flash writes, 2026-11-16); see
   docs/MQ_PLAYER_REPLACEMENT.md, "Resume (MEMORY_PLAY)".

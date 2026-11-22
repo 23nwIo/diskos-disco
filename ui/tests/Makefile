@@ -54,8 +54,8 @@ sqlite3_host.o: ../sqlite3.c
 	$(CC) -O1 -g -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c $< -o $@
 diskos-player-host: ../player/main.c ../player/hw.c ../player/hw.h $(PLAYER_SRCS) sqlite3_host.o ../player/queue.h ../player/queuedb.h ../player/playback.h ../player/core.h ../player/proto.h ../own_player.h ../watchdog/watchdog.c ../watchdog/watchdog.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. ../player/main.c ../player/hw.c $(PLAYER_SRCS) ../watchdog/watchdog.c sqlite3_host.o -lrt -lpthread -lm -o $@
-playback_test: playback_test.c ../player/core.c ../player/proto.c ../player/queue.c ../player/queuedb.c ../player/playback.c sqlite3_host.o ../player/queue.h ../player/queuedb.h ../player/playback.h ../player/engine.h ../player/core.h
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -DPB_RESUME=1 -I.. playback_test.c ../player/core.c ../player/proto.c ../player/queue.c ../player/queuedb.c ../player/playback.c sqlite3_host.o -lpthread -lm -o $@
+playback_test: playback_test.c ../player/core.c ../player/proto.c ../player/queue.c ../player/queuedb.c ../player/playback.c sqlite3_host.o ../player/queue.h ../player/queuedb.h ../player/playback.h ../player/engine.h ../player/core.h ../own_player.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DPB_RESUME=1 -DOPL_LIST='"/tmp/pbtest-list"' -I.. playback_test.c ../player/core.c ../player/proto.c ../player/queue.c ../player/queuedb.c ../player/playback.c sqlite3_host.o -lpthread -lm -o $@
 player_test: player_test.c $(PLAYER_SRCS) ../player/hw.c sqlite3_host.o ../player/queue.h ../player/queuedb.h ../player/playback.h ../player/core.h ../player/proto.h ../player/hw.h ../player/sdcard.h ../player/usbstorage.h ../player/dac.h ../player/mpdcli.h ../player/engine.h diskos-player-host
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. player_test.c $(PLAYER_SRCS) ../player/hw.c ../watchdog/watchdog.c sqlite3_host.o -lrt -lpthread -lm -o $@
 

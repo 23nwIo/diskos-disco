@@ -228,7 +228,7 @@ int eng_cmd(const char *c, char *out, unsigned cap){
 }
 
 /* MPD holds at most two songs: the current one and, so that it can play gaplessly, the one after it. The queue itself
- * is ours (queue.c, LIST_SONG_0/3 in song.db); g_cur/g_next are the MPD song ids of the two slots. A paused start
+ * is ours (queue.c, the list in RAM); g_cur/g_next are the MPD song ids of the two slots. A paused start
  * (resume) does not touch MPD at all until play is pressed ("armed"), so nothing is heard and the DAC stays idle. */
 
 /* Add a file, or the part of it from off_ms for len_ms (a CUE track; len_ms 0 = to the end) with MPD's rangeid. In a

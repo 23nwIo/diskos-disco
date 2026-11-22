@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 #include "playback.h"
+#include "../own_player.h"
 #include "btout.h"
 #include "dac.h"
 #include "mixer.h"
@@ -130,18 +131,47 @@ static void prepare(unsigned rate){
 }
 static unsigned rnd(unsigned k){ return k ? (unsigned)(random() % k) : 0; }
 
+/* The playing list, in RAM only (Jo, 2026-11-22): g_songs[k] is the SONG.ID at 1-based position k + 1. Q holds the
+ * positions (base[] = 1..n), so pos_id, the 0100 type 0 jump and the shuffle order all count positions. The UI reads
+ * the list from OPL_LIST (list_publish); song.db is not written. */
+static int *g_songs;
+static int g_nsongs;
+static void list_publish(void){
+    char tmp[sizeof OPL_LIST + 8]; snprintf(tmp, sizeof tmp, "%s.tmp", OPL_LIST);
+    FILE *f = fopen(tmp, "we");
+    if(!f){ L("list: write %s: %s", tmp, strerror(errno)); return; }
+    int n = Q.n > 0 ? g_nsongs : 0, ok = fprintf(f, "diskos-list 1 %d %d\n", n, n > 0 && Q.shuffled) > 0;
+    for(int i = 0; ok && i < n; i++) ok = fprintf(f, "%d\n", g_songs[i]) > 0;
+    for(int i = 0; ok && n > 0 && Q.shuffled && i < Q.n; i++) ok = fprintf(f, "%d\n", Q.order[i]) > 0;
+    if(fclose(f) != 0) ok = 0;
+    if(!ok || rename(tmp, OPL_LIST) != 0){ L("list: write %s: %s", OPL_LIST, strerror(errno)); unlink(tmp); }
+}
+/* the list is let go (a song on its own, a station): nothing of it follows */
+static void list_drop(void){
+    pq_free(&Q);
+    free(g_songs); g_songs = NULL; g_nsongs = 0;
+    list_publish();
+}
+/* the list's song at position pos (1-based) */
+static int list_row(sqlite3 *d, int pos, qd_row_t *r){
+    if(pos < 1 || pos > g_nsongs){ memset(r, 0, sizeof *r); return 0; }
+    int x = qd_song(d, g_songs[pos - 1], r);
+    if(x == 1) r->id = pos;
+    return x;
+}
+
 void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log_fn log){
     C = c; L = log;
     snprintf(g_song_db, sizeof g_song_db, "%s", song_db);
     snprintf(g_sys_db, sizeof g_sys_db, "%s", sysconfig_db);
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
     eng_set_prepare(prepare);
-    pq_free(&Q);
+    list_drop();
     g_bt = 0; g_aux = 1; g_bt_codec = -1; g_bt_mac[0] = 0; g_bt_rate = 0; g_bt_sel[0] = g_bt_avail[0] = 0; g_cs_pid = -1;
     g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
     g_upn = g_cur_up = g_next_up = g_pend_up = g_up_party = g_solo = g_next_rep = 0; g_up_seq = 0; g_up_ngone = 0;
 }
-void pb_close(void){ pq_free(&Q); g_next = g_pending = -1; }
+void pb_close(void){ pq_free(&Q); free(g_songs); g_songs = NULL; g_nsongs = 0; g_next = g_pending = -1; }
 
 static sqlite3 *db(void){
     sqlite3 *d = qd_open(g_song_db);
@@ -164,15 +194,15 @@ static int artist_class(void){
  * writes them; ui/scanner.c "CUE sheets"). SACD ISO tracks are not supported: MPD has no decoder for disc images. */
 static int playable(sqlite3 *d, int idx, qd_row_t *r){
     int id = pq_id(&Q, idx);
-    int x = qd_row(d, id, r);
-    if(x != 1){ L("queue: row %d: %s", id, x == 0 ? "gone" : sqlite3_errmsg(d)); return 0; }
+    int x = list_row(d, id, r);
+    if(x != 1){ L("queue: position %d: %s", id, x == 0 ? "song no longer in the library" : sqlite3_errmsg(d)); return 0; }
     if(r->is_iso){ L("queue: row %d is a SACD ISO track, not supported - skipped", id); return 0; }
     return 1;
 }
 #define PART(r) ((r)->is_cue ? (long)(r)->offset : 0L), ((r)->is_cue ? (long)(r)->duration_ms : 0L)
 
 /* The song playing now: the up-next song g_cur_up, else the list's row Q.cur. 1, 0 gone, -1 error. */
-static int cur_row(sqlite3 *d, qd_row_t *r){ return g_cur_up ? qd_song(d, g_cur_up, r) : qd_row(d, pq_id(&Q, Q.cur), r); }
+static int cur_row(sqlite3 *d, qd_row_t *r){ return g_cur_up ? qd_song(d, g_cur_up, r) : list_row(d, pq_id(&Q, Q.cur), r); }
 /* Up-next song id leaves g_up (it starts, or can't be played): the UI hears it (ad13 <number 8h><SONG.ID 8h>). */
 static void up_take(int id){
     for(int i = 0; i < g_upn; i++) if(g_up[i] == id){ memmove(&g_up[i], &g_up[i + 1], (size_t)(g_upn - i - 1) * sizeof *g_up); g_upn--; break; }
@@ -507,24 +537,6 @@ const eng_status_t *pb_status(double *when){
     return &g_es;
 }
 
-/* Load the queue the tables hold (after a restart of this player): LIST_SONG_0, and LIST_SONG_3 in shuffle. The current
- * song is base position pos, or the row with LIST_SONG_0.ID row when row > 0. */
-static int load_tables(sqlite3 *d, int pos, int row){
-    int *ids = NULL, n = qd_ids(d, &ids);
-    if(n <= 0){ free(ids); L("queue: no queue in %s", g_song_db); return -1; }
-    for(int i = 0; row > 0 && i < n; i++) if(ids[i] == row){ pos = i; break; }
-    if(pq_set(&Q, ids, n, pos) != 0) return -1;
-    if(C->play_mode == PQ_SHUFFLE){
-        int *o = NULL, m = qd_shuffle_read(d, &o);
-        if(m <= 0 || pq_adopt_order(&Q, o, m) != 0){
-            if(m > 0) L("queue: LIST_SONG_3 is not a permutation of LIST_SONG_0, shuffled again");
-            if(pq_shuffle(&Q, 1, rnd) == 0) qd_shuffle_write(d, Q.order, Q.n);
-        }
-    }
-    L("queue: %d songs from the tables%s", Q.n, Q.shuffled ? " (shuffled)" : "");
-    return 0;
-}
-
 int pb_play_list(int type, int pos, const char *name){
     if(!eng_ready()){ L("play list: no engine"); return -1; }
     if(g_stream){ L("play list: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; sl_clear(); }
@@ -533,7 +545,7 @@ int pb_play_list(int type, int pos, const char *name){
     if(!d) return -1;
     int rc = -1;
     if(type == QD_RESUME){
-        if(Q.n <= 0 && load_tables(d, pos, 0) != 0) goto out;
+        if(Q.n <= 0){ L("play list: no list in RAM (the player started again since), position %d not played", pos); goto out; }
         int idx = pq_from_base(&Q, pos);
         if(idx < 0){ L("play list: position %d outside the queue (%d songs)", pos, Q.n); goto out; }
         rc = start_at(d, idx, +1, 0, 0);
@@ -541,15 +553,20 @@ int pb_play_list(int type, int pos, const char *name){
     }
     char err[200];
     double t0 = now_s();
-    int n = qd_build(d, type, name, artist_class(), err, sizeof err);
+    int *songs = NULL, dropped = 0;
+    int n = qd_list(d, type, name, artist_class(), &songs, &dropped, err, sizeof err);
     if(n < 0){ L("play list: type %d \"%s\": %s", type, name, err); goto out; }
-    L("play list: type %d \"%s\": %d songs in %.0f ms", type, name, n, (now_s() - t0) * 1000.0);
-    int *ids = NULL, m = qd_ids(d, &ids);
-    if(m <= 0){ free(ids); pq_free(&Q); L("play list: the list is empty"); goto out; }
-    if(pq_set(&Q, ids, m, pos) != 0){ L("play list: out of memory"); goto out; }
-    if(C->play_mode == PQ_SHUFFLE){
-        if(pq_shuffle(&Q, 1, rnd) != 0 || qd_shuffle_write(d, Q.order, Q.n) != 0) L("play list: shuffle order not written");
-    }
+    L("play list: type %d \"%s\": %d songs in %.0f ms (RAM)%s", type, name, n, (now_s() - t0) * 1000.0,
+      dropped ? ", rows no longer in the library left out" : "");
+    if(dropped) L("play list: %d rows left out", dropped);
+    if(n == 0){ free(songs); list_drop(); L("play list: the list is empty"); goto out; }
+    int *base = malloc((size_t)n * sizeof *base);
+    if(!base){ free(songs); list_drop(); L("play list: out of memory"); goto out; }
+    for(int i = 0; i < n; i++) base[i] = i + 1;
+    free(g_songs); g_songs = songs; g_nsongs = n;
+    if(pq_set(&Q, base, n, pos) != 0){ list_drop(); L("play list: out of memory"); goto out; }
+    if(C->play_mode == PQ_SHUFFLE && pq_shuffle(&Q, 1, rnd) != 0) L("play list: out of memory for the shuffle order");
+    list_publish();
     rc = start_at(d, Q.cur, +1, 0, 0);
 out:
     sqlite3_close(d);
@@ -638,6 +655,7 @@ void pb_resume_begin(int (*mounted)(void), const char *flag_path){
     g_rs = 1; g_rs_until = now_s() + PB_RESUME_WAIT_S; g_rs_mounted = g_rs_check = 0;
 }
 
+static int pb_play_song_at(int song_id, long start_ms);
 static void resume_now(void){
     sqlite3 *d = db();
     if(!d) return;
@@ -654,17 +672,13 @@ static void resume_now(void){
         if(qd_memory_set(d, 0, 0, 0, 0, 0) != 0) L("resume: MEMORY_PLAY: %s", sqlite3_errmsg(d));
         goto out;
     }
-    int row = qd_list_row_of_song(d, music_id);
-    if(row <= 0){ L("resume: song %d is not in the queue (LIST_SONG_0)%s", music_id, row < 0 ? sqlite3_errmsg(d) : ""); goto out; }
-    if(load_tables(d, 0, row) != 0) goto out;
-    int idx = pq_find(&Q, row);
-    if(idx < 0){ L("resume: queue row %d not found", row); goto out; }
     if(g_rs_flag[0]){
         FILE *f = fopen(g_rs_flag, "w");
         if(!f) L("resume: create %s: %s", g_rs_flag, strerror(errno));
         else fclose(f);
     }
-    if(start_at(d, idx, +1, C->resume_mode == 1 ? pos : 0, 0) == 0) g_rs_flag_t = now_s();
+    /* the list is not kept over a restart (RAM only): the remembered song plays on its own */
+    if(pb_play_song_at(music_id, C->resume_mode == 1 ? pos : 0) == 0) g_rs_flag_t = now_s();
     else if(g_rs_flag[0]) unlink(g_rs_flag);
 out:
     sqlite3_close(d);
@@ -785,7 +799,8 @@ int pb_transport(int op, long arg){
     return -1;
 }
 
-int pb_play_song(int song_id){
+int pb_play_song(int song_id){ return pb_play_song_at(song_id, 0); }
+static int pb_play_song_at(int song_id, long start_ms){
     if(!eng_ready()){ L("play song: no engine"); return -1; }
     if(g_stream){ L("play song: ends the radio"); g_stream = g_st_loaded = 0; g_st_local = -1; sl_clear(); }
     if(g_tail){ L("play song: ends the station after the list"); tail_end(); }
@@ -793,8 +808,8 @@ int pb_play_song(int song_id){
     if(!d) return -1;
     qd_row_t *r = malloc(sizeof *r);
     int rc = -1;
-    if(r && playable_song(d, song_id, r) && eng_load(r->path, PART(r), 0, 0) == 0){
-        pq_free(&Q);                                   /* the list is let go: nothing of it follows this song */
+    if(r && playable_song(d, song_id, r) && eng_load(r->path, PART(r), start_ms, 0) == 0){
+        list_drop();                                   /* the list is let go: nothing of it follows this song */
         g_cur_up = song_id; g_solo = 1;
         L("play song: %d on its own (%s)", song_id, r->path);
         queue_next(d);
@@ -835,8 +850,8 @@ void pb_mode_changed(void){
     if(!d) return;
     if(Q.n > 0 && on != Q.shuffled){
         if(pq_shuffle(&Q, on, rnd) != 0) L("play mode: out of memory");
-        else if(on ? qd_shuffle_write(d, Q.order, Q.n) : qd_shuffle_drop(d)) L("play mode: LIST_SONG_3: %s", sqlite3_errmsg(d));
-    } else if(!on) qd_shuffle_drop(d);
+        else list_publish();
+    }
     if(g_cur_up || (Q.n > 0 && Q.cur >= 0)) queue_next(d);
     sqlite3_close(d);
 }

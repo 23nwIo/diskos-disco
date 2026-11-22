@@ -4,6 +4,10 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- diskOS player: the playing list lives in RAM only. Starting an album, a playlist or All Songs no longer writes the
+  whole list (5,000+ songs for All Songs) to the library database on the internal flash, and lists of any length work.
+  After a restart the list is gone; a resumed song plays on its own. Not yet tested on a Disc.
+
 - Hit&Guess (own player): each song plays on its own by its ID, so the player no longer copies the whole library (5,000+
   rows on the internal flash) for every song of a round. Not yet tested on a Disc.
 

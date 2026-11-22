@@ -3439,6 +3439,7 @@ static void player_launch_prepare(void){
         }
         int no = 0, r = opl_prepare(&op, &no);
         if(r == OPL_ON) g_own_player = 1;
+        else unlink(OPL_LIST);   /* the stock player: no own list (musicdb.c reads LIST_SONG_0 again) */
         if(r != OPL_OFF){
             char m[220];
             if(r == OPL_ON) snprintf(m, sizeof m, "launcher: own player on (start %d of at most %d this boot)", no, OPL_MAX_STARTS);

@@ -259,8 +259,8 @@ now neither writes `MEMORY_PLAY` nor resumes at start; the code stays (the host 
 - Keeps resume mode `0684` in SYSCONFIG `MEMORY_PLAY` (read at start, because the UI sends `0684` only a moment
   later).
 - At start: waits up to 30 s for a card mounted for at least 1 s, then plays the song like the stock player (mode 1 at
-  the position, mode 2 from the start) in the queue from `LIST_SONG_0` (and `LIST_SONG_3` in shuffle). No resume
-  when something was played first, or when the song is not in the queue.
+  the position, mode 2 from the start), on its own: the own player keeps no list over a restart (RAM only, no
+  `LIST_SONG_0`, 2026-11-22). No resume when something was played first.
 - Crash guard: its own flag `/usr/data/diskos-own/resume-pending`, so it never affects the stock player. The flag is
   created before the resumed song starts and removed once the song has played 10 s or at power off. When it is
   found at start, that resume is skipped and the bookmark cleared. Unlike the stock player, a plain reboot after a

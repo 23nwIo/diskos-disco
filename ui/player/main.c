@@ -21,7 +21,7 @@
  *     the DAC (dac.c: start sequence per stream rate, volume/balance/gain as attenuation bytes), turns 0201/0103 into
  *     MPD commands and reports a1 (position, once a second while playing) and the state frames;
  *   - registers with BlueZ as the headphones' player, so their buttons and absolute volume reach it (btavrcp.c);
- *   - builds the queue for 0100 from song.db like the stock player (LIST_SONG_0, LIST_SONG_3 in shuffle; queuedb.c),
+ *   - reads the list for 0100 from song.db like the stock player, but into RAM only (SONG.IDs; queuedb.c qd_list),
  *     moves through it by the play mode and announces every track start with the full a2 frame (playback.c).
  *
  *   diskos-player [-n] [-l <log>] [-q <prefix>]

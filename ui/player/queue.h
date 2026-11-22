@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* The play queue in memory: which LIST_SONG_0 rows play in which order, and which one is current. Pure logic (no
- * SQLite, no MPD), so ui/tests drive it on the host. The rows themselves stay in song.db (queuedb.c); this only holds
- * their IDs.
+/* The play queue in memory: which list positions play in which order, and which one is current. Pure logic (no
+ * SQLite, no MPD), so ui/tests drive it on the host. The songs are in playback.c (g_songs: position -> SONG.ID); this only holds
+ * the positions.
  *
- *   base[]  = LIST_SONG_0.ID in ID order (the list as built; a 0100 position counts in this order, also in shuffle)
- *   order[] = the play order: base[] in order, or the LIST_SONG_3 permutation in shuffle
+ *   base[]  = the positions 1..n (the list as built; a 0100 position counts in this order, also in shuffle)
+ *   order[] = the play order: base[] in order, or a permutation in shuffle
  *   cur     = index into order[], -1 none */
 #ifndef DISKOS_PLAYER_QUEUE_H
 #define DISKOS_PLAYER_QUEUE_H
@@ -29,11 +29,11 @@ void pq_free(pq_t *q);
  * Shuffle off: order[] = base[], cur stays on the same song. 0 or -1 (out of memory). */
 int pq_shuffle(pq_t *q, int on, unsigned (*rnd)(unsigned k));
 
-/* Take over a stored play order (LIST_SONG_3's POS_IDs, malloc'd; pq owns it): used only when it is an exact
+/* Take over a stored play order (positions, malloc'd; pq owns it): used only when it is an exact
  * permutation of base[] (as the UI's Up Next requires too). The current song stays current. 0, or -1 (rejected, q unchanged). */
 int pq_adopt_order(pq_t *q, int *order, int n);
 
-/* Index into order[] of LIST_SONG_0.ID id, -1 if not in the queue. */
+/* Index into order[] of position id, -1 if not in the queue. */
 int pq_find(const pq_t *q, int id);
 /* Index into order[] of base position pos (a 0100 type 0 jump), -1 if out of range. */
 int pq_from_base(const pq_t *q, int pos);

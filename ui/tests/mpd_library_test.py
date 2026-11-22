@@ -160,6 +160,17 @@ assert ok(r[27])['lines'] == ['OK']
 ack(r[28], 52); ok(r[29])
 ok(r[30]); ok(r[31]); assert kv(ok(r[32]), 'playlist')[-1] == 'Night drive'; ok(r[33])
 
+# ---- the own player: its list is in RAM (/tmp/diskos-list, own_player.h OPL_LIST), LIST_SONG_0 is not read. Here the
+# table holds another list (the stock player's, stale) and the own list is the Blue Album, playing position 2 (Dos)
+own = Path('/tmp/diskos-list')
+own.write_text('diskos-list 1 3 0\n1\n2\n3\n')
+r = run(['status', 'playlistinfo', 'currentsong'], track=f"{sd}/Music/Blue Album/02 Dos.flac\tDos\t2")
+st = ok(r[0])
+assert kv(st, 'songid') == ['2'] and kv(st, 'nextsongid') == ['3'] and kv(st, 'playlistlength') == ['2'], st
+assert kv(ok(r[1]), 'Title') == ['Dos', 'Tres'] and kv(r[1], 'Id') == ['2', '3'], r[1]
+assert kv(ok(r[2]), 'Title') == ['Dos'], r[2]
+own.unlink()
+
 # ---- web radio: the favourites are the stored playlist "Radio"
 (sd/'radio_favorites.txt').write_text('Jazz FM\thttps://jazz.example/live.mp3\tMP3\t128\tGermany\nTalk\thttp://talk.example/a.aac\tAAC\t64\t\n')
 r = run(['listplaylist Radio', 'listplaylistinfo Radio', 'playlistadd Radio http://new.example/s.ogg', 'listplaylist Radio',

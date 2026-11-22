@@ -59,6 +59,15 @@
  * writes the list again and sends 0d14 for that track. */
 #define OPL_BC_LIST "/tmp/diskos-stream-list"
 #define OPL_SLIST_MAX 500
+/* The own player's playing list (tmpfs, RAM only; player/playback.c list_publish, read by ui/musicdb.c). The player
+ * keeps the list as SONG.IDs in RAM and no longer writes LIST_SONG_0/LIST_SONG_3 to song.db (Jo, 2026-11-22). Text:
+ *   "diskos-list 1 <n> <shuffled 0/1>\n", then n lines SONG.ID in list order (position k = line k, the a2 pos_id),
+ *   then, when shuffled, n lines with the play order as 1-based positions.
+ * Written to OPL_LIST ".tmp" and renamed, so a reader sees a whole list. Written again at every new list, shuffle
+ * on/off and the player's start (empty: n 0); removed when the stock player runs. */
+#ifndef OPL_LIST                                  /* the tests put it elsewhere */
+#define OPL_LIST "/tmp/diskos-list"
+#endif
 
 enum { OPL_OFF = 0, OPL_ON, OPL_NO_BINARY, OPL_GAVE_UP };
 
