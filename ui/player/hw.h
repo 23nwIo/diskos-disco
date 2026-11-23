@@ -10,8 +10,8 @@ typedef void (*hw_log_fn)(const char *fmt, ...);
 /* The stock player's power off routine (menu power off / sleep timer). dry_run: only log each step. Does not return
  * unless dry_run is set or poweroff itself fails. wd_fd: the armed watchdog (or -1), stopped before the end. */
 void hw_power_off(int wd_fd, int dry_run, hw_log_fn log);
-/* Power key short press: the screen off or on, as the stock player does it (backlight, touch controller, panel). The
- * UI follows the backlight (ui/main.c, PW-10) and puts its own brightness back on. Returns 1 = now on, 0 = now off. */
+/* Power key short press: the screen locked or back on (ui/panel.c, the same lock the UI's idle timeout uses). The UI
+ * follows the backlight (ui/main.c, PW-10) and puts its own brightness back on. Returns 1 = now on, 0 = now off. */
 int hw_screen_toggle(int dry_run, hw_log_fn log);
 
 /* Headphone jack, as the stock player reads it (trace runs 1-3): /dev/gpio ioctl _IO('G',122) = 0x2000477a with a

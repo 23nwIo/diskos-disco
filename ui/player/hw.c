@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 #include "hw.h"
 #include "../watchdog/watchdog.h"
-#include "../panel_ioc.h"
+#include "../panel.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -17,7 +17,7 @@
 #define DAC_IOC_M48     0x20004d30UL      /* _IO('M',48): sent on A before the very first stream and at power off */
 #define RFKILL0         "/sys/class/rfkill/rfkill0/state"
 #define GPIO_IOC_LEVEL  0x2000477aUL      /* _IO('G',122): level of the pin named by the argument */
-#define BL_STOCK_LEVEL  "31"              /* what the stock player writes; the UI then sets its own level */
+#define BL_STOCK_LEVEL  31                /* what the stock player writes; the UI then sets its own level */
 
 static void run(const char *cmd, int dry, hw_log_fn log){
     log("power off: %s", cmd);
@@ -66,42 +66,15 @@ void hw_power_off(int wd_fd, int dry, hw_log_fn log){
     run("poweroff -f", dry, log);
 }
 
-static int read_int(const char *p){
-    char b[16] = {0}; int fd = open(p, O_RDONLY | O_CLOEXEC);
-    if(fd < 0) return -1;
-    ssize_t n = read(fd, b, sizeof b - 1); close(fd);
-    return n > 0 ? atoi(b) : -1;
-}
-static void write_str(const char *p, const char *v, hw_log_fn log){
-    int fd = open(p, O_WRONLY | O_CLOEXEC);
-    if(fd < 0 || write(fd, v, strlen(v)) != (ssize_t)strlen(v)) log("screen: write %s to %s: %s", v, p, strerror(errno));
-    if(fd >= 0) close(fd);
-}
-static void quiet_ioctl(const char *dev, unsigned long req, const char *what, hw_log_fn log){
-    int fd = open(dev, O_RDWR | O_CLOEXEC);
-    if(fd < 0){ log("screen: open %s: %s", dev, strerror(errno)); return; }
-    if(ioctl(fd, req, 0) < 0) log("screen: %s: %s", what, strerror(errno));
-    close(fd);
-}
-
 int hw_screen_toggle(int dry, hw_log_fn log){
-    /* "On" = what the user sees: brightness above 0 and the rail powered. The UI's own screen off (the idle timeout,
-     * the Sleep tile) is the same lock as ours: brightness 0, bl_power 4, panel and touch controller off
-     * (ui/settings.c ui_screen_lock), so a press always turns it back on and the UI follows (ui/main.c, PW-10). */
-    int br = read_int(BACKLIGHT), bp = read_int(BL_POWER);
-    int on = br > 0 && bp == 0;
-    log("power key: screen %s -> %s (brightness %d, bl_power %d)%s", on ? "on" : "off", on ? "off" : "on", br, bp,
-        dry ? " (dry run)" : "");
+    /* One lock for every screen off (ui/panel.c, shared with the UI's idle timeout and Sleep tile): a press always
+     * turns a locked screen on, whoever locked it, and the UI follows the brightness (ui/main.c, PW-10). */
+    int br = panel_brightness(log);
+    int on = panel_is_on(log) == 1;
+    log("power key: screen %s -> %s (brightness %d)%s", on ? "on" : "off", on ? "off" : "on", br, dry ? " (dry run)" : "");
     if(dry) return !on;
-    if(on){
-        write_str(BACKLIGHT, "0", log);
-        quiet_ioctl(TOUCH_DEV, TOUCH_IOC_OFF, "touch off", log);
-        quiet_ioctl(LCD_DEV, LCD_IOC_OFF, "display off", log);
-    } else {
-        quiet_ioctl(LCD_DEV, LCD_IOC_ON, "display on", log);
-        write_str(BACKLIGHT, BL_STOCK_LEVEL, log);
-        quiet_ioctl(TOUCH_DEV, TOUCH_IOC_ON, "touch on", log);
-    }
+    if(on) panel_lock(log);
+    else   panel_unlock(BL_STOCK_LEVEL, log);
     return !on;
 }
 

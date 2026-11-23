@@ -50,7 +50,7 @@ libdb_test: ../libdb_vfs.c libdb_test.c ../libdb.h ../libdb_migrate.c sqlite3_ho
 libdb_vfs_test: libdb_vfs_test.c ../libdb.h ../libdb_vfs.c sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. libdb_vfs_test.c ../libdb_vfs.c sqlite3_host.o -lpthread -lm -ldl -o $@
 
-PLAYER_SRCS := ../player/core.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c ../player/btout.c ../player/btavrcp.c ../dbusmini.c
+PLAYER_SRCS := ../panel.c ../player/core.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c ../player/btout.c ../player/btavrcp.c ../dbusmini.c
 # SQLite for the player, without sanitizers (instrumenting the amalgamation only slows the tests)
 sqlite3_host.o: ../sqlite3.c
 	$(CC) -O1 -g -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c $< -o $@

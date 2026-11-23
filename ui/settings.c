@@ -38,8 +38,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "command_spawn.h"
-#include "panel_ioc.h"
-#include <sys/ioctl.h>
+#include "panel.h"
+#include <stdarg.h>
 #include "own_player.h"     /* opl_running: About > Player; the Outputs page */
 #include "ipc.h"
 #include "radio.h"
@@ -916,49 +916,23 @@ void ui_backlight(int v){
 static void apply_brightness(int v){ if(v < 1) v = 1; ui_backlight(v); }
 
 /* The screen lock (Jo 2026-11-23): every way the screen goes fully off - the idle timeout, the Sleep tile and the power
- * key - leaves the same state, and only the power key brings it back. A touch in a pocket must not light it. The state
- * is what the player's power key leaves (ui/player/hw.c hw_screen_toggle): brightness 0, panel off, touch controller
- * off (so the panel sends no touch events at all), plus bl_power 4 because brightness 0 alone keeps the LED driver at
- * its minimum. The player decides on/off from brightness > 0 && bl_power == 0, so its next press after our lock turns
- * the screen on, and the UI follows the brightness it writes (ui/main.c, PW-10). */
-static void panel_ioctl(const char *dev, unsigned long req, const char *what){
-    int fd = open(dev, O_RDWR | O_CLOEXEC);
-    if(fd < 0){ fprintf(stderr, "screen lock: open %s: %s\n", dev, strerror(errno)); return; }
-    if(ioctl(fd, req, 0) < 0) fprintf(stderr, "screen lock: %s: %s\n", what, strerror(errno));
-    close(fd);
+ * key - leaves the same state, and only the power key brings it back; a touch in a pocket must not light it. The steps
+ * are ui/panel.c, the same code the player runs for the power key (ui/player/hw.c hw_screen_toggle). The player decides
+ * on/off from brightness > 0 && bl_power == 0, so its next press after our lock turns the screen on, and the UI follows
+ * the brightness it writes (ui/main.c, PW-10). */
+static void panel_log(const char *fmt, ...){
+    va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap); fputc('\n', stderr);
 }
-static void sysfs_write(const char *path, const char *v){
-    FILE *f = fopen(path, "w");
-    if(f){ fputs(v, f); if(fclose(f)) fprintf(stderr, "screen lock: write %s: %s\n", path, strerror(errno)); }
-    else  fprintf(stderr, "screen lock: open %s: %s\n", path, strerror(errno));
-}
-void ui_screen_lock(void){
-    sysfs_write(BACKLIGHT, "0");
-    sysfs_write(BL_POWER, "4");
-    panel_ioctl(TOUCH_DEV, TOUCH_IOC_OFF, "touch off");
-    panel_ioctl(LCD_DEV, LCD_IOC_OFF, "display off");
-    fprintf(stderr, "screen locked\n");
-}
-/* Light a locked screen from the UI's side (a pairing code, the shutdown screen, Remote Control): the player's power-on
- * order - panel, backlight, touch. Not needed after a power key press: the player has done the panel and touch. */
-void ui_screen_unlock(void){
-    panel_ioctl(LCD_DEV, LCD_IOC_ON, "display on");
-    ui_backlight(ui_effective_brightness());
-    panel_ioctl(TOUCH_DEV, TOUCH_IOC_ON, "touch on");
-    fprintf(stderr, "screen unlocked by the UI\n");
-}
+void ui_screen_lock(void){ panel_lock(panel_log); fprintf(stderr, "screen locked\n"); }
+/* Light a locked screen from the UI's side (a pairing code, the shutdown screen, Remote Control). Not needed after a
+ * power key press: the player has unlocked it already. */
+void ui_screen_unlock(void){ panel_unlock(ui_effective_brightness(), panel_log); fprintf(stderr, "screen unlocked by the UI\n"); }
 /* A theme re-launch while the screen is locked (Auto day/night switches at an idle boundary): stay locked instead of
  * lighting the screen in a pocket. Only a re-launch: at boot the brightness is whatever the boot left. */
 static int g_start_locked;
 int ui_screen_start_locked(void){ return g_start_locked; }
-static int read_backlight(void){
-    FILE *f = fopen(BACKLIGHT, "r"); int v = -1;
-    if(!f){ fprintf(stderr, "screen lock: open %s: %s\n", BACKLIGHT, strerror(errno)); return -1; }
-    if(fscanf(f, "%d", &v) != 1) v = -1;
-    fclose(f); return v;
-}
 void settings_apply_startup(void){
-    if(getenv("DISKOS_THEME_RELOAD") && read_backlight() == 0){ g_start_locked = 1; ui_screen_lock(); }
+    if(getenv("DISKOS_THEME_RELOAD") && panel_brightness(panel_log) == 0){ g_start_locked = 1; ui_screen_lock(); }
     else apply_brightness(ui_effective_brightness());
     { int at = mdb_sysconfig_auto_time();              /* mirror the player's switch (it owns the value) */
       if(at >= 0 && at != simple_cfg_get_int("auto_time", 1)) simple_cfg_set_int("auto_time", at); }
