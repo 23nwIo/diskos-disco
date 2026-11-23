@@ -212,7 +212,7 @@ static void bb_log(const char *fmt, ...){ va_list ap; va_start(ap, fmt); vfprint
 static void bt_headphone_battery(int bt_on){
     static char warned_mac[18]; static int warned;          /* the lowest level warned about: 0 none, 20, 10 */
     const char *mac = bt_on ? ui_route_mac() : "";
-    btbatt_poll(mac, bb_log);
+    btbatt_poll(cfg_get_int("bt_hfp", 1) ? mac : "", bb_log);   /* Headphone Battery off: no hands-free link asked for */
     int lv = mac[0] ? btbatt_level(mac) : -1;
     bt_battery_refresh();
     if(strcasecmp(warned_mac, mac)){ snprintf(warned_mac, sizeof warned_mac, "%s", mac); warned = 0; }

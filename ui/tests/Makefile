@@ -66,7 +66,7 @@ player_test: player_test.c $(PLAYER_SRCS) ../player/hw.c sqlite3_host.o ../playe
 
 # the D-Bus client and the headphones' buttons / absolute volume against a real dbus-daemon (skipped without one)
 btavrcp_test: btavrcp_test.c ../dbusmini.c ../dbusmini.h ../player/btavrcp.c ../player/btavrcp.h ../btbatt.c ../btbatt.h
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. btavrcp_test.c ../dbusmini.c ../player/btavrcp.c ../btbatt.c -o $@
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DBB_HFP_WAIT_MS=400 -DBB_HFP_RETRY_MS=500 -DBB_SOON_MS=200 -I.. btavrcp_test.c ../dbusmini.c ../player/btavrcp.c ../btbatt.c -o $@
 
 bandcamp_test: bandcamp_test.c ../bandcamp_core.c ../bandcamp_core.h ../jsmn.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. bandcamp_test.c ../bandcamp_core.c -o $@

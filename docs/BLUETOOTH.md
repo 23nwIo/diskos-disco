@@ -65,6 +65,10 @@ microphone) and shows the level in the device list ("Connected - SBC - 70%"), on
 report in 10 % steps. At boot the stock player starts BlueALSA itself, without that profile; Disco restarts it with
 the profile as soon as Bluetooth is up and no headphones are connected yet (also when headphones disconnect). If
 headphones were already connected by then, the battery shows after their next connection.
+Headphones that connect themselves sometimes open only the audio link (A2DP) and not the hands-free one, and the
+Disc's BlueZ 5.54 never adds it. When the level is still unknown 6 s after the headphones connected, Disco asks BlueZ
+for the hands-free link (`Device1.ConnectProfile`, at most twice per connection; logged as `bt battery:` in
+/tmp/diskos_boot.log).
 
 **Buttons** (own player only). Play/Pause, Next and Previous on the headphones control the Disc. Headphones that send
 "Play" for both play and pause (the Austrian Audio Hi-X25BT does) toggle. The stock player handles the buttons itself.

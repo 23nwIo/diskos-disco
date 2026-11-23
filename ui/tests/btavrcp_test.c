@@ -44,8 +44,18 @@ static char last_status[32], last_title[64];
 static uint32_t pending_call;                  /* our call to the player */
 static int call_replied;
 
+static int hfp_on, hfp_connects;                /* the second headphones (92:C8): their hands-free link */
+static char hfp_uuid[48], hfp_path[64];
 static void bluez_msg(void *ctx, const dm_msg *m){
     (void)ctx;
+    if(m->type == DM_CALL && m->member && !strcmp(m->member, "ConnectProfile")){
+        dm_rd b = m->body; dm_val u;
+        if(dm_r_expect(&b, 's', &u)) snprintf(hfp_uuid, sizeof hfp_uuid, "%s", u.s);
+        snprintf(hfp_path, sizeof hfp_path, "%s", m->path ? m->path : "");
+        hfp_connects++; hfp_on = 1;
+        dm_send(&fz, DM_RETURN, DM_NO_REPLY, m->sender, NULL, NULL, NULL, NULL, m->serial, NULL, NULL);
+        return;
+    }
     if(m->type == DM_CALL && m->member && !strcmp(m->member, "RegisterPlayer")){
         dm_rd b = m->body; dm_val p, props, v;
         CHECK(m->path && !strcmp(m->path, "/org/bluez/hci0"));
@@ -98,6 +108,17 @@ static void bluez_msg(void *ctx, const dm_msg *m){
 }
 static void bluealsa_msg(void *ctx, const dm_msg *m){
     (void)ctx;
+    if(m->type == DM_CALL && m->member && !strcmp(m->member, "Get") && m->path && strstr(m->path, "92_C8")){
+        if(!hfp_on){                                /* no hands-free link: no RFCOMM object */
+            dm_send(&fa, DM_ERROR, DM_NO_REPLY, m->sender, NULL, NULL, NULL, "org.freedesktop.DBus.Error.UnknownObject",
+                    m->serial, NULL, NULL);
+            return;
+        }
+        dm_buf r; dm_buf_init(&r); dm_w_sig(&r, "y"); dm_w_u8(&r, 80);
+        dm_send(&fa, DM_RETURN, DM_NO_REPLY, m->sender, NULL, NULL, NULL, NULL, m->serial, "v", &r);
+        dm_buf_free(&r);
+        return;
+    }
     if(m->type == DM_CALL && m->member && !strcmp(m->member, "Get")){   /* RFCOMM1.Battery of the Hi-X25BT: 90 */
         dm_rd b = m->body; dm_val i, p;
         CHECK(m->path && !strcmp(m->path, "/org/bluealsa/hci0/dev_70_DA_17_01_03_35/rfcomm"));
@@ -333,6 +354,22 @@ int main(void){
     }
     pump(0.1); btbatt_poll("70:DA:17:01:03:35", tlog);
     CHECK(btbatt_level("70:DA:17:01:03:35") == 70 && battery_gets == 1);
+    /* headphones with only A2DP (no RFCOMM object): after the wait the hands-free link is asked for, then the level */
+    for(int i = 0; i < 4; i++){ btbatt_poll("70:DA:17:01:92:C8", tlog); pump(0.05); }
+    CHECK(btbatt_level("70:DA:17:01:92:C8") == -1 && hfp_connects == 0);    /* not before BB_HFP_WAIT_MS */
+    for(int i = 0; i < 30 && btbatt_level("70:DA:17:01:92:C8") < 0; i++){ btbatt_poll("70:DA:17:01:92:C8", tlog); pump(0.05); }
+    CHECK(hfp_connects == 1 && !strcmp(hfp_uuid, "0000111e-0000-1000-8000-00805f9b34fb")
+          && !strcmp(hfp_path, "/org/bluez/hci0/dev_70_DA_17_01_92_C8"));
+    CHECK(btbatt_level("70:DA:17:01:92:C8") == 80);
+    for(int i = 0; i < 20; i++){ btbatt_poll("70:DA:17:01:92:C8", tlog); pump(0.05); }
+    CHECK(hfp_connects == 1);                       /* known: not asked again */
+    /* connected again: the old level is not shown; without the link, at most BB_HFP_TRIES requests */
+    hfp_on = 0; hfp_connects = 0;
+    btbatt_poll("", tlog); btbatt_poll("70:DA:17:01:92:C8", tlog);
+    CHECK(btbatt_level("70:DA:17:01:92:C8") == -1);
+    hfp_on = 0;
+    for(int i = 0; i < 60; i++){ btbatt_poll("70:DA:17:01:92:C8", tlog); pump(0.05); if(hfp_on && hfp_connects < 2) hfp_on = 0; }
+    CHECK(hfp_connects == 2);
 
     /* bluetoothd restarts: the player registers again; its links are forgotten */
     release_name(&fz, "org.bluez");

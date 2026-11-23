@@ -14,12 +14,30 @@
 #define BB_RETRY_MS  30000         /* bus connection retry */
 #define BB_ASK_MS    60000         /* ask again (a missed signal, a second pair of headphones) */
 #define BB_MAX       4
+/* The hands-free link (HFP), which carries the battery, may be missing: headphones that open only A2DP themselves keep it
+ * that way, and the Disc's bluetoothd (5.54, --plugin=a2dp,avrcp: no policy plugin, and 5.54's policy would not add HFP
+ * after A2DP either) never adds it. Device check 2026-11-23 (Jo, two Hi-X25BT): the sessions without battery had
+ * "Adding new Stream End-Point" and no RFCOMM thread in /tmp/bluealsa.log; those with battery opened HFP first. So when
+ * the level is not known BB_HFP_WAIT_MS after the headphones appeared, ask BlueZ for the hands-free link
+ * (Device1.ConnectProfile, the remote's Handsfree UUID), at most BB_HFP_TRIES times per connection, and ask for the
+ * level again BB_SOON_MS later. */
+#ifndef BB_HFP_WAIT_MS            /* the tests make these short */
+#define BB_HFP_WAIT_MS 6000
+#define BB_HFP_RETRY_MS 20000
+#define BB_SOON_MS     5000
+#endif
+#define BB_HFP_TRIES   2
+#define BB_HF_UUID     "0000111e-0000-1000-8000-00805f9b34fb"
 
 static dm_conn g_c = { .fd = -1 };
 static long g_next_conn, g_next_ask;
 static char g_asked_mac[18];
 static uint32_t g_ask_serial;
 static struct { char mac[18]; int level; } g_lv[BB_MAX];
+static char g_cur_mac[18];          /* the headphones of the last poll, and since when (for BB_HFP_WAIT_MS) */
+static long g_cur_since;
+static int g_hfp_tries;
+static uint32_t g_hfp_serial;
 static void (*g_log)(const char *fmt, ...);
 
 static long ms_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000L + t.tv_nsec / 1000000L; }
@@ -59,12 +77,18 @@ int btbatt_level(const char *mac){
 
 static void on_msg(void *ctx, const dm_msg *m){
     (void)ctx;
+    if((m->type == DM_RETURN || m->type == DM_ERROR) && m->reply_serial && m->reply_serial == g_hfp_serial){
+        g_hfp_serial = 0;
+        if(g_log) g_log("bt battery: hands-free link for %s: %s\n", g_cur_mac,
+                        m->type == DM_RETURN ? "connected" : m->errname ? m->errname : "error");
+        return;
+    }
     if((m->type == DM_RETURN || m->type == DM_ERROR) && m->reply_serial && m->reply_serial == g_ask_serial){
         g_ask_serial = 0;
         dm_rd b = m->body; dm_val v, x;
         if(m->type == DM_RETURN && dm_r_expect(&b, 'v', &v)){
             dm_rd vr = v.sub;
-            if(dm_r_expect(&vr, 'y', &x)) set_level(g_asked_mac, x.u <= 100 ? (int)x.u : -1);
+            if(dm_r_expect(&vr, 'y', &x)){ set_level(g_asked_mac, x.u <= 100 ? (int)x.u : -1); g_next_ask = ms_now() + BB_ASK_MS; }
         } else if(m->type == DM_ERROR) set_level(g_asked_mac, -1);   /* no RFCOMM (no hands-free link): not known */
         return;
     }
@@ -76,10 +100,20 @@ static void on_msg(void *ctx, const dm_msg *m){
         set_level(mac, v.u <= 100 ? (int)v.u : -1);
 }
 
-static void ask(const char *mac){
-    char path[96], d[18];
+static void mac_dev(const char *mac, char d[18]){
     for(int i = 0; i < 17; i++) d[i] = mac[i] == ':' ? '_' : (mac[i] >= 'a' && mac[i] <= 'f') ? (char)(mac[i] - 32) : mac[i];
     d[17] = 0;
+}
+static void connect_hfp(const char *mac){
+    char path[64], d[18]; mac_dev(mac, d);
+    snprintf(path, sizeof path, "/org/bluez/hci0/dev_%s", d);
+    dm_buf b; dm_buf_init(&b); dm_w_str(&b, BB_HF_UUID);
+    g_hfp_serial = dm_call(&g_c, "org.bluez", path, "org.bluez.Device1", "ConnectProfile", "s", &b);
+    dm_buf_free(&b);
+    if(g_log) g_log("bt battery: %s: no hands-free link, asking BlueZ for it (%d/%d)\n", mac, g_hfp_tries, BB_HFP_TRIES);
+}
+static void ask(const char *mac){
+    char path[96], d[18]; mac_dev(mac, d);
     snprintf(path, sizeof path, "/org/bluealsa/hci0/dev_%s/rfcomm", d);
     dm_buf b; dm_buf_init(&b);
     dm_w_str(&b, "org.bluealsa.RFCOMM1"); dm_w_str(&b, "Battery");
@@ -104,10 +138,23 @@ void btbatt_poll(const char *mac, void (*log)(const char *fmt, ...)){
         dm_close(&g_c); g_next_conn = now + BB_RETRY_MS; g_ask_serial = 0;
         return;
     }
-    if(!want) return;
+    if(!want){ g_cur_mac[0] = 0; return; }
+    if(strcasecmp(g_cur_mac, mac)){                          /* new headphones (or the same, connected again) */
+        snprintf(g_cur_mac, sizeof g_cur_mac, "%s", mac); g_cur_since = now; g_hfp_tries = 0; g_hfp_serial = 0;
+        for(int i = 0; i < BB_MAX; i++)                      /* a level from an earlier connection is stale */
+            if(g_lv[i].mac[0] && !strcasecmp(g_lv[i].mac, mac)) g_lv[i].level = -1;
+        g_asked_mac[0] = 0;                                  /* ask now */
+    }
+    if(btbatt_level(mac) < 0 && !g_ask_serial && !g_hfp_serial && g_hfp_tries < BB_HFP_TRIES
+       && !strcasecmp(g_asked_mac, mac) && now - g_cur_since >= BB_HFP_WAIT_MS + g_hfp_tries * (long)BB_HFP_RETRY_MS){
+        g_hfp_tries++;
+        connect_hfp(mac);
+        g_next_ask = now + BB_SOON_MS;
+        return;
+    }
     if(strcasecmp(g_asked_mac, mac) || now >= g_next_ask){   /* other headphones, or time to ask again */
         if(g_ask_serial && !strcasecmp(g_asked_mac, mac) && now < g_next_ask + 5000) return;   /* an answer is due */
         ask(mac);
-        g_next_ask = now + BB_ASK_MS;
+        g_next_ask = now + (btbatt_level(mac) < 0 && g_hfp_tries < BB_HFP_TRIES ? BB_SOON_MS : BB_ASK_MS);
     }
 }
