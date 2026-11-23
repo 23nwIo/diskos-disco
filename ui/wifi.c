@@ -25,6 +25,9 @@
 #include <errno.h>
 #include "wifi_reco.h"
 #include "wifi_override.h"
+#include "libdb.h"          /* libdb_player: which player the launcher started (the boot hold is for the stock one) */
+_Static_assert((int)WIFI_RECO_PL_PENDING == (int)LIBDB_PL_PENDING && (int)WIFI_RECO_PL_OWN == (int)LIBDB_PL_OWN
+               && (int)WIFI_RECO_PL_STOCK == (int)LIBDB_PL_STOCK, "wifi_reco.h player ids = libdb.h");
 
 /* Wi-Fi settings (SCR_WIFI) + a details screen (SCR_WIFI_INFO).
  * Radio on/off reuses the stock /usr/bin/wifi_up.sh / wifi_down.sh (rfkill +
@@ -297,7 +300,7 @@ void wifi_init_intent(void){
 static int      g_reco_hold = 0;           /* 1 = keepalive passive while this generation is being reconciled */
 static unsigned g_reco_gen  = 0xFFFFFFFFu; /* generation armed */
 static unsigned g_reco_rx0, g_reco_epoch0;
-static uint32_t g_reco_armed_at, g_reco_first_rx_at, g_reco_probe_at, g_reco_eval_at;
+static uint32_t g_reco_armed_at, g_reco_first_rx_at, g_reco_probe_at, g_reco_eval_at, g_reco_who_at;
 static int      g_reco_seen_rx;
 
 /* Saved radio state from stock SYSCONFIG: 1 and fills both on a clean "d|d" read, else 0. Bounded. */
@@ -343,9 +346,17 @@ static void wifi_reconcile_poll(void){
     if(gen != g_reco_gen){                          /* new player generation: arm */
         g_reco_gen = gen; g_reco_hold = 1; g_reco_rx0 = rx; g_reco_epoch0 = g_intent_epoch;
         g_reco_armed_at = now; g_reco_seen_rx = 0; g_reco_probe_at = now - 1000; g_reco_eval_at = now - RECO_PROBE_MS;
+        g_reco_who_at = now - 250;
     }
     if(!g_reco_hold) return;
     if(g_intent_epoch != g_reco_epoch0){ g_reco_hold = 0; return; }        /* the user chose: their choice wins */
+    if(now - g_reco_who_at >= 250){                 /* which player: a file read + readlink, 4x a second at most */
+        g_reco_who_at = now;
+        if(!wifi_reco_player_decides(libdb_player())){
+            fprintf(stderr, "radio reconcile (gen %u): the diskOS player makes no radio decision, Wi-Fi starts now\n", gen);
+            g_reco_hold = 0; return;
+        }
+    }
     if(cfg_get_int("wifi_on", 1) == 0){ g_reco_hold = 0; return; }         /* saved off: the keepalive keeps it off */
     if(!g_reco_seen_rx){
         if(rx == g_reco_rx0){
@@ -367,6 +378,12 @@ static void wifi_reconcile_poll(void){
         g_reco_hold = 0;
     }
 }
+
+/* 1 while a Wi-Fi start of ours (keepalive, switch or tile) may still be searching for and joining a network: Quiet
+ * Wi-Fi for Bluetooth must not pause that search (bt.c), or a boot where the headphones come back first left Wi-Fi
+ * paused ("disconnect") for as long as audio stayed on Bluetooth. */
+#define WIFI_JOIN_MS 60000
+int wifi_joining(void){ return g_wifi_last_start && lv_tick_elaps(g_wifi_last_start) < WIFI_JOIN_MS; }
 
 void wifi_supervise(void){
     wifi_reconcile_poll();

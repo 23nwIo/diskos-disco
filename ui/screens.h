@@ -204,6 +204,7 @@ void lastfm_create(lv_obj_t *parent);
 void wifi_apply_script_override(void);   /* bind /usr/data/wifi_up.sh over the stock script (no-op without it) */
 void wifi_init_intent(void);   /* seed wifi_on intent from stock WIFI_STATUS (first run only) */
 void wifi_supervise(void);     /* keepalive: (re)start supplicant if Wi-Fi should be on but isn't */
+int  wifi_joining(void);       /* 1 for a minute after a Wi-Fi start of ours: still searching/joining */
 void wifi_info_create(lv_obj_t *root);
 void wifi_info_open(void);
 /* bluetooth settings (bt.c) */

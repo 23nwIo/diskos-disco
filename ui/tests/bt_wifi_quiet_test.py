@@ -34,6 +34,7 @@ static int screen_current(void){ return scr; }
 static const char *ui_route_mac(void){ return route; }
 static uint32_t lv_tick_get(void){ return now; }
 static uint32_t lv_tick_elaps(uint32_t t){ return now - t; }
+static int joining; static int wifi_joining(void){ return joining; }
 static int cfg_get_int(const char *k, int d){ return !strcmp(k, "bt_wifi_quiet") ? quiet : d; }
 static int sys_(const char *c){ char x[800]; snprintf(x, sizeof x, "%%s", c); char *a = strrchr(x, '&'); if(a) *a = 0; return system(x); }
 #define system sys_
@@ -64,6 +65,10 @@ int main(void){
     clear(); bt_wifi_quiet_boot(); assert(logged("wl PM 0") && logged("reconnect"));   /* a restarted mq_ui undoes it */
     clear(); bt_wifi_quiet_boot(); assert(!logged("wl") && !logged("wpa_cli"));
     puts("PASS a leftover quiet Wi-Fi is undone at start-up");
+    clear(); joining = 1; now += 60000; bt_wifi_quiet_tick(0);                  /* Wi-Fi just started (boot): still joining */
+    assert(logged("wl PM 2") && !logged("disconnect") && access(BT_WQ_PAUSED, F_OK) != 0);
+    clear(); joining = 0; now += 60000; bt_wifi_quiet_tick(0); assert(logged("disconnect"));   /* a minute on: no network */
+    puts("PASS searching is not paused while a Wi-Fi start is still joining");
     return 0;
 }
 ''' % (st, log, log)

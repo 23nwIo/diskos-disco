@@ -4,6 +4,12 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Wi-Fi after a reboot (diskOS player): Wi-Fi starts about 2 seconds after the player instead of 10 to 30 seconds
+  later. diskOS waited for a Wi-Fi decision that only the stock player makes (V2.57 turns Wi-Fi off at boot when
+  Bluetooth is on too); the diskOS player never makes it, so the wait always ran out first. Also, Quiet Wi-Fi for
+  Bluetooth no longer pauses the network search in the first minute after Wi-Fi was turned on, so headphones that come
+  back before Wi-Fi has joined no longer leave Wi-Fi disconnected while you listen. Not yet tested on a Disc.
+
 - Screen lock: the screen turned off by the timeout (or the Sleep tile) is now locked exactly like after a press of the
   power button. A touch no longer wakes it (no more lit screen in a pocket); only the power button does. The panel and
   its touch controller are switched off in both cases. A dimmed screen (screensaver) still wakes on a touch. A pairing

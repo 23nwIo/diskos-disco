@@ -17,7 +17,10 @@ int main(void){
     EXPECT(wifi_reco_release(1, 0, 1)); EXPECT(wifi_reco_release(1, 0, 0)); EXPECT(wifi_reco_release(0, 0, -1));
     /* unread database: keep waiting (the caller's window ends it) */
     EXPECT(!wifi_reco_release(-1, -1, 0)); EXPECT(!wifi_reco_release(0, -1, 0)); EXPECT(!wifi_reco_release(-1, 1, 0));
+    /* only the stock player arbitrates the radios at boot; the diskOS player never does, so no hold for it */
+    EXPECT(!wifi_reco_player_decides(WIFI_RECO_PL_OWN));
+    EXPECT(wifi_reco_player_decides(WIFI_RECO_PL_STOCK)); EXPECT(wifi_reco_player_decides(WIFI_RECO_PL_PENDING));
     if(fails) return 1;
-    puts("PASS wifi boot hold releases only once the player can no longer switch Wi-Fi off");
+    puts("PASS wifi boot hold releases only once the player can no longer switch Wi-Fi off, and never holds for the diskOS player");
     return 0;
 }

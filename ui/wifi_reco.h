@@ -18,4 +18,13 @@ static inline int wifi_reco_release(int db_wifi, int db_bt, int eff_wifi){
     return 1;                                       /* only one radio saved on: the player has nothing to decide */
 }
 
+/* Which player runs this generation (the launcher's verdict, ui/libdb.h libdb_player): not known yet, the diskOS
+ * player, or the stock player. */
+enum { WIFI_RECO_PL_PENDING = 0, WIFI_RECO_PL_OWN = 1, WIFI_RECO_PL_STOCK = 2 };
+/* 1 = keep the boot hold. Only the stock V2.57 player switches Wi-Fi off at boot; the diskOS player never touches the
+ * radios or SYSCONFIG, so waiting for "its" decision only delayed Wi-Fi by 9..30 s after every reboot (the settle, then
+ * the window, because the stale WIFI_STATUS/BT_STATUS never change). Until the launcher has decided: keep holding (that
+ * takes ~2 s; the stock player may still come). */
+static inline int wifi_reco_player_decides(int player){ return player != WIFI_RECO_PL_OWN; }
+
 #endif

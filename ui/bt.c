@@ -1227,7 +1227,8 @@ static int bt_mac_valid(const char *mac){
  * routed to Bluetooth (Settings > Quiet Wi-Fi for Bluetooth, on by default):
  *  - Wi-Fi power-save on (wl PM 2, "fast": it wakes for its own traffic, so downloads still run at full speed);
  *  - not connected: wpa_supplicant's searching is paused (wpa_cli disconnect) - never while the Wi-Fi screen is open
- *    or a connection is under way.
+ *    or a connection is under way, and not in the first minute after Wi-Fi was started (wifi_joining: at boot the
+ *    headphones often come back before Wi-Fi has joined; pausing then left Wi-Fi off while audio stayed on Bluetooth).
  * Undone as soon as audio leaves Bluetooth, Bluetooth goes off or the setting is turned off. Each change leaves a
  * marker in /tmp, so a restarted mq_ui undoes a leftover one (bt_wifi_quiet_boot). Runs in the background. */
 #ifndef BT_WQ_DIR
@@ -1254,7 +1255,7 @@ static void bt_wifi_quiet_tick(int off){
     int want = !off && cfg_get_int("bt_wifi_quiet", 1) && ui_route_mac()[0];
     if(want){
         if(!g_wq_on || lv_tick_elaps(g_wq_at) >= BT_WQ_EVERY){
-            bt_wifi_quiet_apply(1, screen_current() != SCR_WIFI && screen_current() != SCR_WIFI_INFO);
+            bt_wifi_quiet_apply(1, screen_current() != SCR_WIFI && screen_current() != SCR_WIFI_INFO && !wifi_joining());
             if(!g_wq_on){ fprintf(stderr, "bt: Wi-Fi quiet while on Bluetooth (power-save on, no searching)\n"); fflush(stderr); }
             g_wq_on = 1; g_wq_at = lv_tick_get();
         }
