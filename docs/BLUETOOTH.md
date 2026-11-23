@@ -62,8 +62,9 @@ everything goes back to normal when audio leaves Bluetooth.
 Disco connects that profile too (**Settings › Connectivity › Headphone Battery**, on by default; no calls, no
 microphone) and shows the level in the device list ("Connected - SBC - 70%"), on the headphones' details screen
 (Settings › Connectivity › Bluetooth, tap the connected headphones) and in Remote Control's Bluetooth tab. At 20 % and at 10 % the Disc says so once. Headphones
-report in 10 % steps. With the own player it works from the next start; with the stock player only after Bluetooth
-is switched off and on once on the Disc (at boot the stock player starts Bluetooth itself, without that profile).
+report in 10 % steps. At boot the stock player starts BlueALSA itself, without that profile; Disco restarts it with
+the profile as soon as Bluetooth is up and no headphones are connected yet (also when headphones disconnect). If
+headphones were already connected by then, the battery shows after their next connection.
 
 **Buttons** (own player only). Play/Pause, Next and Previous on the headphones control the Disc. Headphones that send
 "Play" for both play and pause (the Austrian Audio Hi-X25BT does) toggle. The stock player handles the buttons itself.

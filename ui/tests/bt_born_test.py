@@ -162,6 +162,17 @@ int main(void){
     cfg_set_int("bt_aptx", 0); assert(bt_kind_for(ax) == 0 && !bt_alsa_aptx_bin());    /* switched off: FiiO's for everyone */
     bt_alsa_cmd(c, sizeof c, 4, 1); assert(!strncmp(c, "bluealsa -S", 11) && !has(c, "aptX"));
     puts("PASS the usual headphones' BlueALSA is restarted only with nothing connected; before connecting, the right one");
+    /* the stock player's BlueALSA (A2DP only) lacks the hands-free profile for the battery: restarted, nothing connected */
+    snprintf(last, sizeof last, "%s", hp); codec = 0;
+    { int want = bt_born_for(hp); bt_alsa_args(a, sizeof a, want); assert(has(a, " --profile=hfp-ag"));
+      char *pr = strstr(a, " --profile=hfp-ag"); memmove(pr, pr + 17, strlen(pr + 17) + 1);
+      daemon_(a); exe_("/usr/bin/bluealsa"); links(0); assert(bt_alsa_lacks_hfp() == 1);
+      bt_alsa_rearm_born(); assert(restarts == 1 && has(last_cmd, "--profile=hfp-ag"));
+      links(1); bt_alsa_rearm_born(); assert(restarts == 0);                 /* connected: left alone */
+      links(0); cfg_set_int("bt_hfp", 0); assert(bt_alsa_lacks_hfp() == 0); bt_alsa_rearm_born(); assert(restarts == 0);
+      cfg_set_int("bt_hfp", 1); bt_alsa_args(a, sizeof a, want); daemon_(a); assert(bt_alsa_lacks_hfp() == 0);
+      daemon_(NULL); assert(bt_alsa_lacks_hfp() == -1); }
+    puts("PASS a BlueALSA without the hands-free profile (headphone battery) is restarted only with nothing connected");
     return 0;
 }
 '''

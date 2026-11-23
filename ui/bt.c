@@ -584,6 +584,32 @@ static int bt_alsa_kind_running(void){
     closedir(d);
     return r;
 }
+/* Does the running BlueALSA lack the hands-free profile that Settings > Headphone Battery (bt_hfp, default on) asks
+ * for? 1 yes (it must be restarted for the battery), 0 no (it has it, or the setting is off), -1 none running.
+ * The stock mq_player starts its own BlueALSA at boot with A2DP only ("-p a2dp-source"), and bt_ensure_services used
+ * to leave a running one alone: then headphones never reported their battery until Bluetooth was switched off and on
+ * (Jo 2026-11-23, a friend's Disc). */
+static int bt_alsa_lacks_hfp(void){
+    DIR *d = opendir(BT_PROC_DIR); if(!d) return -1;
+    struct dirent *e; int r = -1;
+    while(r < 0 && (e = readdir(d))){
+        if(e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+        char p[320], comm[32] = ""; snprintf(p, sizeof p, BT_PROC_DIR "/%s/comm", e->d_name);
+        FILE *f = fopen(p, "r"); if(!f) continue;
+        if(!fgets(comm, sizeof comm, f)) comm[0] = 0;
+        fclose(f);
+        if(strncmp(comm, "bluealsa\n", 9) && strcmp(comm, "bluealsa")) continue;
+        snprintf(p, sizeof p, BT_PROC_DIR "/%s/cmdline", e->d_name);
+        char cl[1024]; size_t n = 0;
+        if((f = fopen(p, "r"))){ n = fread(cl, 1, sizeof cl - 1, f); fclose(f); }
+        if(!n) continue;                                   /* exiting, or unreadable: can't tell */
+        cl[n] = 0; for(size_t i = 0; i < n; i++) if(!cl[i]) cl[i] = ' ';
+        r = strstr(cl, "hfp-ag") == NULL;                  /* --profile=hfp-ag, -p hfp-ag */
+    }
+    closedir(d);
+    if(r == 1 && !cfg_get_int("bt_hfp", 1)) r = 0;
+    return r;
+}
 /* Is the running BlueALSA started the way `want` asks (incl. the LDAC quality)? A missing daemon counts as "no". */
 static int bt_alsa_is(int want){
     char q[24]; int born = bt_alsa_actual(q, sizeof q);
@@ -617,9 +643,10 @@ static void bt_ensure_services(void){
     const char *last = cfg_get_str("bt_last", "");
     int kind = bt_kind_for(last);
     if(bt_alsa_actual(NULL, 0) >= 0){                    /* running: leave it, its real arguments are read when needed */
-        int kr = bt_alsa_kind_running();
-        if(kr >= 0 && kr != kind && bt_acl_links() == 0)   /* ...unless it is the other binary and nothing is connected */
-            bt_alsa_restart_async(bt_born_for(last), kind, "the BlueALSA for the usual headphones");
+        int kr = bt_alsa_kind_running(), nohfp = bt_alsa_lacks_hfp() == 1;
+        if(((kr >= 0 && kr != kind) || nohfp) && bt_acl_links() == 0)   /* ...unless it is the other binary, or lacks */
+            bt_alsa_restart_async(bt_born_for(last), kind,               /* the battery's profile; nothing connected */
+                                  nohfp ? "the hands-free profile, for the headphones' battery" : "the BlueALSA for the usual headphones");
         return;
     }
     char a[768], cmd[900];
@@ -634,7 +661,7 @@ static void bt_alsa_rearm_born(void){
     if(bt_acl_links() != 0) return;
     const char *last = cfg_get_str("bt_last", "");
     int want = bt_born_for(last), kind = bt_kind_for(last), kr = bt_alsa_kind_running();
-    if(bt_alsa_actual(NULL, 0) < 0 || (bt_alsa_is(want) && (kr < 0 || kr == kind))) return;
+    if(bt_alsa_actual(NULL, 0) < 0 || (bt_alsa_is(want) && (kr < 0 || kr == kind) && bt_alsa_lacks_hfp() != 1)) return;
     bt_alsa_restart_async(want, kind, "ready for the usual headphones");
 }
 /* Before connecting to these headphones: if the running BlueALSA is the other binary, or restricted to a codec that
