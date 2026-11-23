@@ -103,7 +103,7 @@ static void setup_load(void){
 }
 static int setup_save(void){
     char text[PATH_MAX + 1024]; int o = 0;
-    o += snprintf(text + o, sizeof text - (size_t)o, "# diskOS Hit&Guess (Remote Control: the game page)\ndir=%s\npl=%ld\n", g_dir, g_pl);
+    o += snprintf(text + o, sizeof text - (size_t)o, "# diskOS Hit&Guess (Remote Control: System > Public)\ndir=%s\npl=%ld\n", g_dir, g_pl);
     for(int k = 0; k < HG_S_N && o < (int)sizeof text; k++) o += snprintf(text + o, sizeof text - (size_t)o, "%s=%d\n", HG_KEYS[k].key, G.set[k]);
     if(o >= (int)sizeof text) return -1;
     int r = -1;
@@ -403,7 +403,7 @@ static void screen_update(void){
     switch(G.phase){
     case HG_LOBBY:
         if(remote_guests_url(url, sizeof url)) snprintf(a, sizeof a, "Connect the Disc to Wi-Fi");
-        snprintf(b, sizeof b, "%d player%s - the host starts on the game page", players, players == 1 ? "" : "s"); big[0] = 0; break;
+        snprintf(b, sizeof b, "%d player%s - the host starts the game", players, players == 1 ? "" : "s"); big[0] = 0; break;
     case HG_PICK: snprintf(a, sizeof a, "%s chooses a song", G.cur >= 0 ? G.p[G.cur].name : ""); break;
     case HG_PLAY: {
         snprintf(a, sizeof a, "%s's song", G.p[G.cur].name);

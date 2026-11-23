@@ -34,7 +34,8 @@
 <script>
 @@COMMON@@
 /* inside the system page's Public tab (Jo, 2026-11-23): no own header, messages show on the system page */
-if(window.parent!==window){document.documentElement.classList.add('emb');try{if(parent.say)say=function(t,ok){parent.say(t,ok)}}catch(e){}}
+if(window.parent===window)location.replace('system#public');   /* no page of its own any more (Jo, 2026-11-23) */
+document.documentElement.classList.add('emb');try{if(parent.say)say=function(t,ok){parent.say(t,ok)}}catch(e){}
 /* the host's game page: the setup (api/game_admin) and the running game; players use the guests' link */
 var G=null,pls=0;
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}

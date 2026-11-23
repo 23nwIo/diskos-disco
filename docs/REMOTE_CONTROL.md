@@ -166,9 +166,9 @@ The host's own page has no limits and shows "by <name>" on guests' songs. Not ye
 
 ### Hit&Guess (music quiz)
 
-A public mode: set **Public mode** to **Hit&Guess: music quiz** and open the host page
-`http://<address>:8088/<link code>/hitguess`; the same page (setup, Start, players) also shows inside the Public tab
-while the mode is Hit&Guess. Players open the guests' link on their
+A public mode: set **Public mode** to **Hit&Guess: music quiz** and
+set it up and start it right there: while the mode is Hit&Guess the Public tab shows the game's setup, **Start** and
+the players (the tab loads `<link code>/hitguess` inside it; opened on its own, that address goes to the Public tab). Players open the guests' link on their
 phones and give a name. The host presses **Start**; players take turns in the order they joined.
 
 One turn: the player whose turn it is (A) chooses a song (or **Random**), it plays, everybody guesses artist, title and
