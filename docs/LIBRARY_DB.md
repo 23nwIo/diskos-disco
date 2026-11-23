@@ -17,16 +17,17 @@ fallback when the Disc boots to the stock player (Settings > Maintenance > Boot 
 `libdb_open_v2()`. That covers musicdb, the scanner, the own player (`player/queuedb.h`), Listening Stats, Album
 Roulette, SongSphere and Disc Shelf.
 
-- **The own player runs**, a card is mounted at `/tmp/sdcard`, and the card has `library.db`: the card DB is used.
-- **The launcher hasn't decided yet** and the own player is switched on (`/usr/data/diskos-own-player`): the card DB
-  too. mq_ui starts about 2 s before the launcher, and this way the boot never opens the flash DB for a library that
-  will come from the card. Until the card is mounted and SD access opens, every open of it fails, and the library
-  loads once when it can (`libdb_watch` in `ui/main.c`).
-- **The own player runs and no card is mounted yet**: the card DB as well. The card is mounted only after the launch
-  verdict, seconds after the player started; answering the flash DB in that gap loaded the flash library first, and
-  musicdb parks a replaced connection without closing it, so `song.db` stayed open in mq_ui (Jo's device test,
-  2026-11-23).
-- **In every other case** (stock player, or a mounted card not moved yet), the flash DB is used, the same as before.
+- **The own player runs, or the launcher hasn't decided yet and the own player is switched on**: always the card DB
+  (Jo, 2026-11-23). The flash DB lists the songs of whatever card the stock player scanned last, so it is never the
+  own player's library, not even for a moment. Before the card is mounted (only after the launch verdict, seconds
+  after the player started) every open fails and the library is empty until it loads (`libdb_watch` in
+  `ui/main.c`). A card without `library.db` keeps an empty library until the move has put one there; the flash DB
+  is only the move's source.
+- **The stock player**: the flash DB, the same as before.
+
+A scan is refused (`scanner_start` returns -2, "Move the library to the SD card first") while the card has no
+`library.db` and there is a flash library: it would create a library.db with only the songs, and the move would
+then refuse to overwrite it, leaving favourites and playlists behind.
 
 **Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`), migration device-verified by Jo. Build with
 `-DLIBDB_CARD_ENABLED=0` to keep the flash DB only.

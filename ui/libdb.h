@@ -65,21 +65,20 @@ static inline int libdb_player(void){
 static inline int libdb_own_player_runs(void){ return libdb_player() == LIBDB_PL_OWN; }
 
 /* The library DB in use now:
- *  - the own player runs and the mounted card has library.db: the card DB;
- *  - not decided yet and the own player is switched on, or the own player runs and no card is mounted (yet): the card
- *    DB too, so the boot never opens the flash DB for a library that will come from the card (the card is mounted
- *    only after the launch verdict, seconds after the player started). Until the card is mounted and SD access opens,
- *    every open of it fails (nothing there yet, or libdb_vfs refuses), and the library loads once (main.c
- *    libdb_watch); musicdb parks replaced connections without closing them, so a flash open here would stay open;
- *  - otherwise (stock player, or a mounted card not moved yet): the flash DB, as before. */
+ *  - the own player runs, or the launcher hasn't decided yet and the own player is switched on: the card DB, always
+ *    (Jo 2026-11-23). The flash DB lists the songs of whatever card the stock player scanned last, so it is never the
+ *    own player's library, not even for a moment: before the card is mounted (that happens only after the launch
+ *    verdict, seconds after the player started) every open of the card DB fails and the library is empty until it
+ *    loads (main.c libdb_watch); a card without library.db keeps an empty library until the move (libdb_ui.c) has
+ *    copied the flash DB there. The flash DB is only the move's source. musicdb parks replaced connections without
+ *    closing them, so a flash open here would also stay open;
+ *  - otherwise (the stock player): the flash DB, as before. */
 static inline const char *libdb_path(void){
 #if LIBDB_CARD_ENABLED
     int pl = libdb_player();
     if(pl == LIBDB_PL_PENDING && access(LIBDB_OWN_SWITCH, F_OK) == 0) return LIBDB_CARD;
     if(pl == LIBDB_PL_OWN){
-        struct stat c, p;
-        int mounted = stat(LIBDB_CARD_ROOT, &c) == 0 && stat("/tmp", &p) == 0 && c.st_dev != p.st_dev;
-        if(!mounted || access(LIBDB_CARD, R_OK) == 0) return LIBDB_CARD;   /* no card yet: wait for it, not the flash */
+        return LIBDB_CARD;       /* never the flash: its songs are another card's (Jo 2026-11-23) */
     }
 #endif
     return LIBDB_FLASH;

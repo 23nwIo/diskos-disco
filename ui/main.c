@@ -1251,7 +1251,9 @@ void ui_rescan_library(void){
     if(scanner_active()){ if(scanner_cancel()) ui_toast("Cancelling scan..."); return; }   /* refused once it is committing: completion reports */   /* the row reads "Stop" while a scan runs */
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback to scan"); return; }
     if(!sd_io_allowed()){ ui_toast("SD card is not ready"); return; }
-    if(scanner_start() != 0){ ui_toast("Couldn't start library scan"); return; }
+    int sr = scanner_start();
+    if(sr == -2){ ui_toast("Move the library to the SD card first (Settings > Maintenance)"); return; }
+    if(sr != 0){ ui_toast("Couldn't start library scan"); return; }
     if(th_zune()){ void zune_scan_show(void); zune_scan_show(); return; }
     ui_toast("Scanning library...");
 }
