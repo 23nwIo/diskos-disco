@@ -17,6 +17,7 @@
 #include "sdio.h"
 #include "artcache.h"      /* sd_write_begin / sd_write_end */
 #include "libdb.h"
+#include "own_player.h"      /* opl_running: which player runs, to explain a missing pid marker */
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -34,6 +35,12 @@ static _Atomic int g_result = -1;          /* worker: 0 ok, L1xx code; -1 still 
 static char g_err[160];
 static uint32_t g_next_look, g_done_at;
 static int g_power_told, g_rescan_checked;
+static int g_manual;                       /* started from Maintenance: a failure shows a dialog, not a toast */
+static void ok_noop(void){}
+static void report(const char *title, const char *why){
+    fprintf(stderr, "libdb: %s: %s\n", title, why); fflush(stderr);
+    fileops_confirm(title, why, "OK", ok_noop);
+}
 
 static void ov_close(void){ if(g_ov){ lv_obj_delete(g_ov); g_ov = NULL; } }
 static lv_obj_t *ov_label(lv_obj_t *p, const char *t, const lv_font_t *f, lv_color_t c, int y){
@@ -109,6 +116,49 @@ static void rescan_check(void){
     sd_io_end();
 }
 
+static int start(void){
+    atomic_store(&g_result, -1); g_err[0] = 0;
+    pthread_t th;
+    if(pthread_create(&th, NULL, worker, NULL) != 0){ g_state = LM_OFF; return -1; }
+    pthread_detach(th);
+    fprintf(stderr, "libdb: moving the library to the card%s\n", g_manual ? " (Maintenance)" : ""); fflush(stderr);
+    ov_show();
+    g_state = LM_RUNNING;
+    return 0;
+}
+
+/* Settings > System > Maintenance > Move Library to SD Card (Jo 2026-11-23): the same move, started by hand. Checks
+ * every condition in turn and shows the first that fails; an existing card library always stops it. */
+static void manual_go(void){
+    if(g_state == LM_RUNNING) return;
+    g_manual = 1;
+    if(start() != 0) report("Library not moved", "Couldn't start the worker thread");
+}
+void libdb_ui_manual(int v){
+    (void)v;
+    char why[200];
+    int pl = usage_plugged_in();
+    if(g_state == LM_RUNNING) snprintf(why, sizeof why, "The move is already running");
+    else if(g_state == LM_DONE) snprintf(why, sizeof why, "The library was moved - the Disc restarts");
+    else if(!LIBDB_CARD_ENABLED) snprintf(why, sizeof why, "This build keeps the library on the flash (LIBDB_CARD_ENABLED 0)");
+    else if(!libdb_own_player_runs())
+        snprintf(why, sizeof why, opl_running() ? "The own player runs, but its marker %s is missing or wrong"
+                                                : "Only the own player uses the card library (Boot to Stock Player off, restart)",
+                 LIBDB_OWN_PID);
+    else if(!ui_local_playback_allowed()) snprintf(why, sizeof why, "SD card not ready (no card, USB storage, or SD access held)");
+    else if(access(LIBDB_CARD, F_OK) == 0) snprintf(why, sizeof why, "The SD card already has a library: %s", LIBDB_CARD);
+    else if(access(LIBDB_FLASH, R_OK) != 0) snprintf(why, sizeof why, "No library on the internal flash: %s", LIBDB_FLASH);
+    else if(scanner_active()) snprintf(why, sizeof why, "A library scan is running - let it finish first");
+    else if(pl != 1) snprintf(why, sizeof why, pl == 0 ? "Connect external power first" : "Can't tell whether external power is connected");
+    else if(ui_is_playing()) snprintf(why, sizeof why, "Stop playback first");
+    else {
+        fileops_confirm("Move library to SD card?", "Copies the library to the card, then restarts. Keep the power connected.",
+                        "Move", manual_go);
+        return;
+    }
+    report("Library not moved", why);
+}
+
 /* UI thread, every 500 ms (main.c scanner_poll). */
 void libdb_ui_tick(void){
 #if !LIBDB_CARD_ENABLED
@@ -126,13 +176,7 @@ void libdb_ui_tick(void){
             return;
         }
         if(ui_is_playing()) return;                       /* when playback stops */
-        atomic_store(&g_result, -1); g_err[0] = 0;
-        pthread_t th;
-        if(pthread_create(&th, NULL, worker, NULL) != 0){ g_state = LM_OFF; return; }
-        pthread_detach(th);
-        fprintf(stderr, "libdb: moving the library to the card\n"); fflush(stderr);
-        ov_show();
-        g_state = LM_RUNNING;
+        start();
         return;
     case LM_RUNNING: {
         int rc = atomic_load(&g_result);
@@ -144,8 +188,9 @@ void libdb_ui_tick(void){
             g_state = LM_DONE; g_done_at = now;
         } else {
             fprintf(stderr, "libdb: moving the library failed: %s\n", g_err); fflush(stderr);
-            char b[200]; snprintf(b, sizeof b, "Library not moved (%.4s) - next start tries again", g_err);
-            ui_toast(b);
+            if(g_manual) report("Library not moved", g_err);   /* the first error, with its L1xx code */
+            else { char b[200]; snprintf(b, sizeof b, "Library not moved (%.4s) - next start tries again", g_err); ui_toast(b); }
+            g_manual = 0;
             g_state = LM_FAILED;
         }
         return; }

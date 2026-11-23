@@ -577,6 +577,7 @@ static void apply_rescan(int v){ (void)v;
     fileops_confirm("Rescan library?", "Looks for new and changed music", "Rescan", rescan_go);
 }
 static void do_shutdown(void){ ui_power_off(); }
+void libdb_ui_manual(int v);   /* libdb_ui.c: Maintenance > Move Library to SD Card */
 static void apply_shutdown(int v){ (void)v;
     fileops_confirm("Shut down player?", "Switches the player off", "Shut down", do_shutdown);
 }
@@ -1317,6 +1318,8 @@ static const setting_t TABLE[] = {
       "Restart the device. Boots your default UI; hold Vol-Up for the other one.", NULL },
     { "Maintenance",   "Format SD Card", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, system_format_sd_open, 0,
       "Erase the SD card: FAT32 for other players and computers, or ext4 for diskOS only. The player restarts after.", NULL },
+    { "Maintenance",   "Move Library to SD Card", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, libdb_ui_manual, 0,
+      "Own player: copy the library to the card (.diskos/state/library.db), then restart. Needs external power.", NULL },
     { "Maintenance",   "Reset diskOS Settings", ST_ACTION, NULL, 0,0,0, NULL,0, "Reset", system_reset_open, 0,
       "Reset UI appearance/behaviour. Keep music, Wi-Fi, Bluetooth, Last.fm, EQ and audio settings.", NULL },
     { "Maintenance",   "Debug Mode",  ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_debug_mode, 0,
