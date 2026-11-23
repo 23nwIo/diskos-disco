@@ -1291,8 +1291,9 @@ static void libdb_watch(void){
     int first = last_ok < 0;
     snprintf(last, sizeof last, "%s", p); last_gen = g; last_ok = ok;
     if(!ok) return;                                      /* held: nothing to read yet */
-    /* boot: library.c loaded it already, unless the card library was not open yet then */
-    if(first && !(card && (mdb_song_count() <= 0 || mdb_load_failed()))) return;
+    /* boot: library.c loaded it already - unless that was another file (the UI starts before the own player says it
+     * runs, so the first load can come from the flash DB) or the card library was not open yet then */
+    if(first && !strcmp(mdb_loaded_path(), p) && !(card && (mdb_song_count() <= 0 || mdb_load_failed()))) return;
     fprintf(stderr, "libdb: library now %s, reloading\n", p); fflush(stderr);
     mdb_load();
     library_ensure_capacity();

@@ -47,6 +47,7 @@ typedef struct {
 /* Load the whole library once (one sqlite3 call). Safe to call repeatedly;
  * reloads. Returns song count. */
 int mdb_load(void);
+const char *mdb_loaded_path(void);   /* the library file the last mdb_load read ("" before the first) */
 int mdb_load_failed(void);   /* 1 if the last mdb_load hit a DB error (BUSY/IOERR/OOM), not just empty */
 
 int               mdb_song_count(void);

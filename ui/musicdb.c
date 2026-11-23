@@ -376,8 +376,11 @@ static int playlist_has_m3u_cols(sqlite3 *d){ return table_has_col(d, "CUSTOM_PL
     "CASE WHEN (IS_CUE=1 OR IS_ISO=1) THEN TRACK END,ID"
 #define MDB_GROUP_CODE_EXPR "CASE WHEN NULLIF(ALBUM_ARTIST,'') IS NOT NULL AND ALBUM_ARTIST_CODE IS NOT NULL THEN ALBUM_ARTIST_CODE ELSE ARTIST_CODE END"
 
+static char g_loaded_path[512];   /* the library file the last mdb_load read (ui/libdb.h: flash or card) */
+const char *mdb_loaded_path(void){ return g_loaded_path; }
 int mdb_load(void){
     g_n = 0; g_load_err = 0;
+    snprintf(g_loaded_path, sizeof g_loaded_path, "%s", DB_PATH);
     groups_free();                 /* library reloaded -> drop cached Artists/Albums/Genres */
     if(!db()){g_load_err=1;return 0;}
     sqlite3 *d = db_read(); if(!d){ g_load_err = 1; return 0; }
