@@ -9,7 +9,8 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   The DHCP hostname is in `/usr/data/diskos-hostname` (one line: letters, digits, `-`); without it a Disc is called
   `Disc-` plus the last four digits of its Wi-Fi MAC address, so two Discs never share a name. A hostname set in an
   earlier `/usr/data/wifi_up.sh` is taken over once, and that file is renamed to `wifi_up.sh.old`. A script of your own:
-  create `/usr/data/diskos-wifi-custom`, then `/usr/data/wifi_up.sh` is used as before. Not yet tested on a Disc.
+  create `/usr/data/diskos-wifi-custom`, then `/usr/data/wifi_up.sh` is used as before. See [docs/WIFI.md](docs/WIFI.md).
+  Not yet tested on a Disc.
 
 - Wi-Fi after a reboot (diskOS player): Wi-Fi starts about 2 seconds after the player instead of 10 to 30 seconds
   later. diskOS waited for a Wi-Fi decision that only the stock player makes (V2.57 turns Wi-Fi off at boot when

@@ -11,6 +11,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [Immersive](IMMERSIVE_CONTROLS.md), [Disc Shelf](DISC_SHELF_INSTALL.md), [privacy](PRIVACY.md).
 - [Bluetooth audio, codecs and aptX](BLUETOOTH.md) (experimental).
 - [Remote Control over Wi-Fi](REMOTE_CONTROL.md) (not yet device-tested).
+- [Wi-Fi start and DHCP hostname](WIFI.md) (advanced, shell only; not yet device-tested).
 - [MPD Server for mpc / ncmpcpp](MPD.md) (not yet device-tested).
 - [USB drive: import and export music](USB_SYNC.md) (not yet device-tested).
 - [What diskOS keeps where: SD card, RAM, internal flash](SD_STATE.md) (not yet device-tested).
