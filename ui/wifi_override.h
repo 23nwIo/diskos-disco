@@ -14,6 +14,8 @@
  * owner, empty, oversized or not a "#!" script is ignored and the stock script stays in use,
  * because a broken bind would leave Wi-Fi unable to start. Idempotent: mq_ui respawns, and a
  * target that already is the override (same device and inode) is left as it is.
+ * Since 2026-11-23 only used when /usr/data/diskos-wifi-custom exists; otherwise diskOS binds its own script
+ * (wifi_script.h) and takes the hostname over from this copy once.
  * Header-only so ui/tests/wifi_override_test.c can check it on the host. */
 #include <stdio.h>
 #include <string.h>

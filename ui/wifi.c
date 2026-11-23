@@ -25,13 +25,15 @@
 #include <errno.h>
 #include "wifi_reco.h"
 #include "wifi_override.h"
+#include "wifi_script.h"     /* diskOS's own wifi_up.sh + the DHCP hostname */
+#include "wd_override.h"     /* wdo_apply: write, self-test and bind an embedded file over a stock one */
 #include "libdb.h"          /* libdb_player: which player the launcher started (the boot hold is for the stock one) */
 _Static_assert((int)WIFI_RECO_PL_PENDING == (int)LIBDB_PL_PENDING && (int)WIFI_RECO_PL_OWN == (int)LIBDB_PL_OWN
                && (int)WIFI_RECO_PL_STOCK == (int)LIBDB_PL_STOCK, "wifi_reco.h player ids = libdb.h");
 
 /* Wi-Fi settings (SCR_WIFI) + a details screen (SCR_WIFI_INFO).
- * Radio on/off reuses the stock /usr/bin/wifi_up.sh / wifi_down.sh (rfkill +
- * wpa_supplicant + udhcpc).  Scan/connect drive the running supplicant via
+ * Radio on/off runs /usr/bin/wifi_up.sh (diskOS's own script bound over the stock one, wifi_script.h) /
+ * the stock wifi_down.sh (rfkill + wpa_supplicant + udhcpc).  Scan/connect drive the running supplicant via
  * `wpa_cli -i wlan0`.  Connecting writes the network in and `save_config`s it
  * to /usr/data/wpa_supplicant.conf (update_config=1), so it persists.
  * Round-screen-aware: the top corners stay clear (only back chevron + centred
@@ -256,11 +258,52 @@ static int wifi_sanitize_savenets(void){
     return 1;
 }
 
-/* /usr/data/wifi_up.sh, if present and sane, replaces the read-only stock script (wifi_override.h).
- * Run once at start, before the keepalive or the stock player can launch wifi_up.sh. */
+/* The DHCP hostname for this Disc (wifi_script.h), put where the script and the connect path read it. Before every
+ * Wi-Fi start: wlan0 (and with it the MAC for the default name) may not be there yet at mq_ui's start. */
+static char g_hostname[WSC_NAME_MAX + 1] = "Disc";
+static void wifi_hostname_refresh(void){
+    char n[WSC_NAME_MAX + 1], cur[WSC_NAME_MAX + 2];
+    wsc_resolve(WSC_NAME_FILE, WSC_MAC_FILE, n, sizeof n);
+    snprintf(g_hostname, sizeof g_hostname, "%s", n);
+    if(wsc_read(WSC_NAME_TMP, cur, sizeof cur) && !strcmp(cur, n)) return;
+    FILE *f = fopen(WSC_NAME_TMP ".new", "w");
+    if(!f || fputs(n, f) < 0 || fclose(f) != 0 || rename(WSC_NAME_TMP ".new", WSC_NAME_TMP) != 0)
+        fprintf(stderr, "wifi: could not write %s: %s\n", WSC_NAME_TMP, strerror(errno));
+}
+static void wifi_start(void){
+    wifi_hostname_refresh();
+    system("/usr/bin/wifi_up.sh >/dev/null 2>&1 &");
+}
+
+/* Once: the hostname from the user's copy of the stock script (used since 7f0adba) becomes the name file, and the
+ * copy is set aside, so the embedded script takes over. */
+static void wifi_script_migrate(void){
+    if(access(WSC_USER, F_OK) != 0) return;
+    char text[8192], name[WSC_NAME_MAX + 1];
+    if(access(WSC_NAME_FILE, F_OK) != 0 && wsc_read(WSC_USER, text, sizeof text) && wsc_name_from_script(text, name, sizeof name)){
+        FILE *f = fopen(WSC_NAME_FILE ".new", "w");
+        if(f && fprintf(f, "%s\n", name) > 0 && fclose(f) == 0 && rename(WSC_NAME_FILE ".new", WSC_NAME_FILE) == 0)
+            fprintf(stderr, "wifi: hostname \"%s\" taken over from %s into %s\n", name, WSC_USER, WSC_NAME_FILE);
+        else { fprintf(stderr, "wifi: could not write %s: %s\n", WSC_NAME_FILE, strerror(errno)); return; }   /* keep the copy */
+    }
+    if(rename(WSC_USER, WSC_USER_OLD) == 0) fprintf(stderr, "wifi: %s moved to %s (diskOS's own script is used)\n", WSC_USER, WSC_USER_OLD);
+    else fprintf(stderr, "wifi: could not move %s: %s\n", WSC_USER, strerror(errno));
+}
+
+/* Run once at start, before the keepalive or the stock player can launch wifi_up.sh: diskOS's own script over the
+ * stock one (wifi_script.h), or with /usr/data/diskos-wifi-custom the user's /usr/data/wifi_up.sh (wifi_override.h).
+ * Any failure leaves the stock script in use (the log line says why). */
 void wifi_apply_script_override(void){
-    int r = wov_apply(WOV_SRC, WOV_DST);
-    if(r != WOV_NONE) fprintf(stderr, "wifi: %s override: %s\n", WOV_SRC, wov_reason(r));
+    if(access(WSC_CUSTOM, F_OK) == 0){
+        int r = wov_apply(WOV_SRC, WOV_DST);
+        fprintf(stderr, "wifi: %s exists, user script %s: %s\n", WSC_CUSTOM, WOV_SRC, wov_reason(r));
+    } else {
+        wifi_script_migrate();
+        int r = wdo_apply((const unsigned char *)WSC_SCRIPT, sizeof WSC_SCRIPT - 1, WSC_SRC, WSC_DST, NULL);
+        fprintf(stderr, "wifi: diskOS script %s over %s: %s\n", WSC_SRC, WSC_DST, wdo_reason(r));
+    }
+    wifi_hostname_refresh();
+    fprintf(stderr, "wifi: DHCP hostname %s\n", g_hostname);
 }
 
 /* Seed diskOS's own Wi-Fi on/off intent from stock SYSCONFIG.WIFI_STATUS the FIRST time
@@ -404,7 +447,7 @@ void wifi_supervise(void){
         if(!g_wifi_last_start || lv_tick_elaps(g_wifi_last_start) > 30000){  /* 30s backoff */
             g_wifi_last_start = lv_tick_get();
             g_sanitize_pending = 1;         /* sanitize once this new instance is up */
-            system("/usr/bin/wifi_up.sh >/dev/null 2>&1 &");
+            wifi_start();
         }
     } else if(up && !want){                 /* should be off but a late wifi_up won -> enforce off */
         system("/usr/bin/wifi_down.sh >/dev/null 2>&1");
@@ -706,7 +749,10 @@ static void wifi_connect(const char *ssid, const char *key){
     if(why){ ui_toast(why); return; }
     if(g_conn_timer){ lv_timer_del(g_conn_timer); g_conn_timer = NULL; }
     if(system(WCLI "save_config >/dev/null 2>&1")) fprintf(stderr, "wifi connect: save_config failed\n");   /* non-fatal: connection still works unsaved */
-    system("/sbin/udhcpc -i wlan0 -n -q >/dev/null 2>&1 &");   /* backgrounded; outcome via conn_poll_cb */
+    {   /* backgrounded; outcome via conn_poll_cb. The same hostname as the Wi-Fi start (shell-safe: wsc_name_clean) */
+        char c[160]; snprintf(c, sizeof c, "/sbin/udhcpc -i wlan0 -n -q -x hostname:%s >/dev/null 2>&1 &", g_hostname);
+        system(c);
+    }
     /* don't claim success yet - poll for the real outcome (assoc + DHCP). */
     snprintf(g_conn_ssid, sizeof g_conn_ssid, "%s", ssid);
     g_conn_id = id;
@@ -1104,7 +1150,7 @@ static void sw_cb(lv_event_t *e){
     g_intent_epoch++;                            /* an explicit choice: ends any radio reconciliation hold */
     if(on){
         cfg_set_int("wifi_on", 1);               /* persist intent -> keepalive keeps it up */
-        system("/usr/bin/wifi_up.sh >/dev/null 2>&1 &");
+        wifi_start();
         g_wifi_last_start = lv_tick_get();       /* let the keepalive back off (no duplicate launch) */
         g_sanitize_pending = 1;                  /* sanitize this instance once it's up */
         list_msg("Please wait..."); hdr_set(WS_TURNING, "Turning on...", "", 0);
@@ -1129,7 +1175,7 @@ int wifi_toggle(void){
     g_live_cached = -1;                      /* the tile reads the radio afresh after a flip */
     cfg_set_int("wifi_on", on);
     if(on){
-        system("/usr/bin/wifi_up.sh >/dev/null 2>&1 &");
+        wifi_start();
         g_wifi_last_start = lv_tick_get();   /* let the keepalive back off (no duplicate launch) */
         g_sanitize_pending = 1;              /* sanitize this instance once it's up */
     } else {
