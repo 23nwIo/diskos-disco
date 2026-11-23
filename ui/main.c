@@ -1283,6 +1283,15 @@ static void playlist_port_cb(lv_timer_t *t){
  * here changes, so nothing reloads. */
 static void libdb_watch(void){
     static char last[512]; static unsigned last_gen; static int last_ok = -1;
+    static int verdict_polls;
+    /* The launcher writes which player runs (libdb_player) before it execs it. A launcher that never got that far (its
+     * deadline fired, an older mq_ui) leaves no file, and the UI would wait for the card library for ever: 15 s after
+     * the launch verdict (or its timeout) without the file, it is the stock player. */
+    if(atomic_load(&g_launch_verdict) >= 0 && access(LIBDB_OWN_PID, F_OK) != 0 && ++verdict_polls == 30){
+        FILE *pf = fopen(LIBDB_OWN_PID, "w");
+        if(pf){ fputs("stock\n", pf); fclose(pf); }
+        fprintf(stderr, "libdb: no player marker from the launcher - using the flash library\n"); fflush(stderr);
+    }
     const char *p = libdb_path();
     int card = libdb_is_card(p), ok = card ? sd_io_allowed() : 1;
     unsigned g = libdb_gen();
@@ -3475,6 +3484,18 @@ static void player_launch_prepare(void){
         int no = 0, r = opl_prepare(&op, &no);
         if(r == OPL_ON) g_own_player = 1;
         else unlink(OPL_LIST);   /* the stock player: no own list (musicdb.c reads LIST_SONG_0 again) */
+        {   /* tell the UI which player this is before it runs (ui/libdb.h libdb_player): our pid, which the own player
+             * keeps across the exec, or "stock". Until this file exists the UI opens no library on the flash. */
+            char tmp[64]; snprintf(tmp, sizeof tmp, "%s.%ld", LIBDB_OWN_PID, (long)getpid());
+            FILE *pf = fopen(tmp, "w");
+            int bad = !pf;
+            if(pf){
+                if(r == OPL_ON) bad |= fprintf(pf, "%ld\n", (long)getpid()) < 0; else bad |= fputs("stock\n", pf) < 0;
+                bad |= fclose(pf) != 0;
+                bad |= rename(tmp, LIBDB_OWN_PID) != 0;
+            }
+            if(bad) boot_note("launcher: player marker " LIBDB_OWN_PID " not written");
+        }
         if(r != OPL_OFF){
             char m[220];
             if(r == OPL_ON) snprintf(m, sizeof m, "launcher: own player on (start %d of at most %d this boot)", no, OPL_MAX_STARTS);

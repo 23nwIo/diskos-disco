@@ -128,7 +128,7 @@ with tempfile.TemporaryDirectory(prefix='diskos-launcher-test-') as temp:
     root=Path(temp);c=root/'test.c';exe=root/'test';c.write_text(harness)
     status=root/'status'; blog=root/'boot.log'
     subprocess.run([os.environ.get('CC','cc'),'-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
-                    '-DLAUNCH_STATUS_PATH="%s"' % status, '-DBOOT_LOG_PATH="%s"' % blog, '-DLAUNCH_DEADLINE_S=2', '-DPLAYER_COMM_NAME="test"',
+                    '-DLAUNCH_STATUS_PATH="%s"' % status, '-DBOOT_LOG_PATH="%s"' % blog, '-DLAUNCH_DEADLINE_S=2', '-DPLAYER_COMM_NAME="test"','-DLIBDB_OWN_PID="%s"' % (root/'player'),
                     '-I'+str(app),str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
     # OWNER CONSTRAINT: diskOS must never deny the stock player. EVERY failure reaches the exec,

@@ -8,6 +8,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include "libdb.h"
 
 static int one_int(sqlite3 *d, const char *sql){
@@ -94,6 +96,23 @@ int main(void){
     assert(libdb_migrate(src, nodir, err, sizeof err) == LIBDB_E_OPEN_DST);
     snprintf(tmp, sizeof tmp, "%s.tmp", nodir); assert(access(tmp, F_OK) != 0);
     puts("PASS refusals: existing card DB (L108), missing source (L101), missing folder (L102)");
+
+    /* which player runs (the launcher's marker, LIBDB_OWN_PID set by the Makefile) */
+    unlink(LIBDB_OWN_PID);
+    assert(libdb_player() == LIBDB_PL_PENDING);                       /* not decided yet */
+    f = fopen(LIBDB_OWN_PID, "w"); fputs("stock\n", f); fclose(f);
+    assert(libdb_player() == LIBDB_PL_STOCK);
+    f = fopen(LIBDB_OWN_PID, "w"); fprintf(f, "%ld\n", (long)getpid()); fclose(f);
+    assert(libdb_player() == LIBDB_PL_PENDING);                       /* our own binary: the launcher before its exec */
+    pid_t c = fork(); if(c == 0){ execl("/bin/sleep", "sleep", "5", (char *)NULL); _exit(1); }
+    usleep(200000);
+    f = fopen(LIBDB_OWN_PID, "w"); fprintf(f, "%ld\n", (long)c); fclose(f);
+    assert(libdb_player() == LIBDB_PL_STOCK);                         /* another binary: not the own player */
+    kill(c, SIGKILL); waitpid(c, NULL, 0);
+    assert(libdb_player() == LIBDB_PL_STOCK);                         /* gone */
+    assert(!libdb_own_player_runs());
+    unlink(LIBDB_OWN_PID);
+    puts("PASS player marker: missing/launcher = pending, stock, other or dead pid = stock");
 
     char cmd[300]; snprintf(cmd, sizeof cmd, "rm -rf %s", root); assert(system(cmd) == 0);
     puts("COMPLETE libdb_test");

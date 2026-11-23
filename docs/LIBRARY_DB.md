@@ -17,16 +17,31 @@ fallback when the Disc boots to the stock player (Settings > Maintenance > Boot 
 `libdb_open_v2()`. That covers musicdb, the scanner, the own player (`player/queuedb.h`), Listening Stats, Album
 Roulette, SongSphere and Disc Shelf.
 
-- **Own player switched on** (`/usr/data/diskos-own-player`), a card mounted at `/tmp/sdcard`, and the card has
-  `library.db`: the card DB is used.
-- **In every other case**, the flash DB is used, the same as before.
+- **The own player runs**, a card is mounted at `/tmp/sdcard`, and the card has `library.db`: the card DB is used.
+- **The launcher hasn't decided yet** and the own player is switched on (`/usr/data/diskos-own-player`): the card DB
+  too. mq_ui starts about 2 s before the launcher, and this way the boot never opens the flash DB for a library that
+  will come from the card. Until the card is mounted and SD access opens, every open of it fails, and the library
+  loads once when it can (`libdb_watch` in `ui/main.c`).
+- **In every other case** (stock player, or a card not moved yet), the flash DB is used, the same as before.
 
-**Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`), not device-tested. Build with
+**Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`), migration device-verified by Jo. Build with
 `-DLIBDB_CARD_ENABLED=0` to keep the flash DB only.
 
-"The own player runs" means the player process wrote its pid to `/tmp/.diskos_libdb_own_pid` at start (tmpfs) and
-`/proc/<pid>/exe` is `/usr/data/diskos-own/mq_player`. The switch file is not used for this: it names the next boot's
-player, and the stock player may run although it exists (after the own player failed).
+Which player runs is told by the launcher (`player_launch_prepare` in `ui/main.c`). Before it execs the player, it
+writes `/tmp/.diskos_libdb_own_pid` (tmpfs): its own pid for the own player (the pid stays the same across the exec,
+and the player writes it again at start), `stock` otherwise. `libdb_player()` reads it:
+
+| Marker | Meaning |
+| --- | --- |
+| missing | pending: the launcher hasn't decided yet |
+| `stock` | the stock player |
+| pid, `/proc/<pid>/exe` = `/usr/data/diskos-own/mq_player` | the own player |
+| pid, exe = mq_ui itself | pending: the launcher, just before its exec |
+| pid of anything else, or gone | the stock player |
+
+If no marker appears within 15 s after the launch verdict (a launcher older than this change), the UI writes `stock`
+itself. The switch file is not used to decide this: it names the next boot's player, and the stock player may run
+although it exists (after the own player failed).
 
 ## When the card goes away
 
@@ -129,7 +144,7 @@ up to 64 random card paths from it; when fewer than half are on this card, it is
 
 ## Tests
 
-- `ui/tests/libdb_test.c` covers the copy, the connection settings, SOURCE_ID and the refusals.
+- `ui/tests/libdb_test.c` covers the copy, the connection settings, SOURCE_ID, the refusals and the player marker.
 - `ui/tests/scanner_srcid_test.c` covers reading the tags and writing SOURCE_ID.
 - `ui/tests/libdb_vfs_test.c` covers closing the files under open connections, including four threads querying
   through a hold, and checks via `/proc/self/fd` that no file stays open on the card.

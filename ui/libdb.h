@@ -33,33 +33,50 @@
 #ifndef LIBDB_CARD_ENABLED
 #define LIBDB_CARD_ENABLED 1
 #endif
-/* The own player writes its pid here when it starts (player/main.c, tmpfs: gone at reboot). Not the switch file
- * /usr/data/diskos-own-player: that one names the NEXT boot's player (Settings > Maintenance changes it without a
- * restart), and the stock player may run although it exists (the own player failed). */
+/* Which player runs this boot. The launcher (mq_ui started as /usr/data/mq_player, main.c player_launch_prepare)
+ * writes its decision to this tmpfs file before it execs the player: its own pid for the own player (the pid stays
+ * the same across the exec; the player writes it again when it starts), "stock" otherwise. Not the switch file
+ * /usr/data/diskos-own-player alone: that one names the NEXT boot's player (Settings > Maintenance changes it without
+ * a restart), and the stock player runs although it exists when the own player failed. */
+#ifndef LIBDB_OWN_PID
 #define LIBDB_OWN_PID "/tmp/.diskos_libdb_own_pid"
+#endif
+#define LIBDB_OWN_SWITCH "/usr/data/diskos-own-player"     /* = OPL_SWITCH (own_player.h) */
 #define LIBDB_OWN_BIN "/usr/data/diskos-own/mq_player"    /* = OPL_BIN (own_player.h) */
 #include <stdio.h>
-static inline int libdb_own_player_runs(void){
-    char b[32] = "", p[48], x[64];
+enum { LIBDB_PL_PENDING = 0, LIBDB_PL_OWN = 1, LIBDB_PL_STOCK = 2 };
+static inline int libdb_player(void){
+    char b[32] = "", p[48], x[256], self[256];
     FILE *f = fopen(LIBDB_OWN_PID, "r");
-    if(!f) return 0;
+    if(!f) return LIBDB_PL_PENDING;                        /* the launcher hasn't decided yet */
     int ok = fgets(b, sizeof b, f) != NULL; fclose(f);
-    long pid = ok ? strtol(b, NULL, 10) : 0;
-    if(pid <= 0) return 0;
+    if(!ok || !strncmp(b, "stock", 5)) return LIBDB_PL_STOCK;
+    long pid = strtol(b, NULL, 10);
+    if(pid <= 0) return LIBDB_PL_STOCK;
     snprintf(p, sizeof p, "/proc/%ld/exe", pid);
     ssize_t n = readlink(p, x, sizeof x - 1);
-    if(n <= 0) return 0;
+    if(n <= 0) return LIBDB_PL_STOCK;                      /* gone: whatever runs now didn't come through us */
     x[n] = 0;
-    return !strcmp(x, LIBDB_OWN_BIN);
+    if(!strcmp(x, LIBDB_OWN_BIN)) return LIBDB_PL_OWN;
+    ssize_t m = readlink("/proc/self/exe", self, sizeof self - 1);
+    if(m > 0){ self[m] = 0; if(!strcmp(x, self)) return LIBDB_PL_PENDING; }   /* the launcher, just before its exec */
+    return LIBDB_PL_STOCK;
 }
+static inline int libdb_own_player_runs(void){ return libdb_player() == LIBDB_PL_OWN; }
 
-/* The library DB in use now: the card DB when the own player runs and the mounted card has one, else the flash DB.
- * A card without library.db (not moved yet) keeps the flash DB, as before. */
+/* The library DB in use now:
+ *  - the own player runs and the mounted card has library.db: the card DB;
+ *  - not decided yet and the own player is switched on: the card DB too, so the boot never opens the flash DB for a
+ *    library that will come from the card. Until the card is mounted and SD access opens, every open of it fails
+ *    (nothing there yet, or libdb_vfs refuses), and the library loads once (main.c libdb_watch);
+ *  - otherwise (stock player, or a card not moved yet): the flash DB, as before. */
 static inline const char *libdb_path(void){
 #if LIBDB_CARD_ENABLED
+    int pl = libdb_player();
+    if(pl == LIBDB_PL_PENDING && access(LIBDB_OWN_SWITCH, F_OK) == 0) return LIBDB_CARD;
     struct stat c, p;
-    if(stat(LIBDB_CARD_ROOT, &c) == 0 && stat("/tmp", &p) == 0 && c.st_dev != p.st_dev
-       && access(LIBDB_CARD, R_OK) == 0 && libdb_own_player_runs())
+    if(pl == LIBDB_PL_OWN && stat(LIBDB_CARD_ROOT, &c) == 0 && stat("/tmp", &p) == 0 && c.st_dev != p.st_dev
+       && access(LIBDB_CARD, R_OK) == 0)
         return LIBDB_CARD;
 #endif
     return LIBDB_FLASH;
