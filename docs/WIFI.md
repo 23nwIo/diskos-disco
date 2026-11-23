@@ -69,4 +69,11 @@ touch /usr/data/diskos-wifi-custom
 
 Then mq_ui binds `/usr/data/wifi_up.sh` as before and migrates nothing. Your script is used only if it is a regular
 file (no symlink), executable (`chmod +x`), at most 64 KiB and starts with `#!`; otherwise FiiO's script runs. With your
-own script, `/usr/data/diskos-hostname` only affects connecting on the Wi-Fi screen.
+own script, `/usr/data/diskos-hostname` only affects connecting on the Wi-Fi screen, unless your script reads the
+resolved name the same way diskOS's script does (mq_ui writes `/tmp/diskos-hostname` with or without the switch file):
+
+```
+name=Disc
+[ -r /tmp/diskos-hostname ] && read -r name < /tmp/diskos-hostname
+udhcpc -i wlan0 -x hostname:"$name" -t 10 -T 2 -A 3 &
+```
