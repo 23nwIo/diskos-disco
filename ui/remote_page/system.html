@@ -32,7 +32,8 @@
 <div class=hint>Guests take turns: a new song joins the guest's next round instead of the end of the queue. While only one guest's songs are queued, that guest may add more in a row (up to their number of songs).</div></div></div>
 <div id=ppx><div class=card id=pew><label for=pe>When the queue is empty</label><select id=pe><option value=0>Stop<option value=1>Random songs from the library<option value=2>A radio station<option value=3>A playlist</select>
 <div class=hd id=psw><small id=pes class=hint style=flex:1></small><button id=psc>Choose</button></div><div id=pen class=hint></div></div>
-<h2>Guests</h2><div id=pg class=card>None yet</div></div></div>
+<h2>Guests</h2><div id=pg class=card>None yet</div></div>
+<div id=hgw class=hide><iframe id=hgf title='Hit&amp;Guess' allow='clipboard-write' style='width:100%;border:0;display:block;height:30em'></iframe></div></div>
 <div id=scv class=hide><div class=card><img id=si alt='The Disc screen'><div class=hd><button id=srf class=pa>Refresh</button><b></b><label><input type=checkbox id=sau> Live</label></div>
 <div class=hint>Tap or drag on the picture to touch the Disc; hold for a long press.</div></div></div>
 <div id=shb class=hide></div><div id=sh class=hide></div>
@@ -77,8 +78,12 @@ if(Math.abs(b.x-a.x)<5&&Math.abs(b.y-a.y)<5){b=a;if(ms<350)ms=100}
 cmd('touch',enc({x:a.x,y:a.y,x2:b.x,y2:b.y,ms:ms})).then(function(ok){setTimeout(shot,(ok?ms:0)+450);if(ok&&!$('sau').checked)setTimeout(shot,ms+1500)})};
 /* Public modes (Jo 2026-11-22): the guests' link, its mode (api/party on: 0 off, 1 Jukebox - was Party -, 2 Hit&Guess)
  * and what guests may do; Jukebox-only settings show in the Jukebox mode only; "When the queue is empty" is After the list ends */
-var PMH=['Off: the guests\u2019 link answers nothing. Pick a mode to start one; the settings stay when you end it.','Guests open the link, add songs to the queue and see as much as you allow below.','Players open the link; set up and run the game on <a href=hitguess>the game page</a>. Of the settings below the game uses the name and the volume.'];
-function pmode(m){m=+m||0;$('pmh').innerHTML=PMH[m]||'';$('pend').classList.toggle('hide',!m);$('ppo').classList.toggle('hide',m!==1);$('ppx').classList.toggle('hide',m!==1)}
+var PMH=['Off: the guests\u2019 link answers nothing. Pick a mode to start one; the settings stay when you end it.','Guests open the link, add songs to the queue and see as much as you allow below.','Players open the link. Set up and start the game below (or on <a href=hitguess>its own page</a>); it also uses the link\u2019s name and the guests\u2019 volume.'];
+function pmode(m){m=+m||0;$('pmh').innerHTML=PMH[m]||'';$('pend').classList.toggle('hide',!m);$('ppo').classList.toggle('hide',m!==1);$('ppx').classList.toggle('hide',m!==1);hgshow(m===2)}
+/* Hit&Guess: the game page (setup, Start, players) inside this tab while the mode is Hit&Guess (Jo, 2026-11-23); it
+ * reports its height, so the tab scrolls as one page */
+function hgshow(on){var f=$('hgf');$('hgw').classList.toggle('hide',!on);if(on&&!f.getAttribute('src'))f.src='hitguess';if(!on&&f.getAttribute('src'))f.removeAttribute('src')}
+setInterval(function(){var f=$('hgf');try{if(f.getAttribute('src')&&f.contentDocument&&f.contentDocument.body){var h=f.contentDocument.body.scrollHeight;if(h&&Math.abs(h-f.offsetHeight)>4)f.style.height=h+'px'}}catch(e){}},400);
 function party(){if(V!=='public'||document.hidden)return;fetch('api/party',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(V!=='public'||!j.ok)return;var c=j.settings;
 [].forEach.call(document.querySelectorAll('#ptv [data-k]'),function(e){if(document.activeElement===e)return;if(e.type==='checkbox')e.checked=!!c[e.dataset.k];else e.value=c[e.dataset.k]});$('pmvv').textContent=$('pmv').value;
 pmode(c.on);if(document.activeElement!==$('pnm')&&!$('pnm').dataset.e)$('pnm').value=c.name;var u=c.name?location.origin+'/'+c.name+'/':'';$('plw').classList.toggle('hide',!u);$('pl').textContent=u+(c.on?'':' (off)');
