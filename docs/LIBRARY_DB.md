@@ -125,6 +125,11 @@ On the flash DB there is no `SOURCE_ID` table, and the scanner keeps no IDs ther
 
 If anything fails, `library.db.tmp` is removed and the flash DB is untouched, and the next start tries again.
 
+**Manual start:** Settings > System > Maintenance > Move Library to SD Card. It checks the same conditions in turn and
+shows the first one that fails as a toast (the full text goes to `/tmp/diskos_boot.log`, `libdb:`). An existing
+`library.db` always stops it. When every check passes, a confirmation starts the same move; a failure then toasts the
+first error with its L1xx code.
+
 A card whose files are not in the flash DB gets the copy too, so playlists and favourites come along. The copy checks
 up to 64 random card paths from it; when fewer than half are on this card, it is marked (`DISKOS_META`
 `LIBDB_RESCAN` = 1), and after the restart the UI starts a rescan once.

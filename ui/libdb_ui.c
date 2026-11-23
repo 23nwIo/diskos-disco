@@ -35,11 +35,11 @@ static _Atomic int g_result = -1;          /* worker: 0 ok, L1xx code; -1 still 
 static char g_err[160];
 static uint32_t g_next_look, g_done_at;
 static int g_power_told, g_rescan_checked;
-static int g_manual;                       /* started from Maintenance: a failure shows a dialog, not a toast */
-static void ok_noop(void){}
+static int g_manual;                       /* started from Maintenance: a failure toasts the full first error */
+/* A refusal or failure of the manual start: a toast (Jo 2026-11-23), the full text in the log. */
 static void report(const char *title, const char *why){
     fprintf(stderr, "libdb: %s: %s\n", title, why); fflush(stderr);
-    fileops_confirm(title, why, "OK", ok_noop);
+    ui_toast(why);
 }
 
 static void ov_close(void){ if(g_ov){ lv_obj_delete(g_ov); g_ov = NULL; } }
@@ -139,16 +139,16 @@ void libdb_ui_manual(int v){
     char why[200];
     int pl = usage_plugged_in();
     if(g_state == LM_RUNNING) snprintf(why, sizeof why, "The move is already running");
-    else if(g_state == LM_DONE) snprintf(why, sizeof why, "The library was moved - the Disc restarts");
-    else if(!LIBDB_CARD_ENABLED) snprintf(why, sizeof why, "This build keeps the library on the flash (LIBDB_CARD_ENABLED 0)");
+    else if(g_state == LM_DONE) snprintf(why, sizeof why, "Library moved - restarting");
+    else if(!LIBDB_CARD_ENABLED) snprintf(why, sizeof why, "This build keeps the library on the flash");
     else if(!libdb_own_player_runs())
-        snprintf(why, sizeof why, opl_running() ? "The own player runs, but its marker %s is missing or wrong"
-                                                : "Only the own player uses the card library (Boot to Stock Player off, restart)",
+        snprintf(why, sizeof why, opl_running() ? "Own player marker missing (%s)"
+                                                : "Only for the own player (Boot to Stock Player off, restart)",
                  LIBDB_OWN_PID);
-    else if(!ui_local_playback_allowed()) snprintf(why, sizeof why, "SD card not ready (no card, USB storage, or SD access held)");
-    else if(access(LIBDB_CARD, F_OK) == 0) snprintf(why, sizeof why, "The SD card already has a library: %s", LIBDB_CARD);
-    else if(access(LIBDB_FLASH, R_OK) != 0) snprintf(why, sizeof why, "No library on the internal flash: %s", LIBDB_FLASH);
-    else if(scanner_active()) snprintf(why, sizeof why, "A library scan is running - let it finish first");
+    else if(!ui_local_playback_allowed()) snprintf(why, sizeof why, "SD card not ready");
+    else if(access(LIBDB_CARD, F_OK) == 0) snprintf(why, sizeof why, "The SD card already has a library");
+    else if(access(LIBDB_FLASH, R_OK) != 0) snprintf(why, sizeof why, "No library on the internal flash");
+    else if(scanner_active()) snprintf(why, sizeof why, "A library scan is running");
     else if(pl != 1) snprintf(why, sizeof why, pl == 0 ? "Connect external power first" : "Can't tell whether external power is connected");
     else if(ui_is_playing()) snprintf(why, sizeof why, "Stop playback first");
     else {
