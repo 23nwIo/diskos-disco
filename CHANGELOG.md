@@ -4,6 +4,11 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Screen lock: the screen turned off by the timeout (or the Sleep tile) is now locked exactly like after a press of the
+  power button. A touch no longer wakes it (no more lit screen in a pocket); only the power button does. The panel and
+  its touch controller are switched off in both cases. A dimmed screen (screensaver) still wakes on a touch. A pairing
+  code or the shutdown screen still lights it. Not yet tested on a Disc.
+
 - diskOS player: the playing list lives in RAM only. Starting an album, a playlist or All Songs no longer writes the
   whole list (5,000+ songs for All Songs) to the library database on the internal flash, and lists of any length work.
   After a restart the list is gone; a resumed song plays on its own. Not yet tested on a Disc.

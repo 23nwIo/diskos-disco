@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 #include "hw.h"
 #include "../watchdog/watchdog.h"
+#include "../panel_ioc.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -14,14 +15,6 @@
 /* MIPS encodings, spelled out like watchdog.h so the values never depend on the build host */
 #define DAC_A           "/dev/cs43131"
 #define DAC_IOC_M48     0x20004d30UL      /* _IO('M',48): sent on A before the very first stream and at power off */
-#define LCD_DEV         "/dev/lcd_st77916"
-#define LCD_IOC_OFF     0x2000ef01UL      /* _IO(0xef,1) display off */
-#define BACKLIGHT       "/sys/class/backlight/backlight/brightness"
-#define BL_POWER        "/sys/class/backlight/backlight/bl_power"
-#define LCD_IOC_ON      0x2000ef02UL      /* _IO(0xef,2) display on */
-#define TOUCH_DEV       "/dev/cst816t"
-#define TOUCH_IOC_OFF   0x2000ef03UL      /* _IO(0xef,3) */
-#define TOUCH_IOC_ON    0x2000ef04UL      /* _IO(0xef,4) */
 #define RFKILL0         "/sys/class/rfkill/rfkill0/state"
 #define GPIO_IOC_LEVEL  0x2000477aUL      /* _IO('G',122): level of the pin named by the argument */
 #define BL_STOCK_LEVEL  "31"              /* what the stock player writes; the UI then sets its own level */
@@ -92,8 +85,9 @@ static void quiet_ioctl(const char *dev, unsigned long req, const char *what, hw
 }
 
 int hw_screen_toggle(int dry, hw_log_fn log){
-    /* "On" = what the user sees: brightness above 0 and the rail powered (the UI's own idle screen off only sets
-     * bl_power 4 and leaves the brightness, ui/main.c ui_backlight). */
+    /* "On" = what the user sees: brightness above 0 and the rail powered. The UI's own screen off (the idle timeout,
+     * the Sleep tile) is the same lock as ours: brightness 0, bl_power 4, panel and touch controller off
+     * (ui/settings.c ui_screen_lock), so a press always turns it back on and the UI follows (ui/main.c, PW-10). */
     int br = read_int(BACKLIGHT), bp = read_int(BL_POWER);
     int on = br > 0 && bp == 0;
     log("power key: screen %s -> %s (brightness %d, bl_power %d)%s", on ? "on" : "off", on ? "off" : "on", br, bp,

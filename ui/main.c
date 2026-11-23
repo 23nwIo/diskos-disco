@@ -92,9 +92,10 @@ static int         g_screen_off = 0;   /* mirrors (bl_state==2) each main-loop i
                                           slow polls (status/clock) so screen-off work can be skipped
                                           without exposing main()'s local bl_state. */
 static int         g_touch_raw = -1;   /* a 2nd, RAW read-only fd on the touch evdev, used ONLY to
-                                          wake a screen-off panel: LVGL coalesces a quick tap into a
+                                          wake a DIMMED panel: LVGL coalesces a quick tap into a
                                           final RELEASED (no press edge -> no wake), so we watch the
-                                          raw stream where ANY event means "a finger touched". */
+                                          raw stream where ANY event means "a finger touched". A fully
+                                          off panel is locked: only the power key wakes it. */
 
 /* Manual "Sleep" (Quick Settings tile): a deliberate screen-off request. It must dim+power
  * the panel even when the auto-screensaver is Off, so it can't ride the saver_timeout>0 path.
@@ -4062,11 +4063,13 @@ int main(int argc, char **argv){
     static const int TMAP[5] = {0,30,60,120,300};
     uint32_t last_activity = lv_tick_get();
     int woke = 0;   /* a press that only wakes the saver is swallowed */
-    int bl_state = 0;   /* 0 = normal, 1 = saver-dim, 2 = off */
+    int bl_state = ui_screen_start_locked() ? 2 : 0;   /* 0 = normal, 1 = saver-dim, 2 = off (always locked) */
     int touch_gate_on = 0;          /* LVGL touch switched off while the screen is dark */
     uint32_t touch_gate_wake = 0;   /* a waking touch still down: keep it off until the lift (tick | 1, 0 = none) */
     uint32_t last_blpoll = 0;   /* PW-10 backlight-rail poll cadence */
-    int player_blanked = 0;     /* PW-10: we forced bl_power=4 because the player blanked via brightness=0 */
+    /* The screen lock: set whenever the screen is fully off (bl_state 2), whoever turned it off (the idle timeout, the
+     * Sleep tile, the power key). Brightness is then 0, and the player's power key raising it is the unlock (PW-10). */
+    int locked = ui_screen_start_locked();
     unsigned last_vol_seq = 0;
     int last_volume = -1; /* first player report establishes a baseline, not user input */
     /* Start the boot splash HERE - after all the blocking startup init (hwclock, bt_boot_restore,
@@ -4542,27 +4545,26 @@ int main(int argc, char **argv){
         /* PW-10: the player owns the power button (event0) and blanks the screen by writing
          * brightness=0 while leaving bl_power=0 (FB_BLANK_UNBLANK) - the panel is black but the LED
          * rail is still powered (device-measured 2026-09-02: power-off -> br 6->0, bl_power stays 0).
-         * diskOS never writes brightness=0 itself (ui_backlight(0) writes ONLY bl_power=4), so
-         * brightness==0 && bl_power==0 is unambiguously a player-side blank. Catch it on a slow poll,
-         * fully power the rail down (bl_power=4) and sync bl_state=2 so only a touch wakes. When the
-         * player raises brightness again (a second power press), bring the panel back to match. */
+         * It also switches the panel and the touch controller off. Catch it on a slow poll, fully
+         * power the rail down (bl_power=4) and sync bl_state=2 + locked. diskOS writes brightness=0
+         * only in ui_screen_lock, which sets `locked` first, so an unlocked brightness 0 is the
+         * player's. When the player raises brightness again (a second power press), unlock. */
         if(lv_tick_elaps(last_blpoll) >= 250){
             last_blpoll = lv_tick_get();
             int cbr = read_int_file("/sys/class/backlight/backlight/brightness");
             int cbp = read_int_file("/sys/class/backlight/backlight/bl_power");
-            if(cbr == 0 && !player_blanked){
-                /* player blanked via brightness-only -> cut the rail. Also when diskOS had already powered the panel
-                 * down (idle screen-off: bl_power 4, brightness untouched) and the power key then blanked it on the
-                 * player's side: remember it, or the player's un-blank below is never seen and the panel stays dark
-                 * with touch released (field report 2026-11-06: brightness 16, bl_power 4 after a power press). */
+            if(cbr == 0 && !locked){
+                /* player blanked via brightness-only -> cut the rail and lock. (Before the screen lock the idle
+                 * screen-off left the brightness up, and a later power-key blank had to be caught here too: field
+                 * report 2026-11-06, brightness 16, bl_power 4 after a power press. Now the idle off is locked itself.) */
                 if(cbp == 0) ui_backlight(0);
-                bl_state = 2; player_blanked = 1;
-            } else if(player_blanked && cbr > 0){
-                /* player un-blanked (2nd power press restored brightness) -> restore the panel. */
+                bl_state = 2; locked = 1;
+            } else if(locked && cbr > 0){
+                /* player un-blanked (power press: panel, brightness 31, touch on) -> restore the panel. */
                 /* The player restores ITS OWN remembered level, not the one set in Quick Settings / Display, so the
                  * brightness looked reset after every off > on cycle (fork fix): put the diskOS brightness back. */
                 ui_backlight(ui_effective_brightness());
-                bl_state = 0; last_activity = lv_tick_get(); player_blanked = 0;
+                bl_state = 0; last_activity = lv_tick_get(); locked = 0;
             }
         }
 
@@ -4599,7 +4601,8 @@ int main(int argc, char **argv){
                 }
                 if(pk_down && !pk_shown && lv_tick_elaps(pk_since) >= (uint32_t)hold){
                     pk_shown = 1;
-                    if(bl_state){ ui_backlight(ui_effective_brightness()); bl_state = 0; player_blanked = 0; }   /* lit, so it can be seen */
+                    if(locked) ui_screen_unlock(); else if(bl_state) ui_backlight(ui_effective_brightness());   /* lit, so it can be seen */
+                    bl_state = 0; locked = 0;
                     last_activity = lv_tick_get();
                     ui_shutdown_screen();
                 } else if(pk_shown && !pk_down && lv_tick_elaps(pk_rel) > 3500 && power_shutdown_phase() == PW_OFF){
@@ -4616,10 +4619,12 @@ int main(int argc, char **argv){
         int screenoff_extra = (oi>=0 && oi<5) ? TMAP[oi] : 120;
         /* Never sleep while the on-screen keyboard is open: it owns all touch, so a
          * dimmed/off saver couldn't be woken mid-typing (e.g. entering a Wi-Fi password). */
-        /* Screen-off/dim wake on RAW touch: drain the raw evdev fd; ANY event means a finger touched,
-         * so we wake even when LVGL coalesced the whole tap into a no-press-edge RELEASED (the reason
-         * a dark panel needed many taps to wake). Drained every loop (even awake) so it never backs
-         * up; only acts when the panel is dimmed/off (bl_state != 0). */
+        /* Dim wake on RAW touch: drain the raw evdev fd; ANY event means a finger touched, so we wake
+         * even when LVGL coalesced the whole tap into a no-press-edge RELEASED (the reason a dark panel
+         * needed many taps to wake). Drained every loop (even awake) so it never backs up; only acts
+         * while the panel is dimmed (bl_state 1). A fully off panel is locked (Jo 2026-11-23: the same
+         * for the timeout and the power key, nothing wakes in a pocket): its touch controller is off,
+         * and anything that still arrives is ignored - only the power key unlocks. */
         if(g_touch_raw >= 0){
             struct input_event ev[32]; ssize_t n; int any = 0, lifted = 0;
             while((n = read(g_touch_raw, ev, sizeof ev)) > 0){                /* evdev hands out whole events */
@@ -4629,13 +4634,12 @@ int main(int argc, char **argv){
                     else if(ev[k].type == EV_ABS && ev[k].code == ABS_MT_TRACKING_ID) lifted = ev[k].value < 0;
                 }
             }
-            if(any && bl_state){
+            if(any && bl_state == 1){
                 last_activity = lv_tick_get();
                 ui_backlight(ui_effective_brightness()); bl_state = 0;
-                player_blanked = 0;   /* touch woke it; don't let the PW-10 poll re-restore */
                 if(screen_current() == SCR_SAVER) screen_back();
                 if(touch_gate_on) touch_gate_wake = lifted ? 0 : lv_tick_get() | 1;   /* the waking touch never acts: wait for the lift */
-                onboarding_woke_by_touch();                  /* once: the power button is the pocket lock */
+                onboarding_woke_by_touch();                  /* once: the power button locks at once */
             } else if(touch_gate_wake && lifted) touch_gate_wake = 0;
         }
         remote_pump();                                     /* Remote Control: publish the state, run a waiting command */
@@ -4643,7 +4647,8 @@ int main(int argc, char **argv){
         if(kbinput_active() || ma_pairing_shown() || remote_link_shown() || mpd_access_shown()) last_activity = lv_tick_get();   /* typing / a pairing code on screen: stay lit */
         if(g_wake_req){                                   /* something needs to be seen now (MA Sendspin pairing code) */
             g_wake_req = 0; last_activity = lv_tick_get();
-            if(bl_state){ ui_backlight(ui_effective_brightness()); bl_state = 0; player_blanked = 0; }
+            if(locked) ui_screen_unlock(); else if(bl_state) ui_backlight(ui_effective_brightness());
+            bl_state = 0; locked = 0;
             if(screen_current() == SCR_SAVER) screen_back();
         }
         {   /* Idle power-off (issue #17): only "idle" when playing music locally and nothing is playing. A working mode
@@ -4694,7 +4699,7 @@ int main(int argc, char **argv){
             uint32_t off_at = manual ? (uint32_t)(screenoff_extra > 0 ? screenoff_extra : 10)*1000
                                      : (uint32_t)(saver_timeout+screenoff_extra)*1000;
             if(bl_state==1 && (manual || screenoff_extra > 0) && idle > off_at){
-                ui_backlight(0); bl_state = 2;
+                locked = 1; ui_screen_lock(); bl_state = 2;   /* the same lock as the power key: only it wakes */
                 /* screen fully off -> STOP the screensaver. Leaving SCR_SAVER: (a) satisfies "the
                  * saver stops when the screen turns off"; (b) pops back to the screen shown BEFORE
                  * the saver, so a later wake lands there, not on the saver; (c) makes saver_anim_cb
@@ -4711,9 +4716,10 @@ int main(int argc, char **argv){
         /* screen fully off (pocket playback): pause the frequent polls + idle longer
          * so the loop wakes ~5x/s (touch poll) instead of ~33x/s. Derived from
          * bl_state each iteration so every wake path is covered. */
-        /* A dark screen never acts on a touch: while it's off, or dimmed on anything but the screensaver (which
-         * swallows its own waking tap), LVGL gets no touch at all; a touch only wakes it (the raw path above), and
-         * the buttons listen again once that finger has lifted (or after 3 s, so touch can never stay dead). */
+        /* A dark screen never acts on a touch: while it's off (locked), or dimmed on anything but the screensaver
+         * (which swallows its own waking tap), LVGL gets no touch at all; a touch only wakes a dimmed one (the raw
+         * path above), and the buttons listen again once that finger has lifted (or after 3 s, so touch can never
+         * stay dead). */
         if(g_touch){
             int gate = bl_state == 2 || (bl_state == 1 && screen_current() != SCR_SAVER);
             if(touch_gate_wake && lv_tick_elaps(touch_gate_wake) > 3000) touch_gate_wake = 0;
@@ -4747,9 +4753,8 @@ int main(int argc, char **argv){
             /* deep idle (panel off): sleep ~5x/s REGARDLESS of any running animation. Nothing is
              * visible, so a stray infinite anim (e.g. a Wi-Fi/BT scan glyph left spinning, or the
              * saver's own motion) must NOT drop us to the 5ms 'busy' cap and spin the CPU at 200Hz -
-             * that was the real reason "screen off" wasn't saving power. Wake stays reliable because
-             * the raw evdev fd (drained every loop, above) holds a real finger-press in its kernel
-             * queue across the 200ms sleep; we no longer rely on catching an LVGL press-edge. */
+             * that was the real reason "screen off" wasn't saving power. The screen is locked here:
+             * the power key's unlock is seen by the 250 ms backlight poll (PW-10). */
             wait = 200;
         } else {
             uint32_t cap = busy ? 5 : 30;
@@ -4761,7 +4766,7 @@ int main(int argc, char **argv){
           prof_loop(busy, bl_state, lv_anim_count_running(), prof_h, body); }
 #endif
         if(rest) loop_rest();
-        else if(g_touch_raw >= 0 && bl_state == 2){   /* screen off: same 200 ms rhythm, but a touch wakes at once */
+        else if(g_touch_raw >= 0 && bl_state == 2){   /* screen off (locked): 200 ms rhythm; a stray touch event is drained at once */
             struct pollfd pf = { .fd = g_touch_raw, .events = POLLIN };
             (void)poll(&pf, 1, (int)wait);
         }

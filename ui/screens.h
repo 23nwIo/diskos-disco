@@ -353,6 +353,9 @@ void ui_set_brightness(int v);   /* persist + apply */
 int  ui_get_brightness(void);
 int  ui_effective_brightness(void);   /* what the backlight runs at (Outdoor mode = full) */
 void ui_backlight(int v);        /* transient backlight write, no persist */
+void ui_screen_lock(void);       /* screen fully off and locked: only the power key wakes it (settings.c) */
+void ui_screen_unlock(void);     /* light a locked screen from the UI (panel, backlight, touch) */
+int  ui_screen_start_locked(void);   /* this run started locked (a theme re-launch while locked) */
 void ui_set_sleep_timer(int minutes);   /* 0 = off; pauses playback when it elapses */
 void ui_set_sleep_eoc(long target_ms, const char *path, int at_book_end);  /* pause when THAT book's position reaches target_ms (end of chapter); at_book_end=1 if the target is the file end (last/chapterless chapter) so a rollover can fulfil it */
 void ui_disarm_book_eoc(void);  /* disarm any end-of-chapter sleep; call on explicit track navigation */
