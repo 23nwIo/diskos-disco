@@ -22,7 +22,11 @@ Roulette, SongSphere and Disc Shelf.
   too. mq_ui starts about 2 s before the launcher, and this way the boot never opens the flash DB for a library that
   will come from the card. Until the card is mounted and SD access opens, every open of it fails, and the library
   loads once when it can (`libdb_watch` in `ui/main.c`).
-- **In every other case** (stock player, or a card not moved yet), the flash DB is used, the same as before.
+- **The own player runs and no card is mounted yet**: the card DB as well. The card is mounted only after the launch
+  verdict, seconds after the player started; answering the flash DB in that gap loaded the flash library first, and
+  musicdb parks a replaced connection without closing it, so `song.db` stayed open in mq_ui (Jo's device test,
+  2026-11-23).
+- **In every other case** (stock player, or a mounted card not moved yet), the flash DB is used, the same as before.
 
 **Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`), migration device-verified by Jo. Build with
 `-DLIBDB_CARD_ENABLED=0` to keep the flash DB only.

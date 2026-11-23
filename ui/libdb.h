@@ -66,18 +66,21 @@ static inline int libdb_own_player_runs(void){ return libdb_player() == LIBDB_PL
 
 /* The library DB in use now:
  *  - the own player runs and the mounted card has library.db: the card DB;
- *  - not decided yet and the own player is switched on: the card DB too, so the boot never opens the flash DB for a
- *    library that will come from the card. Until the card is mounted and SD access opens, every open of it fails
- *    (nothing there yet, or libdb_vfs refuses), and the library loads once (main.c libdb_watch);
- *  - otherwise (stock player, or a card not moved yet): the flash DB, as before. */
+ *  - not decided yet and the own player is switched on, or the own player runs and no card is mounted (yet): the card
+ *    DB too, so the boot never opens the flash DB for a library that will come from the card (the card is mounted
+ *    only after the launch verdict, seconds after the player started). Until the card is mounted and SD access opens,
+ *    every open of it fails (nothing there yet, or libdb_vfs refuses), and the library loads once (main.c
+ *    libdb_watch); musicdb parks replaced connections without closing them, so a flash open here would stay open;
+ *  - otherwise (stock player, or a mounted card not moved yet): the flash DB, as before. */
 static inline const char *libdb_path(void){
 #if LIBDB_CARD_ENABLED
     int pl = libdb_player();
     if(pl == LIBDB_PL_PENDING && access(LIBDB_OWN_SWITCH, F_OK) == 0) return LIBDB_CARD;
-    struct stat c, p;
-    if(pl == LIBDB_PL_OWN && stat(LIBDB_CARD_ROOT, &c) == 0 && stat("/tmp", &p) == 0 && c.st_dev != p.st_dev
-       && access(LIBDB_CARD, R_OK) == 0)
-        return LIBDB_CARD;
+    if(pl == LIBDB_PL_OWN){
+        struct stat c, p;
+        int mounted = stat(LIBDB_CARD_ROOT, &c) == 0 && stat("/tmp", &p) == 0 && c.st_dev != p.st_dev;
+        if(!mounted || access(LIBDB_CARD, R_OK) == 0) return LIBDB_CARD;   /* no card yet: wait for it, not the flash */
+    }
 #endif
     return LIBDB_FLASH;
 }
