@@ -11,9 +11,9 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 - Hit&Guess (own player): each song plays on its own by its ID, so the player no longer copies the whole library (5,000+
   rows on the internal flash) for every song of a round. Not yet tested on a Disc.
 
-- Remote Control: the favourite symbol and its colour are chosen separately (hearts, stars, diamonds, dots or flowers;
-  red, yellow, orange, pink, purple, blue, green or white), on the system page and on the party page. Not yet tested on
-  a Disc.
+- Remote Control: the favourite symbol and its colour are chosen separately, on the system page and on the party
+  page. The host sets which symbols and colours (name and hex) there are, in `.diskos/state/look.conf` on the card or
+  on the system page; defaults ❤️ ⭐ ☭ 𖤐 𐕣 and nine colours including Black. Not yet tested on a Disc.
 
 - Party mode: the queue no longer goes back to the list that played before it. After Hit&Guess that was the whole
   library, so whenever the queue ran empty the Disc went back to the song after the last game song (the same few songs

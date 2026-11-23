@@ -84,6 +84,8 @@ reqs = ['GET /api/library/albums', 'GET /api/library/albums?q=caf', 'GET /api/li
         'UPLOADED PartyUploads/Party_1/Anna_Mine.mp3 AnnaAnnaAnna1234', 'UPLOADED PartyUploads/Party_1/Anna_Mine.mp3 AnnaAnnaAnna1234',
         'UPLOADED PartyUploads/Party_1/Anna_x.txt AnnaAnnaAnna1234', 'GET /api/queue',
         'POST ~/api/stations g=AnnaAnnaAnna1234&s=http%3A%2F%2Fa.example%2Fs+Anna+%3CFM%3E&s=https%3A%2F%2Fb.example+B', 'GET /api/party',
+        # 118.. the favourite symbols and colours: defaults, then the host's own on the card
+        'GET ~/api/look', 'POST /api/look l=symbol%3D%E2%98%AD&l=color%3DBlack+%23000000', 'GET ~/api/look',
         # -5.. Bandcamp for guests (Jo, 2026-11-22): off unless the host allows it; their own search state
         'GET ~/api/bandcamp?g=DoraDoraDora1234', 'POST /api/party bandcamp=1', 'GET ~/api/bandcamp?g=DoraDoraDora1234',
         'POST ~/api/bandcamp action=play&url=https%3A%2F%2Fa.bandcamp.com%2Falbum%2Fx&g=DoraDoraDora1234',
@@ -239,3 +241,7 @@ assert res[116]['rc'] == 0, res[116]
 st = [g['stations'] for g in res[117]['body']['guests'] if g['name'] == 'Anna']; assert st == [[{'name': 'Anna <FM>', 'url': 'http://a.example/s'}, {'name': 'B', 'url': 'https://b.example'}]], res[117]
 assert Path('/tmp/party-stations.txt').read_text().splitlines()[1:] == ['Anna\tAnna <FM>\thttp://a.example/s', 'Anna\tB\thttps://b.example'], Path('/tmp/party-stations.txt').read_text()
 print('PASS Remote Control party mode: uploads into the library, guests\' stations for the host')
+lk = res[118]['body']; assert lk['symbols'] == ['❤️', '⭐', '☭', '𖤐', '𐕣'] and [c['name'] for c in lk['colors']][-1] == 'Black' and not lk['on_card'] and lk['bad_line'] == 0, lk
+assert res[119]['rc'] == 0 and res[120]['body']['symbols'] == ['☭'] and res[120]['body']['colors'] == [{'name': 'Black', 'dark': '#000000', 'light': '#000000'}] and res[120]['body']['on_card'], res[119:121]
+assert (sd/'.diskos/state/look.conf').read_text() == 'symbol=☭\ncolor=Black #000000\n'
+print('PASS Remote Control look: favourite symbols and colours from the card')

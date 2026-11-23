@@ -390,7 +390,7 @@ int party_dispatch(const rmt_cmd_t *c, const char **why, char **body){
         if(remote_exec(&x, why, body)) return -1;
         for(char *f = *body; f && (f = strstr(f, "\"fav\":true")); f += 10) memcpy(f, "\"fav\":0   ", 10);   /* the host's favourites stay theirs */
         return 0;
-    case RMT_CMD_RADIO_SEARCH:
+    case RMT_CMD_RADIO_SEARCH: case RMT_CMD_LOOK:
         return remote_exec(&x, why, body);
     case RMT_CMD_BANDCAMP: return guest_bandcamp(who, c, why, body);
     case RMT_CMD_PARTY_STATIONS:

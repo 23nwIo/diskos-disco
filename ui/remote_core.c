@@ -321,6 +321,7 @@ const char *rmt_cmd_name(rmt_cmd_kind_t k){
     if(k == RMT_CMD_PARTY_STATE) return "party_state";
     if(k == RMT_CMD_PARTY) return "party";
     if(k == RMT_CMD_PARTY_RADIO) return "party_radio";
+    if(k == RMT_CMD_LOOK) return "look";
     if(k == RMT_CMD_GAME) return "game";
     if(k == RMT_CMD_GAME_SEARCH) return "game_search";
     if(k == RMT_CMD_GAME_ADMIN) return "game_admin";
@@ -388,6 +389,23 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
         else if(pp == -2) bad = 1;
         if(bad || !any){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
         rt.kind = RMT_R_CMD; rt.cmd.sub = RMT_G_SETUP;
+        return rt;
+    }
+    if(!strcmp(ep, "look")){                                       /* POST: l=<line> for each line of the file */
+        if(get){ rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LOOK; return rt; }
+        if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
+        size_t o = 0; int bad = 0;
+        for(const char *p = r->body; p && *p && !bad; p = strchr(p, '&') ? strchr(p, '&') + 1 : NULL){
+            char v[160];
+            if(strncmp(p, "l=", 2)) continue;
+            int pr = param_str_list(p, "l", v, sizeof v);
+            if(pr == -1) v[0] = 0; else if(pr){ bad = 1; break; }
+            int w = snprintf(rt.cmd.text + o, sizeof rt.cmd.text - o, "%s\n", v);
+            if(w < 0 || (size_t)w >= sizeof rt.cmd.text - o) bad = 1; else o += (size_t)w;
+        }
+        rmt_look_t lk;
+        if(bad || rmt_look_parse(rt.cmd.text, &lk)){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LOOK; rt.cmd.arg = 1;
         return rt;
     }
     if(!strcmp(ep, "party")){
@@ -691,6 +709,61 @@ int rmt_upload_name(const char *guest, const char *file, char *out, size_t cap){
     if(out[0] == '.') out[0] = '_';
     return 0;
 }
+const char RMT_LOOK_DEFAULT[] =
+    "# diskOS Remote Control: the favourite symbols and colours each browser can choose from\n"
+    "# symbol=<one symbol>   (emoji keep their own colours)\n"
+    "symbol=\xe2\x9d\xa4\xef\xb8\x8f\nsymbol=\xe2\xad\x90\nsymbol=\xe2\x98\xad\nsymbol=\xf0\x96\xa4\x90\nsymbol=\xf0\x90\x95\xa3\n"
+    "# color=<name> #<dark theme> [#<light theme>]\n"
+    "color=Red #ff4d5e #d61f3b\ncolor=Yellow #ffcc33 #c99700\ncolor=Orange #ff9f43 #d35f00\ncolor=Pink #ff7eb6 #d6337a\n"
+    "color=Purple #b48cff #7a4fd6\ncolor=Blue #4da3ff #0a66d1\ncolor=Green #3ccf7a #1a8f4c\ncolor=White #f2f2f2 #8a8a8a\n"
+    "color=Black #000000\n";
+static int hex_ok(const char *h){
+    if(strlen(h) != 7 || h[0] != '#') return 0;
+    for(int i = 1; i < 7; i++) if(!isxdigit((unsigned char)h[i])) return 0;
+    return 1;
+}
+int rmt_look_parse(const char *text, rmt_look_t *lk){
+    memset(lk, 0, sizeof *lk);
+    int ln = 0;
+    for(const char *l = text ? text : ""; *l; ){
+        const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l);
+        char line[160]; ln++;
+        if(n >= sizeof line) return ln;
+        memcpy(line, l, n); line[n] = 0;
+        l += n + (e ? 1 : 0);
+        while(n && (line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = 0;
+        char *p = line; while(*p == ' ' || *p == '\t') p++;
+        if(!*p || *p == '#') continue;
+        for(char *q = p; *q; q++) if((unsigned char)*q < 0x20 || *q == '<' || *q == '"' || *q == '\\') return ln;
+        if(!strncmp(p, "symbol=", 7)){
+            const char *v = p + 7;
+            if(!v[0] || strlen(v) >= sizeof lk->sym[0] || strchr(v, ' ') || lk->nsym >= RMT_LOOK_SYMS) return ln;
+            snprintf(lk->sym[lk->nsym++], sizeof lk->sym[0], "%s", v);
+        } else if(!strncmp(p, "color=", 6)){
+            char *v = p + 6, *h1 = strchr(v, '#');
+            if(!h1 || h1 == v || lk->ncol >= RMT_LOOK_COLS) return ln;
+            char *ne = h1; while(ne > v && ne[-1] == ' ') ne--;
+            if(ne == v || (size_t)(ne - v) >= sizeof lk->col[0].name) return ln;
+            char d[16] = "", li[16] = "", extra[4] = "";
+            if(sscanf(h1, "%15s %15s %3s", d, li, extra) == 3 || !hex_ok(d) || (li[0] && !hex_ok(li))) return ln;
+            snprintf(lk->col[lk->ncol].name, sizeof lk->col[0].name, "%.*s", (int)(ne - v), v);
+            snprintf(lk->col[lk->ncol].dark, 8, "%.7s", d); snprintf(lk->col[lk->ncol].light, 8, "%.7s", li[0] ? li : d);
+            for(int i = 0; i < lk->ncol; i++) if(!strcmp(lk->col[i].name, lk->col[lk->ncol].name)) return ln;   /* names pick them */
+            lk->ncol++;
+        } else return ln;
+    }
+    return lk->nsym && lk->ncol ? 0 : ln + 1;
+}
+void rmt_look_json(rmt_buf_t *b, const rmt_look_t *lk){
+    rmt_buf_put(b, "\"symbols\":[");
+    for(int i = 0; i < lk->nsym; i++){ if(i) rmt_buf_put(b, ","); rmt_buf_str(b, lk->sym[i]); }
+    rmt_buf_put(b, "],\"colors\":[");
+    for(int i = 0; i < lk->ncol; i++){
+        rmt_buf_put(b, i ? ",{\"name\":" : "{\"name\":"); rmt_buf_str(b, lk->col[i].name);
+        rmt_buf_printf(b, ",\"dark\":\"%s\",\"light\":\"%s\"}", lk->col[i].dark, lk->col[i].light);
+    }
+    rmt_buf_put(b, "]");
+}
 int rmt_party_name_ok(const char *s){
     size_t n = s ? strlen(s) : 0;
     if(n < 2 || n > RMT_PARTY_NAME_MAX || !strcasecmp(s, "api") || !strcasecmp(s, "system")) return 0;
@@ -831,6 +904,7 @@ rmt_route_t rmt_route_party(const rmt_req_t *r, const char *party){
     case RMT_R_CMD:
         switch(a.cmd.kind){
         case RMT_CMD_COVER: case RMT_CMD_NEXT: case RMT_CMD_RADIO_SEARCH: case RMT_CMD_PARTY_RADIO: case RMT_CMD_PARTY_STATIONS: ok = 1; break;
+        case RMT_CMD_LOOK: ok = !a.cmd.arg; break;                 /* the choices, not changing them */
         case RMT_CMD_GAME: case RMT_CMD_GAME_SEARCH: ok = 1; break;
         case RMT_CMD_VOLUME:                                       /* the guests' scale: 100 = the host's maximum */
             ok = 1; if(a.cmd.arg > 100){ memset(&a.cmd, 0, sizeof a.cmd); a.kind = RMT_R_BAD_PARAM; }

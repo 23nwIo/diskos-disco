@@ -185,6 +185,20 @@ static void test_party(void){
     CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12&f=a.mp3 HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", 80, "Fest_1", &uc, &ul, &uh) == -1);
     CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12&f=a.mp3 HTTP/1.1\r\nContent-Length: -5\r\n\r\n", 70, "Fest_1", &uc, &ul, &uh) == -1);
     CHECK(rmt_upload_head("POST /Fest_1/api/upload?g=abcdefgh12 HTTP/1.1\r\nContent-Length: 5\r\n\r\n", 60, "Fest_1", &uc, &ul, &uh) == -1);   /* no file name */
+    /* the favourite symbols and colours to choose from (look.conf) */
+    rmt_look_t lk;
+    CHECK(rmt_look_parse(RMT_LOOK_DEFAULT, &lk) == 0 && lk.nsym == 5 && !strcmp(lk.sym[0], "\xe2\x9d\xa4\xef\xb8\x8f") && !strcmp(lk.sym[4], "\xf0\x90\x95\xa3")
+          && lk.ncol == 9 && !strcmp(lk.col[0].name, "Red") && !strcmp(lk.col[0].light, "#d61f3b") && !strcmp(lk.col[8].name, "Black") && !strcmp(lk.col[8].light, "#000000"));
+    CHECK(rmt_look_parse("# x\nsymbol=*\n\ncolor=Dark Red #800000\r\n", &lk) == 0 && lk.nsym == 1 && !strcmp(lk.col[0].name, "Dark Red") && !strcmp(lk.col[0].dark, "#800000"));
+    CHECK(rmt_look_parse("symbol=*\ncolor=Red #12345\n", &lk) == 2 && rmt_look_parse("symbol=a b\ncolor=R #123456\n", &lk) == 1);
+    CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\ncolor=R #654321\n", &lk) == 3 && rmt_look_parse("symbol=*\n", &lk) == 2);   /* names pick them; no colour */
+    CHECK(rmt_look_parse("symbol=<b>\ncolor=R #123456\n", &lk) == 1 && rmt_look_parse("colour=R #123456\n", &lk) == 1 && rmt_look_parse("symbol=*\ncolor=#123456\n", &lk) == 2);
+    rmt_buf_t lb = {0}; rmt_look_parse("symbol=*\ncolor=R #123456 #abcdef\n", &lk); rmt_look_json(&lb, &lk); char *lj = rmt_buf_take(&lb);
+    CHECK(lj && !strcmp(lj, "\"symbols\":[\"*\"],\"colors\":[{\"name\":\"R\",\"dark\":\"#123456\",\"light\":\"#abcdef\"}]")); free(lj);
+    r = req("POST", p("/api/look"), "l=symbol%3D%E2%AD%90&l=&l=color%3DBlack+%23000000");
+    CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_LOOK && r.cmd.arg == 1 && !strcmp(r.cmd.text, "symbol=\xe2\xad\x90\n\ncolor=Black #000000\n"));
+    CHECK(req("POST", p("/api/look"), "l=symbol%3D%E2%AD%90").kind == RMT_R_BAD_PARAM && req("GET", p("/api/look"), NULL).cmd.arg == 0);
+    CHECK(preq("GET", "/Fest_1/api/look", NULL).kind == RMT_R_CMD && preq("POST", "/Fest_1/api/look", "l=symbol%3D*&l=color%3DR+%23123456").kind == RMT_R_NOT_FOUND);   /* guests choose, the host decides */
     /* the host's settings */
     r = req("POST", p("/api/party"), "on=1&name=Fest_1&maxvol=80&total=5");
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_PARTY && r.cmd.arg == 1 && r.cmd.party[RMT_P_ON] == 1 && r.cmd.party[RMT_P_MAXVOL] == 80
@@ -638,6 +652,14 @@ static void *emu(void *a){
             rmt_cmd_t c;
             if(rsrv_take(&c)){
                 g_last = c; g_ncmd++;
+                if(c.kind == RMT_CMD_LOOK){                       /* the stand-in card: look.conf in RAM */
+                    static char lt[3072]; rmt_look_t lk;
+                    if(c.arg) snprintf(lt, sizeof lt, "%s", c.text);
+                    if(!lt[0] || rmt_look_parse(lt, &lk)) rmt_look_parse(RMT_LOOK_DEFAULT, &lk);
+                    rmt_buf_t b = {0}; rmt_buf_put(&b, "{\"ok\":true,"); rmt_look_json(&b, &lk);
+                    rmt_buf_put(&b, ",\"on_card\":false,\"bad_line\":0,\"text\":"); rmt_buf_str(&b, lt[0] ? lt : RMT_LOOK_DEFAULT); rmt_buf_put(&b, "}");
+                    rsrv_done_body(1, NULL, rmt_buf_take(&b));
+                } else
                 if((c.guest && c.kind != RMT_CMD_COVER) || c.kind == RMT_CMD_PARTY) fake_party(&c, &s);
                 else if(c.kind == RMT_CMD_PAUSE) rsrv_done(0, "Not in local \"playback\"");
                 else if(c.kind == RMT_CMD_BROWSE) rsrv_done_body(1, NULL, fake_browse(&c));

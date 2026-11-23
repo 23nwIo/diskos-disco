@@ -8,7 +8,9 @@
 <div id=sys class='card hide'><label for=wm>Working mode</label><select id=wm><option value=0>Playback<option value=1>USB DAC<option value=2>Bluetooth DAC
 <option value=4>Bluetooth streaming<option value=5>AirPlay<option value=3>USB storage</select><button id=rbt class=more>Restart the Disc</button>
 <label for=lka>Page colour (this browser)</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
-<label for=lkf>Favourites</label><select id=lkf><option value=heart>Hearts<option value=star>Stars<option value=diamond>Diamonds<option value=circle>Dots<option value=flower>Flowers</select><label for=lkc>Their colour</label><select id=lkc><option value=red>Red<option value=yellow>Yellow<option value=orange>Orange<option value=pink>Pink<option value=purple>Purple<option value=blue>Blue<option value=green>Green<option value=white>White</select></div>
+<label for=lkf>Favourites</label><select id=lkf></select><label for=lkc>Their colour</label><select id=lkc></select>
+<details id=lkd><summary>Symbols and colours to choose from</summary><textarea id=lkt rows=14 spellcheck=false aria-label='Symbols and colours' style='width:100%;margin-top:.5em;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:.6em;padding:.6em;font:inherit;font-size:.9em'></textarea>
+<div class=hint>For every page and guest; saved on the SD card (.diskos/state/look.conf). One per line: symbol=&lt;symbol&gt;, color=&lt;name&gt; #&lt;dark theme&gt; [#&lt;light theme&gt;]. Emoji keep their own colours.</div><button id=lks class=more>Save</button></details></div>
 <div id=stv class=hide></div>
 <div id=ptv class='hide blk'><div class=card><label for=pmo>Public mode</label><div class=hd><select id=pmo data-k=on style='flex:1;margin-right:.5em'><option value=0>Off<option value=1>Jukebox: guests add songs<option value=2>Hit&amp;Guess: music quiz</select><button id=pend>End</button></div>
 <div class=hint id=pmh></div>
@@ -82,7 +84,7 @@ function party(){if(V!=='public'||document.hidden)return;fetch('api/party',{cach
 pmode(c.on);if(document.activeElement!==$('pnm')&&!$('pnm').dataset.e)$('pnm').value=c.name;var u=c.name?location.origin+'/'+c.name+'/':'';$('plw').classList.toggle('hide',!u);$('pl').textContent=u+(c.on?'':' (off)');
 var g=$('pg');g.textContent='';if(!j.guests.length)g.textContent='None yet';g.style.padding=j.guests.length?'0':'';j.guests.forEach(function(x){var k=document.createElement('div');k.className='kv';var a=document.createElement('span'),b=document.createElement('span');
 a.textContent=x.name||'(no name)';b.textContent=x.queued+' queued · seen '+(x.seen_s<60?'just now':Math.round(x.seen_s/60)+' min ago');k.appendChild(a);k.appendChild(b);g.appendChild(k);
-(x.stations||[]).forEach(function(t){var d=document.createElement('div');d.className='hint';d.style.padding='0 1em .3em';d.textContent=SYM[LK.fav][0]+' '+t.name+' \u2014 '+t.url;g.appendChild(d)})})}).catch(function(){say('Player not reachable')});
+(x.stations||[]).forEach(function(t){var d=document.createElement('div');d.className='hint';d.style.padding='0 1em .3em';d.textContent=favsym()+' '+t.name+' \u2014 '+t.url;g.appendChild(d)})})}).catch(function(){say('Player not reachable')});
 fetch('api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){var le=s.list_end;$('pe').disabled=!le;$('pen').textContent=le?'The same setting as After the list ends on the Disc and on the Remote page.':'Only with the own player (Settings > Playback).';
 if(le){if(document.activeElement!==$('pe'))$('pe').value=le.mode;$('psw').classList.toggle('hide',le.mode<2);$('pes').textContent=lesay(le)}else $('psw').classList.add('hide')}).catch(function(){})}
 setInterval(party,3000);
@@ -97,6 +99,7 @@ function tab(v){if(v==='party')v='public';if(!$(v+'t'))v='status';V=v;[].forEach
 $('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');$('ptv').classList.toggle('hide',v!=='public');say('');
 if(v==='scr'){shot();return}if(v==='public'){party();return}if(v==='status'){$('stv').textContent='Loading…';status();return}$('btl').textContent='Loading…';bt()}
 [].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
-$('lka').value=LK.acc;$('lkf').value=LK.fav;$('lka').onchange=function(){LK.acc=$('lka').value;look()};$('lkf').onchange=function(){LK.fav=$('lkf').value;look()};$('lkc').value=LK.fc;$('lkc').onchange=function(){LK.fc=$('lkc').value;look()};
+$('lka').value=LK.acc;$('lka').onchange=function(){LK.acc=$('lka').value;look()};function lkfill(j){if(document.activeElement!==$('lkt'))$('lkt').value=j.text;if(j.bad_line)say('look.conf line '+j.bad_line+' is not right - the defaults are used')}
+looks(lkfill);$('lks').onclick=function(){cmd('look',$('lkt').value.split('\n').map(function(l){return'l='+encodeURIComponent(l)}).join('&')).then(function(ok){if(ok){say('Saved',1);$('lkt').blur();looks(lkfill)}else say('A line is not right: symbol=… or color=Name #rrggbb [#rrggbb]')})};
 document.addEventListener('visibilitychange',function(){refresh();shot()});tab(location.hash.slice(1));
 </script></html>

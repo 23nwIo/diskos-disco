@@ -57,6 +57,7 @@ typedef enum {
     RMT_CMD_GAME_SEARCH,     /* the player whose turn it is searches the game's songs: q, offset, limit */
     RMT_CMD_GAME_ADMIN,      /* the host's game page: arg 0 read, 1 an action (sub) or the setup (game[], name = folder, id = playlist) */
     RMT_CMD_BANDCAMP,        /* Bandcamp (bandcamp.h): sub = rmt_bc_t; q = search text, name = a Bandcamp address, pos = track */
+    RMT_CMD_LOOK,            /* the favourite symbols and colours to choose from: arg 0 read (JSON), 1 save text (the file's lines) */
     RMT_CMD_LIST_END         /* Playback > After the List Ends: arg = mode 0 stop, 1 shuffle all, 2 station; pos = radio favourite
                               * (1-based, 0 = keep the station), name = its url (checked) */
 } rmt_cmd_kind_t;
@@ -250,6 +251,19 @@ void rmt_buf_put(rmt_buf_t *b, const char *s);
 void rmt_buf_printf(rmt_buf_t *b, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void rmt_buf_str(rmt_buf_t *b, const char *s);   /* a quoted, escaped JSON string */
 char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NULL after oom */
+
+/* The favourite symbols and colours the pages offer (each browser picks one of each; Jo, 2026-11-23). Kept in
+ * <card>/.diskos/state/look.conf: "symbol=<symbol>" and "color=<name> #rrggbb [#rrggbb for the light theme]" lines,
+ * '#' comments. Without the file, RMT_LOOK_DEFAULT. */
+#define RMT_LOOK_FILE "look.conf"
+#define RMT_LOOK_SYMS 16
+#define RMT_LOOK_COLS 32
+typedef struct { int nsym, ncol; char sym[RMT_LOOK_SYMS][20]; struct { char name[24], dark[8], light[8]; } col[RMT_LOOK_COLS]; } rmt_look_t;
+extern const char RMT_LOOK_DEFAULT[];
+/* 0 ok (at least one symbol and one colour), else the number of the first bad line (or of the last line + 1 when one
+ * kind is missing / there are too many) */
+int  rmt_look_parse(const char *text, rmt_look_t *lk);
+void rmt_look_json(rmt_buf_t *b, const rmt_look_t *lk);   /* "symbols":[…],"colors":[{"name","dark","light"}] */
 
 /* The pages (static HTML, remote_page.c, generated from ui/remote_page/ by ui/tools/gen_remote_page.py): the control
  * page at /<token>/ (Now playing, queue, library) and the system page at /<token>/system (Status, Bluetooth, Screen).

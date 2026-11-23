@@ -1,11 +1,14 @@
-/* the page's look, per browser: accent colour, the favourite symbol and its colour (each colour: dark, light theme) */
-var LK={acc:'orange',fav:'heart',fc:'red'},ACC={orange:['#ff9f43','#d35f00'],blue:['#4da3ff','#0a66d1'],green:['#3ccf7a','#1a8f4c'],purple:['#b48cff','#7a4fd6'],red:['#ff6b6b','#cc2b2b']};
-var SYM={heart:['\u2665','\u2661'],star:['\u2605','\u2606'],diamond:['\u25c6','\u25c7'],circle:['\u25cf','\u25cb'],flower:['\u273f','\u2740']};
-var FCOL={red:['#ff4d5e','#d61f3b'],yellow:['#ffcc33','#c99700'],orange:['#ff9f43','#d35f00'],pink:['#ff7eb6','#d6337a'],purple:['#b48cff','#7a4fd6'],blue:['#4da3ff','#0a66d1'],green:['#3ccf7a','#1a8f4c'],white:['#f2f2f2','#333333']};
-try{var lk=JSON.parse(localStorage.getItem('look')||'{}');if(ACC[lk.acc])LK.acc=lk.acc;if(SYM[lk.fav])LK.fav=lk.fav;
-if(FCOL[lk.fc])LK.fc=lk.fc;else if(lk.fav==='star')LK.fc='yellow'}catch(e){}   /* before 2026-11-22: hearts were red, stars yellow */
+/* the page's look, per browser: accent colour, the favourite symbol and its colour. The choices come from the Disc
+ * (api/look: look.conf on the card, which the host edits on the system page); this browser keeps what it picked. */
+var LK={acc:'orange',fav:'',fc:''},ACC={orange:['#ff9f43','#d35f00'],blue:['#4da3ff','#0a66d1'],green:['#3ccf7a','#1a8f4c'],purple:['#b48cff','#7a4fd6'],red:['#ff6b6b','#cc2b2b']};
+var LOOK={symbols:['\u2764\ufe0f'],colors:[{name:'Red',dark:'#ff4d5e',light:'#d61f3b'}]};   /* until api/look answers */
+try{var lk=JSON.parse(localStorage.getItem('look')||'{}');if(ACC[lk.acc])LK.acc=lk.acc;
+LK.fav=lk.fav==='heart'?'\u2764\ufe0f':lk.fav==='star'?'\u2b50':typeof lk.fav==='string'?lk.fav:'';   /* before 2026-11-23: names */
+LK.fc=typeof lk.fc==='string'?lk.fc.charAt(0).toUpperCase()+lk.fc.slice(1):''}catch(e){}
+function favsym(){return LOOK.symbols.indexOf(LK.fav)>=0?LK.fav:LOOK.symbols[0]}
+function favcol(){for(var i=0;i<LOOK.colors.length;i++)if(LOOK.colors[i].name===LK.fc)return LOOK.colors[i];return LOOK.colors[0]}
 function look(){var lt=matchMedia('(prefers-color-scheme: light)').matches?1:0,d=document.documentElement.style;d.setProperty('--acc',ACC[LK.acc][lt]);
-d.setProperty('--fav',FCOL[LK.fc][lt]);try{localStorage.setItem('look',JSON.stringify(LK))}catch(e){}
+d.setProperty('--fav',favcol()[lt?'light':'dark']);try{localStorage.setItem('look',JSON.stringify(LK))}catch(e){}
 [].forEach.call(document.querySelectorAll('.fa'),function(b){star(b,b.dataset.on==='1')})}
 var $=function(i){return document.getElementById(i)};
 function fm(ms){var s=Math.floor(ms/1000);return Math.floor(s/60)+':'+('0'+s%60).slice(-2)}
@@ -15,7 +18,7 @@ function cmdj(c,b){return fetch('api/'+c,{method:'POST',headers:{'Content-Type':
 .then(function(r){return r.json().then(function(j){say(j.ok?'':(j.message||'Not possible right now'));setTimeout(refresh,300);return j})})
 .catch(function(){say('Player not reachable');return{}})}
 function cmd(c,b){return cmdj(c,b).then(function(j){return !!j.ok})}
-function star(b,on){b.classList.add('fa');b.dataset.on=on?'1':'0';b.textContent=SYM[LK.fav][on?0:1];b.setAttribute('aria-label',on?'Remove from favourites':'Save to favourites')}
+function star(b,on){b.classList.add('fa');b.dataset.on=on?'1':'0';b.textContent=favsym();b.classList.toggle('off',!on);b.setAttribute('aria-label',on?'Remove from favourites':'Save to favourites')}
 /* edits: a bottom sheet of actions; prompt/confirm for names and deletes */
 function sheet(t,acts){var s=$('sh');s.textContent='';var h=document.createElement('b');h.textContent=t;s.appendChild(h);
 acts.concat([['Cancel',null]]).forEach(function(a){var b=document.createElement('button');b.textContent=a[0];b.onclick=function(){shut();if(a[1])a[1]()};s.appendChild(b)});
@@ -37,4 +40,9 @@ function gname(){try{return localStorage.getItem('pn')||localStorage.getItem('hn
 function gname_set(n){try{localStorage.setItem('pn',n);localStorage.removeItem('hn')}catch(e){}}
 function moved(m){if(!/reload the page/.test(m||''))return 0;var t=0;try{t=+sessionStorage.getItem('mv')||0;sessionStorage.setItem('mv',Date.now())}catch(e){}
 if(Date.now()-t>5000)location.reload();return 1}   /* at most one reload in 5 s: never a reload loop */
-look();try{matchMedia('(prefers-color-scheme: light)').addEventListener('change',look)}catch(e){}
+/* the choices; the selects #lkf (the symbols as they are) and #lkc (the colours' names) when the page has them */
+function fillsel(){var f=$('lkf'),c=$('lkc');if(f){f.textContent='';LOOK.symbols.forEach(function(s){var o=document.createElement('option');o.value=o.textContent=s;f.appendChild(o)});f.value=favsym();
+f.onchange=function(){LK.fav=f.value;look();if(typeof qver!=='undefined')qver=-1}}
+if(c){c.textContent='';LOOK.colors.forEach(function(x){var o=document.createElement('option');o.value=o.textContent=x.name;c.appendChild(o)});c.value=favcol().name;c.onchange=function(){LK.fc=c.value;look()}}}
+function looks(then){fetch('api/look',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok||!j.symbols.length||!j.colors.length)return;LOOK=j;fillsel();look();if(then)then(j)}).catch(function(){})}
+look();looks();try{matchMedia('(prefers-color-scheme: light)').addEventListener('change',look)}catch(e){}

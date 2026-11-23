@@ -27,6 +27,7 @@
 #include "sdio.h"
 #include "folderbrowser.h"
 #include "radio.h"
+#include "sdstate.h"
 #include "bandcamp.h"
 #include "scanner.h"
 #include "system.h"
@@ -1122,11 +1123,33 @@ static int bandcamp_cmd(const rmt_cmd_t *c, const char **why, char **body){
     }
     *why = "Unknown command"; return -1;
 }
+/* the favourite symbols and colours to choose from (look.conf on the card, else the defaults); arg 1 saves new ones */
+static char *look_json(const rmt_cmd_t *c, const char **why){
+    rmt_look_t lk; char *t = NULL; size_t n = 0; int r = 0;
+    if(c->arg){
+        if(rmt_look_parse(c->text, &lk)){ *why = "Those lines don't work as symbols and colours"; return NULL; }
+        int w = -1;
+        if(sds_begin()){ w = sds_mkdir() == 0 ? sds_write(RMT_LOOK_FILE, c->text, strlen(c->text)) : -1; sds_end(); }
+        if(w){ *why = "Couldn't save on the SD card - is a card in the Disc?"; return NULL; }
+    }
+    if(sds_begin()){ r = sds_read(RMT_LOOK_FILE, &t, &n, 8192); sds_end(); }
+    const char *src = r == 1 ? t : RMT_LOOK_DEFAULT;
+    int bad = rmt_look_parse(src, &lk);
+    if(bad){ fprintf(stderr, "remote: %s line %d is not a symbol or colour - using the defaults\n", RMT_LOOK_FILE, bad); rmt_look_parse(RMT_LOOK_DEFAULT, &lk); }
+    rmt_buf_t b; memset(&b, 0, sizeof b);
+    rmt_buf_put(&b, "{\"ok\":true,"); rmt_look_json(&b, &lk);
+    rmt_buf_printf(&b, ",\"on_card\":%s,\"bad_line\":%d,\"text\":", r == 1 ? "true" : "false", bad);
+    rmt_buf_str(&b, src); rmt_buf_put(&b, "}");
+    free(t);
+    char *out = rmt_buf_take(&b); if(!out) *why = "Out of memory";
+    return out;
+}
 static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
     *body = NULL; g_blob_len = 0;
     if(c->guest || c->kind == RMT_CMD_PARTY) return party_dispatch(c, why, body);
     if(c->kind == RMT_CMD_GAME_ADMIN) return hitguess_dispatch(c, why, body);   /* checks, then back here as the host */
     if(c->kind == RMT_CMD_COVER){ *body = read_cover(why); return *body ? 0 : -1; }
+    if(c->kind == RMT_CMD_LOOK){ *body = look_json(c, why); return *body ? 0 : -1; }
     if(c->kind == RMT_CMD_SCREEN){
         size_t n = 0; *body = rscr_bmp(&n, why);
         g_blob_len = (int)n;
