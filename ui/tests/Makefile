@@ -45,8 +45,8 @@ trace_launch_test: trace_launch_test.c ../trace_launch.h ../wd_override.h
 own_player_test: own_player_test.c ../own_player.h
 	$(CC) $(CFLAGS) -I.. own_player_test.c -o $@
 # the library DB: copy to the card, card connection settings, SOURCE_ID (ui/libdb.h)
-libdb_test: libdb_test.c ../libdb.h ../libdb_migrate.c sqlite3_host.o
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -DLIBDB_OWN_PID='"/tmp/diskos-libdb-test-player"' -I.. libdb_test.c ../libdb_migrate.c sqlite3_host.o -lpthread -lm -ldl -o $@
+libdb_test: ../libdb_vfs.c libdb_test.c ../libdb.h ../libdb_migrate.c sqlite3_host.o
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DLIBDB_OWN_PID='"/tmp/diskos-libdb-test-player"' -I.. libdb_test.c ../libdb_migrate.c ../libdb_vfs.c sqlite3_host.o -lpthread -lm -ldl -o $@
 libdb_vfs_test: libdb_vfs_test.c ../libdb.h ../libdb_vfs.c sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. libdb_vfs_test.c ../libdb_vfs.c sqlite3_host.o -lpthread -lm -ldl -o $@
 

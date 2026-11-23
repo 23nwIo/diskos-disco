@@ -25,11 +25,10 @@ Roulette, SongSphere and Disc Shelf.
   is only the move's source.
 - **The stock player**: the flash DB, the same as before.
 
-A scan is refused (`scanner_start` returns -2, "Move the library to the SD card first") while the card has no
-`library.db` and there is a flash library: it would create a library.db with only the songs, and the move would
-then refuse to overwrite it, leaving favourites and playlists behind.
+A scan is refused (`scanner_start` returns -2) while the card has no `library.db`: the UI makes it first, with every
+table, and starts the scan itself.
 
-**Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`), migration device-verified by Jo. Build with
+**Status (2026-11-23):** switched on (`LIBDB_CARD_ENABLED 1`); the earlier copy-based move was device-verified by Jo, the new library + take-over (2026-11-23) is not yet. Build with
 `-DLIBDB_CARD_ENABLED=0` to keep the flash DB only.
 
 Which player runs is told by the launcher (`player_launch_prepare` in `ui/main.c`). Before it execs the player, it
@@ -113,48 +112,58 @@ else is ignored.
 
 On the flash DB there is no `SOURCE_ID` table, and the scanner keeps no IDs there.
 
-## Moving the library to the card
+## A new library on the card
 
-`libdb_migrate()` in `ui/libdb_migrate.c` does the copy; `ui/libdb_ui.c` runs it (checked every 5 s from main.c):
+Decided with Jo on 2026-11-23: the card library is never a copy of the flash library's songs. It is made new and
+filled by a scan of this card; afterwards the user's data from the flash library is taken over for the songs this
+card has. `ui/libdb_migrate.c` does the work, `ui/libdb_ui.c` runs it (checked every 5 s from main.c). There is no
+Maintenance entry.
 
-1. The migration starts only when the own player runs, the card is local and writable, no scan runs, the card has no
-   `library.db`, and external power is connected. Without power, a notice asks for it, once per boot. Until then,
-   everything stays on the flash DB.
-2. It waits until nothing plays. A full-screen overlay says that the migration is running, that the power must stay connected and
-   that the card must not be removed.
-3. The flash DB is copied with SQLite's backup API, as one consistent snapshot, to `library.db.tmp`.
-4. The stock player's queue tables (`LIST_SONG_0`, `LIST_SONG_3`) are dropped. The own player keeps its list in RAM.
-5. The tables above are added, then `integrity_check` and `foreign_key_check` run.
-6. The file is fsynced, renamed to `library.db`, and the folder is fsynced.
-7. The overlay is removed. A short "done" message shows, then the Disc reboots.
+1. **New library** (`libdb_create`). When the own player runs and the card has no `library.db`, and external power
+   is connected and nothing plays (without power, a notice asks for it once per boot):
+   - `library.db.tmp` gets the flash library's schema, without songs and without the stock queue tables
+     (`LIST_SONG_*`). Without a flash library it gets the stock tables (V2.57 `.schema` from Jo's Disc, in
+     `STOCK_SCHEMA`); diskOS's own tables are made on first use as before.
+   - The tables below are added, `DISKOS_META` gets `LIBDB_RESCAN` = 1 and, with a flash library, `LIBDB_IMPORT` = 1.
+   - `integrity_check` and `foreign_key_check` run, the file is fsynced, renamed to `library.db`, the folder fsynced.
+   - A full-screen overlay ("Creating the library on the SD card", keep the power connected, do not remove the card)
+     covers it and is removed when it ends, either way. Then the Disc restarts.
+2. **Scan.** After the restart, `LIBDB_RESCAN` = 1 starts a scan of the card (once; the flag is cleared when it
+   starts). Until the card has a `library.db`, `scanner_start()` refuses (-2): a scan would make a library with only
+   the scanner's tables.
+3. **Take-over** (`libdb_import`). When no scan is pending or running, the library has songs and `LIBDB_IMPORT` = 1:
+   behind the overlay again ("Taking over favourites and playlists"), the flash library is attached read-only and,
+   in one transaction, every table both have is copied, except the songs, the queue, resume and scan bookkeeping
+   (`SONG`, `LIST_SONG_*`, `PLAY_LIST`, `MEMORY_PLAY`, `BOOKS`, `DISKOS_CUE_FILES`, `DISKOS_BOOK_MOVED`,
+   `DISKOS_META`, `SOURCE_ID`):
+   - tables with a `PATH` column (favourites `MY_LOVE`, playlist members `CUSTOM_PLAYLIST`, `RECORD_SONG`,
+     `PLAY_STATS`, `PLAY_LOG`): only rows whose PATH is a song in the card library; their own `ID` is renumbered;
+   - tables without one (playlist names `CUSTOM_PLAYLIST_INDEX` / `PLAYLIST_INFO`, `PEQ`, `BOOK_PROGRESS`, the
+     playlist sync tables): whole, IDs kept, so playlist members still find their playlist;
+   - `INSERT OR IGNORE`: nothing already in the card library is replaced. Then `LIBDB_IMPORT` = 0 and the library
+     view reloads. The log lists what came over (`libdb: taken over from the flash library: MY_LOVE 12, ...`).
 
-If anything fails, `library.db.tmp` is removed and the flash DB is untouched, and the next start tries again.
-
-**Manual start:** Settings > System > Maintenance > Move Library to SD Card. It checks the same conditions in turn and
-shows the first one that fails as a toast (the full text goes to `/tmp/diskos_boot.log`, `libdb:`). An existing
-`library.db` always stops it. When every check passes, a confirmation starts the same move; a failure then toasts the
-first error with its L1xx code.
-
-A card whose files are not in the flash DB gets the copy too, so playlists and favourites come along. The copy checks
-up to 64 random card paths from it; when fewer than half are on this card, it is marked (`DISKOS_META`
-`LIBDB_RESCAN` = 1), and after the restart the UI starts a rescan once.
+If anything fails, nothing half-made stays (`library.db.tmp` removed, the take-over rolled back), the flash DB is
+untouched, and the next start tries again. Favourites and playlist members keep the tag values the flash library had
+for them (as the stock player keeps them).
 
 ### Error codes
 
 | Code | Meaning |
 | --- | --- |
-| L101 | The flash DB can't be opened. |
+| L101 | The flash DB can't be opened or attached. |
 | L102 | `library.db.tmp` can't be created on the card (the folder is missing, the card is read-only or full). |
-| L103 | The copy failed (the DB stayed locked, I/O error, card full). |
-| L104 | Dropping the queue tables or adding diskOS's tables failed. |
+| L103 | Reading the flash schema or copying the user's data failed (DB locked, I/O error, card full). |
+| L104 | Adding the stock or diskOS's tables, or the meta values, failed. |
 | L105 | `integrity_check` or `foreign_key_check` found a problem in the copy. |
 | L106 | fsync or close failed, so the copy may not be on the card. |
 | L107 | Renaming `library.db.tmp` to `library.db` failed. |
-| L108 | `library.db` already exists. A migration never overwrites one. |
+| L108 | `library.db` already exists. A new library never overwrites one. |
 
 ## Tests
 
-- `ui/tests/libdb_test.c` covers the copy, the connection settings, SOURCE_ID, the refusals and the player marker.
+- `ui/tests/libdb_test.c` covers the new library (flash schema and stock tables), the take-over by PATH, the
+  connection settings, SOURCE_ID, the refusals and the player marker, with the card DB opened through libdb_vfs.
 - `ui/tests/scanner_srcid_test.c` covers reading the tags and writing SOURCE_ID.
 - `ui/tests/libdb_vfs_test.c` covers closing the files under open connections, including four threads querying
   through a hold, and checks via `/proc/self/fd` that no file stays open on the card.

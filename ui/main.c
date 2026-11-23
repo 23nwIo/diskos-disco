@@ -1252,7 +1252,7 @@ void ui_rescan_library(void){
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback to scan"); return; }
     if(!sd_io_allowed()){ ui_toast("SD card is not ready"); return; }
     int sr = scanner_start();
-    if(sr == -2){ ui_toast("Move the library to the SD card first (Settings > Maintenance)"); return; }
+    if(sr == -2){ ui_toast("Connect power: the SD card library is created first"); return; }
     if(sr != 0){ ui_toast("Couldn't start library scan"); return; }
     if(th_zune()){ void zune_scan_show(void); zune_scan_show(); return; }
     ui_toast("Scanning library...");
@@ -1310,7 +1310,13 @@ static void libdb_watch(void){
     library_ensure_capacity();
     library_refresh();
 }
-void libdb_ui_tick(void);                           /* libdb_ui.c: moving the library to the card */
+/* libdb_ui.c after the take-over from the flash library: show the card library as it is now */
+void ui_library_reload(void){
+    mdb_load();
+    library_ensure_capacity();
+    library_refresh();
+}
+void libdb_ui_tick(void);                           /* libdb_ui.c: the card library is made, scanned, filled */
 static void scanner_poll(lv_timer_t *t){
     (void)t;
     libdb_watch();

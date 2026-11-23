@@ -2003,10 +2003,9 @@ int scanner_cancel(void){
     return accepted;
 }
 int scanner_start(void){
-    /* A card without library.db, while there is a flash library to move there: the move first. A scan would create a
-     * library.db with only the songs, the move then refuses it (L108), and favourites and playlists stay behind
-     * (docs/LIBRARY_DB.md). Without a flash library a scan starts the card library from nothing. */
-    if(libdb_is_card(DB_PATH) && access(DB_PATH, F_OK) != 0 && access(LIBDB_FLASH, F_OK) == 0) return -2;
+    /* A card without library.db: the UI makes it first (libdb_ui.c, on external power), with every table, and then
+     * starts this scan itself. A scan here would make a library.db with only the scanner's tables (docs/LIBRARY_DB.md). */
+    if(libdb_is_card(DB_PATH) && access(DB_PATH, F_OK) != 0) return -2;
     if(!sd_io_begin()) return -1;
     pthread_mutex_lock(&g_mu);
     /* Refuse an overlapping start BEFORE touching the cancellation flag: clearing it first erased a

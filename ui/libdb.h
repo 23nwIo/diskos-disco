@@ -140,13 +140,17 @@ static inline int libdb_card_schema(sqlite3 *d){
         "INSERT OR REPLACE INTO DISKOS_META(K, V) VALUES('LIBDB_VERSION', 1);", 0, 0, 0);
 }
 
-/* Migration (libdb_migrate.c, mq_ui only): copy src (the flash DB) to dst (the card DB) as one consistent snapshot.
- * Writes dst.tmp, drops the stock player's queue tables (LIST_SONG_0, LIST_SONG_3: the own player keeps its list in
- * RAM), adds the tables above, marks it for a rescan (DISKOS_META LIBDB_RESCAN = 1) when most of a sample of its
- * card paths are missing on this card, checks integrity, fsyncs, renames to dst and fsyncs the folder. dst is never
- * half-written: on any failure dst.tmp is removed and src is untouched. 0, or an L1xx code (docs/LIBRARY_DB.md)
- * with err filled. */
+/* A new card library (libdb_migrate.c, mq_ui only; Jo 2026-11-23): never a copy of the flash library's songs.
+ * libdb_create() writes dst.tmp with the flash library's schema (src) or, without one, the stock tables, minus the
+ * stock player's queue tables (LIST_SONG_*: the own player keeps its list in RAM), adds the tables above, marks it
+ * for a scan (DISKOS_META LIBDB_RESCAN = 1) and, with a flash library, for the take-over (LIBDB_IMPORT = 1); checks
+ * integrity, fsyncs, renames to dst and fsyncs the folder. dst is never half-written: on any failure dst.tmp is
+ * removed and src is untouched.
+ * libdb_import(), after that scan: favourites, playlists, play history, audiobook progress, EQ curves, ... from the
+ * flash library, for the songs the card has (by PATH); summary lists "TABLE n" per table that got rows.
+ * Both: 0, or an L1xx code (docs/LIBRARY_DB.md) with err filled. */
 enum { LIBDB_E_OPEN_SRC = 101, LIBDB_E_OPEN_DST = 102, LIBDB_E_COPY = 103, LIBDB_E_SCHEMA = 104,
        LIBDB_E_CHECK = 105, LIBDB_E_SYNC = 106, LIBDB_E_RENAME = 107, LIBDB_E_EXISTS = 108 };
-int libdb_migrate(const char *src, const char *dst, char *err, int cap);
+int libdb_create(const char *src, const char *dst, char *err, int cap);
+int libdb_import(const char *src, const char *dst, char *err, int cap, char *summary, int scap);
 #endif

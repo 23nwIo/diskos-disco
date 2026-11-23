@@ -8,7 +8,7 @@ void scanner_abort(void);                     /* stop a running walk (SD access 
 int  scanner_cancel(void);                    /* user cancel: 1 = accepted (stops within ~1 s, DB rolled back), 0 = refused (not scanning / already committing) */
 enum { SCAN_OUT_NONE, SCAN_OUT_COMMITTED, SCAN_OUT_CANCELLED, SCAN_OUT_FAILED, SCAN_OUT_NO_SD };
 int  scanner_outcome(void);                   /* the finished scan's terminal outcome (SCAN_OUT_*) */
-int  scanner_start(void);                     /* begin a rescan; 0 = started, -1 = busy/failed, -2 = move the library to the card first */
+int  scanner_start(void);                     /* begin a rescan; 0 = started, -1 = busy/failed, -2 = the card library is not made yet */
 int  scanner_active(void);                    /* 1 while a scan is running */
 void scanner_progress(int *done, int *total); /* files done so far; total is 0 until finished */
 int  scanner_take_finished(void);             /* returns 1 exactly once after a scan finishes */
