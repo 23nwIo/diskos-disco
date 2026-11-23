@@ -18,6 +18,7 @@
 #include "config.h"
 #include "libdb.h"
 #include <dirent.h>
+#include <limits.h>          /* PATH_MAX (musl has it only here) */
 #include <fcntl.h>
 #include <strings.h>
 #include <sys/statvfs.h>
