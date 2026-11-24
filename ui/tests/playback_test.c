@@ -273,6 +273,15 @@ static void test_queuedb(void){
     CHECK(qd_artist_class(sysp) == 0 && qd_artist_class("/nonexistent/sys.db") == -1);
 }
 
+static int love_rows(sqlite3 *d, const char *path){
+    sqlite3_stmt *st; int n = -1;
+    if(sqlite3_prepare_v2(d, "SELECT COUNT(*) FROM MY_LOVE WHERE PATH=?1 AND TITLE IS NOT NULL;", -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, path, -1, SQLITE_STATIC);
+    if(sqlite3_step(st) == SQLITE_ROW) n = sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    return n;
+}
+
 /* The orderings are copies of ui/musicdb.c's: fail when the two drift apart. */
 static void squash(const char *in, char *out, size_t cap){
     size_t o = 0;
@@ -296,9 +305,11 @@ static void test_orders_in_step(void){
     CHECK(strstr(flat, want) != NULL);
 }
 
+static int core_transport(void *ctx, int op, long arg){ (void)ctx; return pb_transport(op, arg); }   /* as main.c */
 static void test_playback(void){
     pl_core_t c;
     pl_core_init(&c, cap_send, NULL, NULL);
+    c.transport = core_transport;
     pb_init(&c, dbp, sysp, quiet);
     /* album Alpha from its 2nd song (0-based position 1) */
     nsent = 0;
@@ -367,6 +378,13 @@ static void test_playback(void){
     /* 0202 while a track is loaded: the full a2 with the real state */
     nsent = 0; pb_engine_event(); nsent = 0;
     CHECK(pb_transport(PL_T_STATE, 0) == 0 && nsent == 1 && strstr(sent[0], "\"state\":0"));
+    /* 0104, the heart: into MY_LOVE (copied from SONG), the a2 says so; twice is one row; out again */
+    nsent = 0;
+    CHECK(pl_core_handle(&c, "0104000C0001", 12) == 0 && nsent == 1 && strstr(sent[0], "\"love\":true"));
+    CHECK(pb_transport(PL_T_LOVE, 1) == 0 && love_rows(d, "/s/b1.flac") == 1);
+    nsent = 0;
+    CHECK(pl_core_handle(&c, "0104000C0000", 12) == 0 && nsent == 1 && strstr(sent[0], "\"love\":false") && love_rows(d, "/s/b1.flac") == 0);
+    CHECK(pl_core_handle(&c, "0104000C0002", 12) == -1);
     /* the Artist grouping comes from 0648 and is written to SYSCONFIG, as the UI predicts the queue from there */
     c.artist_grouping = 1;
     CHECK(pb_play_list(QD_ARTIST, 0, "Various") == 0 && qd_artist_class(sysp) == 1);

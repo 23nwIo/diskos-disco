@@ -31,7 +31,8 @@ typedef void (*pl_log_fn)(void *ctx, const char *msg);
 enum { PL_T_TOGGLE = 0, PL_T_NEXT = 1, PL_T_PREV = 2, PL_T_SEEK = 3,
        PL_T_PAUSE = 4,             /* pause if playing (headphones pulled) */
        PL_T_MODE = 5,              /* the play mode changed (arg = new mode) */
-       PL_T_STATE = 6 };           /* 0202: send the full state if a track is loaded (0), else -1 */
+       PL_T_STATE = 6,             /* 0202: send the full state if a track is loaded (0), else -1 */
+       PL_T_LOVE = 7 };            /* 0104: the song playing into (arg 1) or out of (0) the favourites, then the state */
 typedef int (*pl_transport_fn)(void *ctx, int op, long arg);
 /* 0100: play list type from 0-based position pos; name is the frame's name field, NUL terminated. 0 or -1. Frames to
  * the UI are the callee's (it sends the track start sequence). */

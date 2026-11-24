@@ -67,7 +67,7 @@ $('oau').onchange=function(){cmd('outputs','auto='+this.value)};
 var CN=['SBC','AAC','LDAC','aptX','aptX HD'];$('oc').onchange=function(){var e=this;cmd('outputs','codec='+e.value).then(function(ok){if(ok)say('Switching codec…',1)});e.blur()};
 $('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};
 $('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};
-$('fv').onclick=function(){(($('fv').dataset.r)?cmd(fav?'radio_fav_remove':'radio_fav_add','kind=radio_now'):cmd('favorite','on='+(fav?0:1))).then(function(ok){if(ok)say(fav?'Removed from favourites':'Added to favourites',1)})};
+$('fv').onclick=function(){var on=!fav;(($('fv').dataset.r)?cmd(on?'radio_fav_add':'radio_fav_remove','kind=radio_now'):favdo('on='+(on?1:0),on)).then(function(ok){if(ok)say(on?'Added to favourites':'Removed from favourites',1)})};
 $('rs').onclick=function(){if($('rs').textContent==='Stop Bandcamp')cmd('bandcamp','action=stop');else cmd('radio_stop')};function eqload(cur){fetch('api/eq',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok)return;var e=$('eqs');e.textContent='';
 j.presets.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;e.appendChild(o)});e.value=j.current;e.dataset.n=(j.presets[j.current]||{}).name||''})}
 $('eqs').onchange=function(){cmd('eq','preset='+$('eqs').value).then(function(){$('eqs').dataset.n=''})};
@@ -85,8 +85,11 @@ function(){return[['Add a stream URL…',function(){askurl(function(n,u){cmd('ra
 ROOT.bandcamp=['Bandcamp',bcrow,null,null,function(){return[['Favourites…',function(){open('bc_favs',{},'Bandcamp favourites',null,bcrow)}],['Downloads…',bcdls],['Download quality…',bcq]]}];
 function station(x,k){var o={kind:k,pos:x.pos,url:x.url};return[x.name,[x.codec,x.bitrate?x.bitrate+' kbps':'',x.country].filter(Boolean).join(' · '),function(){play(o)},
 {f:!!x.fav,fn:function(b){var on=!x.fav;cmd(on?'radio_fav_add':'radio_fav_remove',enc(o)).then(function(ok){if(!ok)return;x.fav=on;star(b,on);say(on?'Saved to favourites':'Removed from favourites',1);if(k==='radio')load(0)})}},x.url]}
-function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},[{f:!!s.fav,fn:function(b){var on=!s.fav;cmd('favorite',enc({on:on?1:0,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=on;star(b,on);say(on?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]]}
-function smenu(s,o){var a=[[s.fav?'Remove from favourites':'Add to favourites',function(){cmd('favorite',enc({on:s.fav?0:1,song_id:s.id})).then(function(ok){if(!ok)return;s.fav=!s.fav;say(s.fav?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}],
+/* the song playing goes through the player ("wait"): done only once the state shows it */
+function favdo(b,on){return cmdj('favorite',b).then(function(j){return !j.ok?false:!j.wait||favw(on,12)})}
+function favw(on,n){return new Promise(function(r){setTimeout(function(){fetch('api/state',{cache:'no-store'}).then(function(x){return x.json()}).then(function(s){return !!s.favorite===on},function(){return false}).then(function(y){if(y)r(true);else if(n>1)favw(on,n-1).then(r);else{say('The player did not change the favourites');r(false)}})},300)})}
+function song(s,o){return[s.title,s.artist+(s.album?' · '+s.album:''),function(){play(o)},[{f:!!s.fav,fn:function(b){var on=!s.fav;favdo(enc({on:on?1:0,song_id:s.id}),on).then(function(ok){if(!ok)return;s.fav=on;star(b,on);say(on?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}},{g:'&#8943;',a:'More',fn:function(){smenu(s,o)}}]]}
+function smenu(s,o){var a=[[s.fav?'Remove from favourites':'Add to favourites',function(){favdo(enc({on:s.fav?0:1,song_id:s.id}),!s.fav).then(function(ok){if(!ok)return;s.fav=!s.fav;say(s.fav?'Added to favourites':'Removed from favourites',1);if(cur().l==='favorites')load(0)})}],
 ['Add to the queue',function(){qadd({kind:'song',song_id:s.id})}],['Add to a playlist…',function(){addto({kind:'song',song_id:s.id},s.title)}]];
 if(o.kind==='playlist')a.push(['Remove from this playlist',function(){cmd('playlist_remove',enc({id:o.id,pos:s.pos,song_id:s.id})).then(function(ok){if(ok){say('Removed',1);load(0)}})}]);sheet(s.title,a)}
 function addto(o,t){fetch('api/library/playlists?limit=500',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){

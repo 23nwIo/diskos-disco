@@ -51,4 +51,7 @@ int qd_memory_get(sqlite3 *db, int *music_id, long *pos_ms, int *track);
  * missing. qd_memory_pos: only POSITION. 0 or -1. */
 int qd_memory_set(sqlite3 *db, int music_id, long pos_ms, int is_cue, int is_iso, int track);
 int qd_memory_pos(sqlite3 *db, long pos_ms);
+/* 0104, the heart: the song r (a qd_song row) into MY_LOVE (on) or out of it, keyed by PATH and TRACK like row_love.
+ * The row copies SONG's columns that MY_LOVE also has, as the stock player and musicdb.c write it. 0 or -1. */
+int qd_love_set(sqlite3 *db, const qd_row_t *r, int on);
 #endif

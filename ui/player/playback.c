@@ -707,7 +707,26 @@ void pb_shutdown(void){
     g_rs_flag_t = 0;
 }
 
+/* 0104: the heart. Only a song of the library (not a station, not the station after the list); the UI hears the new
+ * value in the track frame, as from the stock player. */
+static int love_set(int on){
+    if(g_stream || g_tail || ((Q.n <= 0 || Q.cur < 0) && !g_cur_up)){ L("favourite: no song from the library plays"); return -1; }
+    sqlite3 *d = db();
+    if(!d) return -1;
+    qd_row_t *r = malloc(sizeof *r); int rc = -1;
+    if(r && cur_row(d, r) == 1){
+        rc = qd_love_set(d, r, on);
+        if(rc) L("favourite: %s %s failed: %s", on ? "adding" : "removing", r->path, sqlite3_errmsg(d));
+        else L("favourite %d: %s", on, r->path);
+    } else L("favourite: the song playing is not in the library");
+    free(r);
+    if(rc == 0 && g_es_valid && g_es.songid >= 0) send_full_a2(d, &g_es, g_es.state == ENG_PLAY ? 0 : 1);
+    sqlite3_close(d);
+    return rc;
+}
+
 int pb_transport(int op, long arg){
+    if(op == PL_T_LOVE) return love_set((int)arg);
     if(!eng_ready() && op != PL_T_MODE){ L("transport %d: no engine", op); return -1; }
     if(g_stream && g_sl_cur >= 0) switch(op){        /* a stream list: play/pause, skip, seek */
     case PL_T_TOGGLE: if(!g_st_loaded) return sl_play(g_sl_cur); return eng_toggle();   /* after its end: again */

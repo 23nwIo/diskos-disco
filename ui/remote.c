@@ -1045,6 +1045,12 @@ static int bt_cmd(const rmt_cmd_t *c, const char **why){
 }
 /* ---------------------------------------------------------------- playlists and favourites: the Disc's own calls
  * (Playlists screen, Add to playlist, the song menu's heart), then a Library refresh so an open list follows */
+/* The heart of the song playing goes to the player, like the Disc's: only sent here, so the answer says "wait" and the
+ * page reports it once api/state's "favorite" shows the new value (the player may refuse or not answer). */
+static void fav_via_player(int on, char **body){
+    ui_set_favorite(on);
+    rmt_buf_t b; memset(&b, 0, sizeof b); rmt_buf_printf(&b, "{\"ok\":true,\"wait\":1}"); *body = rmt_buf_take(&b);
+}
 static int edit(const rmt_cmd_t *c, const char **why, char **body){
     char path[PATH_MAX];
     int ok = 0;
@@ -1078,10 +1084,10 @@ static int edit(const rmt_cmd_t *c, const char **why, char **body){
         track_state_t st; ipc_get_state(&st);
         if(!c->song_id){                                    /* the song playing now: through the player, like the Disc's heart */
             if(!st.have_track || music_assistant() || radio_active()){ *why = "No song from the card is playing"; return -1; }
-            ui_set_favorite((int)c->arg); ok = 1; break;
+            fav_via_player((int)c->arg, body); ok = 1; break;
         }
         if(mdb_song_path((int)c->song_id, path, sizeof path) != 1){ *why = "No such song"; return -1; }
-        if(st.have_track && !strcmp(path, st.path) && !music_assistant() && !radio_active()){ ui_set_favorite((int)c->arg); ok = 1; break; }
+        if(st.have_track && !strcmp(path, st.path) && !music_assistant() && !radio_active()){ fav_via_player((int)c->arg, body); ok = 1; break; }
         ok = mdb_set_favorite_path(path, (int)c->arg) > 0; if(!ok) *why = "Couldn't change favourites";
         break; }
     default: *why = "Unknown change"; return -1;

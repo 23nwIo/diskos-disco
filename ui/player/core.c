@@ -211,7 +211,11 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         logf_(c, "transport %d (0 play/pause, 1 next, 2 previous)%s", v, c->transport ? "" : " - no engine");
         if(c->transport) c->transport(c->ctx, v == 0 ? PL_T_TOGGLE : v == 1 ? PL_T_NEXT : PL_T_PREV, 0);
         return 0;
-    case 0x0104: logf_(c, "favourite %d (not implemented yet)", v); return 0;
+    case 0x0104:
+        if(v < 0 || v > 1){ logf_(c, "favourite %d: unknown, ignored", v); return -1; }
+        logf_(c, "favourite %d%s", v, c->transport ? "" : " - no engine");
+        if(c->transport && c->transport(c->ctx, PL_T_LOVE, v) != 0) logf_(c, "favourite %d: not done", v);
+        return 0;
     case 0x0102: {
         int old = c->play_mode;
         if(set_(c, "play mode", &c->play_mode, v, 0, 4)) return -1;

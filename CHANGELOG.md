@@ -4,6 +4,9 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Own player: the heart of the song playing (on the Disc and in Remote Control) now adds it to the favourites and
+  removes it again; before, the own player ignored it. The Remote Control page reports "Added to favourites" only once
+  the player shows the change, otherwise "The player did not change the favourites".
 - Wi-Fi start script: diskOS brings its own `wifi_up.sh` and uses it instead of FiiO's after every update. DHCP starts
   once the Wi-Fi service runs and asks every 2 s (FiiO: 3 tries, then a 20 s pause), so the IP address comes sooner.
   The DHCP hostname is in `/usr/data/diskos-hostname` (one line: letters, digits, `-`); without it a Disc is called

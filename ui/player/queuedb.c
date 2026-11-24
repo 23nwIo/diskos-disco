@@ -208,6 +208,34 @@ static int row_love(sqlite3 *d, qd_row_t *r){
     return 1;
 }
 
+int qd_love_set(sqlite3 *d, const qd_row_t *r, int on){
+    sqlite3_stmt *st;
+    if(!on){
+        if(sqlite3_prepare_v2(d, "DELETE FROM MY_LOVE WHERE PATH=?1 AND IFNULL(TRACK,0)=?2;", -1, &st, NULL) != SQLITE_OK) return -1;
+        sqlite3_bind_text(st, 1, r->path, -1, SQLITE_STATIC); sqlite3_bind_int(st, 2, r->track);
+        int rc = sqlite3_step(st); sqlite3_finalize(st);
+        return rc == SQLITE_DONE ? 0 : -1;
+    }
+    qd_row_t now = *r; now.love = 0;
+    row_love(d, &now);
+    if(now.love) return 0;                                       /* already a favourite */
+    char cols[1500] = ""; size_t cl = 0;
+    if(sqlite3_prepare_v2(d, "SELECT name FROM pragma_table_info('MY_LOVE') WHERE name IN (SELECT name FROM pragma_table_info('SONG'))"
+                             " AND name<>'ID';", -1, &st, NULL) != SQLITE_OK) return -1;
+    while(sqlite3_step(st) == SQLITE_ROW && cl < sizeof cols - 80){
+        const char *c = (const char *)sqlite3_column_text(st, 0); int ok = c && c[0];
+        for(const char *q = c; ok && *q; q++) if(!((*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z') || (*q >= '0' && *q <= '9') || *q == '_')) ok = 0;
+        if(ok) cl += (size_t)snprintf(cols + cl, sizeof cols - cl, "%s%s", cl ? "," : "", c);
+    }
+    sqlite3_finalize(st);
+    if(!strstr(cols, "PATH")) return -1;                         /* no MY_LOVE table, or not the stock one */
+    char sql[3200]; snprintf(sql, sizeof sql, "INSERT INTO MY_LOVE (%s) SELECT %s FROM SONG WHERE ID=?1;", cols, cols);
+    if(sqlite3_prepare_v2(d, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, r->song_id);
+    int rc = sqlite3_step(st); sqlite3_finalize(st);
+    return rc == SQLITE_DONE && sqlite3_changes(d) > 0 ? 0 : -1;
+}
+
 int qd_memory_get(sqlite3 *d, int *music_id, long *pos_ms, int *track){
     sqlite3_stmt *st;
     *music_id = 0; *pos_ms = 0; *track = 0;
