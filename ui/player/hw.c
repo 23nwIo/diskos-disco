@@ -118,3 +118,79 @@ int hw_debounce(int *state, int *count, int level){
     *state = level; *count = 0;
     return 1;
 }
+
+void hw_charge_init(hw_charge_t *s){ memset(s, 0, sizeof *s); s->sent = -1; s->logged_pct = -1; s->polled_at = -1e9; }
+
+int hw_cc_power_in(const char *v){
+    if(!v) return -1;
+    size_t n = strcspn(v, " \t\r\n");
+    if(n == 4 && (!strncmp(v, "Rdef", 4) || !strncmp(v, "R1p5", 4) || !strncmp(v, "R3p0", 4))) return 1;
+    if(n == 9 && !strncmp(v, "Undefined", 9)) return 0;
+    return -1;
+}
+
+int hw_charge_step(hw_charge_t *s, int limit_on, int pct, int power, double now){
+    if(power == 0 || power == -1){ s->sent = -1; return -1; }       /* nothing to charge from, or the Disc is the source */
+    int want;
+    if(!limit_on) want = 1;
+    else if(pct < 0) return -1;                                       /* no gauge: leave it as it is */
+    else want = pct >= CHG_LIMIT_PCT ? 0 : 1;
+    if(want == s->sent && !(want == 0 && (now - s->sent_at) * 1000.0 >= CHG_REASSERT_MS)) return -1;
+    if(want == 1 && s->sent < 0 && !limit_on && power == 2) return -1; /* stock: limit off and no USB-C signal = untouched */
+    s->sent = want; s->sent_at = now;
+    return want;
+}
+
+static int read_small(const char *path, char *buf, size_t n){
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if(fd < 0) return -1;
+    ssize_t r = read(fd, buf, n - 1);
+    int e = errno;
+    close(fd);
+    if(r < 0){ errno = e; return -1; }
+    buf[r] = 0;
+    return 0;
+}
+
+static void charge_send(int on, const char *pct_text, int dry, hw_log_fn log){
+    if(dry) return;
+    int fd = open(CHG_DEV, O_RDWR | O_CLOEXEC);
+    if(fd < 0){ log("charge: open %s: %s", CHG_DEV, strerror(errno)); return; }
+    /* the stock player passes its capacity text buffer as the argument (trace: "98\n"); the same here */
+    char arg[16]; snprintf(arg, sizeof arg, "%s", pct_text ? pct_text : "");
+    if(ioctl(fd, on ? CHG_IOC_ON : CHG_IOC_OFF, arg) < 0)
+        log("charge: %s ioctl 0x%08lx: %s", CHG_DEV, on ? CHG_IOC_ON : CHG_IOC_OFF, strerror(errno));
+    close(fd);
+}
+
+void hw_charge_tick(hw_charge_t *s, int limit_on, double now, int dry, hw_log_fn log){
+    if((now - s->polled_at) * 1000.0 < CHG_POLL_MS) return;
+    s->polled_at = now;
+    char cap[32] = "", cc[32] = "";
+    int pct = -1;
+    if(read_small(CHG_CAPACITY, cap, sizeof cap) == 0){
+        char *end; long v = strtol(cap, &end, 10);
+        if(end != cap && v >= 0 && v <= 100) pct = (int)v;
+    }
+    int power;
+    if(read_small(CHG_CC_TERM, cc, sizeof cc) == 0) power = hw_cc_power_in(cc);
+    else {
+        if(!s->cc_missing_logged){ s->cc_missing_logged = 1; log("charge: %s: %s - limit without the plug check", CHG_CC_TERM, strerror(errno)); }
+        power = 2;
+    }
+    int was = s->sent;
+    int act = hw_charge_step(s, limit_on, pct, power, now);
+    if(act < 0) return;
+    cap[strcspn(cap, "\r\n")] = 0;
+    if(act != was) log("charge: limit %s, battery %d %%, power %s -> charging %s%s", limit_on ? "on" : "off", pct,
+                       power == 1 ? "in" : "(not checked)", act ? "on" : "off", dry ? " (dry run)" : "");
+    strcat(cap, "\n");
+    charge_send(act, cap, dry, log);
+}
+
+void hw_charge_release(hw_charge_t *s, int dry, hw_log_fn log){
+    if(s->sent != 0) return;
+    log("charge: player stops, charging back on%s", dry ? " (dry run)" : "");
+    charge_send(1, "", dry, log);
+    s->sent = 1;
+}

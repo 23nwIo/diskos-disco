@@ -16,6 +16,7 @@
  *   - USB storage mode (0642 1): hands the card to a USB host as a mass storage gadget, and back on 0642 0
  *     (usbstorage.c);
  *   - runs the stock power off routine when the sleep timer (0806) runs out (hw.c);
+ *   - holds the battery at 80 % while plugged in when the Charging Limit (0808) is on, like the stock player (hw.c);
  *   - logs every command to /tmp/diskos-player.log (RAM).
  *   - plays through MPD as its audio core (engine.c, docs/MPD_CORE.md) when /usr/data/diskos-own/mpd exists: owns
  *     the DAC (dac.c: start sequence per stream rate, volume/balance/gain as attenuation bytes), turns 0201/0103 into
@@ -324,6 +325,13 @@ int main(int argc, char **argv){
     int rv = use_wd ? qd_sys_get(QD_SYSCONFIG_DB, "MEMORY_PLAY") : -1;
     core.resume_mode = rv >= 0 && rv <= 2 ? rv : 0;
     int resume_saved = core.resume_mode;
+    /* Charging Limit (0808), kept in SYSCONFIG.CHARGE_PROTECT like the stock player keeps it: the UI reads it back from
+     * there at every start (ui/power.c power_startup_mirror) and sends 0808 only when it is changed */
+    int cv = use_wd ? qd_sys_get(QD_SYSCONFIG_DB, "CHARGE_PROTECT") : -1;
+    core.charge = cv > 0 ? 1 : 0;
+    int charge_saved = core.charge;
+    hw_charge_t chg; hw_charge_init(&chg);
+    logmsg("charge: Charging Limit %s (SYSCONFIG %d)", core.charge ? "on" : "off", cv);
 
     if(use_wd) load_volumes(&core);                            /* host runs (-n) keep the defaults */
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
@@ -525,6 +533,13 @@ int main(int argc, char **argv){
             if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, "MEMORY_PLAY", core.resume_mode) != 0)
                 logmsg("resume: can't store MEMORY_PLAY in %s", QD_SYSCONFIG_DB);
         }
+        if(core.charge != charge_saved){
+            charge_saved = core.charge;
+            if(use_wd && qd_sys_set(QD_SYSCONFIG_DB, "CHARGE_PROTECT", core.charge) != 0)
+                logmsg("charge: can't store CHARGE_PROTECT in %s", QD_SYSCONFIG_DB);
+            chg.polled_at = -1e9;                        /* decide now, not at the next poll */
+        }
+        hw_charge_tick(&chg, core.charge, t, !use_wd, logmsg);
         if(core.usb_seq != usb_seq){                     /* 0642: the UI's "USB storage" source */
             usb_seq = core.usb_seq;
             if(core.usb_gadget == 1) us_start(!use_wd, logmsg);
@@ -555,6 +570,7 @@ int main(int argc, char **argv){
     logmsg("=== diskos-player stop: %u frames, %u malformed, %u unknown", core.frames, core.bad_frames,
            core.unknown_tags);
     pb_shutdown();
+    hw_charge_release(&chg, !use_wd, logmsg);
     btav_close();
     if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt)) save_volumes(&core);
     eng_stop();

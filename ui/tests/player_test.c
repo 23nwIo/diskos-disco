@@ -352,6 +352,30 @@ static void test_bal(void){
     CHECK(hw_debounce(&st, &n, -1) == 0 && st == 1);                 /* an in-between value keeps the state */
 }
 
+/* Charging Limit (hw.h): off at 80 % and more, on below, only with power in; "off" re-sent every 30 s */
+static void test_charge(void){
+    CHECK(hw_cc_power_in("Rdef\n") == 1 && hw_cc_power_in("R1p5") == 1 && hw_cc_power_in("R3p0\n") == 1);
+    CHECK(hw_cc_power_in("Undefined\n") == 0 && hw_cc_power_in("Rd") == -1 && hw_cc_power_in("") == -1 && hw_cc_power_in(NULL) == -1);
+    hw_charge_t s; hw_charge_init(&s);
+    CHECK(hw_charge_step(&s, 1, 79, 1, 0) == 1);                     /* below the limit: charging on */
+    CHECK(hw_charge_step(&s, 1, 79, 1, 5) == -1);                    /* ... once */
+    CHECK(hw_charge_step(&s, 1, 80, 1, 10) == 0);                    /* at the limit: off */
+    CHECK(hw_charge_step(&s, 1, 81, 1, 15) == -1);                   /* not again at once */
+    CHECK(hw_charge_step(&s, 1, 81, 1, 40) == 0);                    /* but every 30 s */
+    CHECK(hw_charge_step(&s, 1, 79, 1, 45) == 1);                    /* fell below: on again (stock: < 80) */
+    CHECK(hw_charge_step(&s, 1, 85, 0, 50) == -1 && s.sent == -1);   /* unplugged: nothing, state forgotten */
+    CHECK(hw_charge_step(&s, 1, 85, -1, 55) == -1);                  /* the Disc as USB host: nothing */
+    CHECK(hw_charge_step(&s, 1, 85, 1, 60) == 0);                    /* plugged in again over the limit: off at once */
+    CHECK(hw_charge_step(&s, 0, 85, 1, 65) == 1);                    /* limit switched off: charging on */
+    CHECK(hw_charge_step(&s, 0, 85, 1, 200) == -1);                  /* ... and left alone */
+    CHECK(hw_charge_step(&s, 1, -1, 1, 205) == -1);                  /* no gauge: leave it */
+    hw_charge_init(&s);
+    CHECK(hw_charge_step(&s, 1, 90, 2, 0) == 0);                     /* no cc_term node: limit like the stock player */
+    CHECK(hw_charge_step(&s, 0, 90, 2, 5) == 1);                     /* switched off: on again */
+    hw_charge_init(&s);
+    CHECK(hw_charge_step(&s, 0, 90, 2, 0) == -1);                    /* limit off, no node: never touched */
+}
+
 static void test_dac_mpd(void){
     CHECK(dac_rate_code(44100) == 1 && dac_rate_code(48000) == 2 && dac_rate_code(96000) == 4 && dac_rate_code(192000) == 6);
     CHECK(dac_rate_code(22050) == 0);
@@ -417,6 +441,7 @@ int main(int argc, char **argv){
     test_proto();
     test_dac_mpd();
     test_bal();
+    test_charge();
     test_uevent();
     test_core();
     if(argc > 1) test_e2e(argv[1]);

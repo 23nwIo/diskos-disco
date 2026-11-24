@@ -15,7 +15,7 @@ Targets below are proposals or verification work, not shipped features. Work bel
 - Optional dyslexia-friendly text font with preserved icon/clock/non-Latin rendering; requires layout and device evaluation.
 - Own player (docs/MQ_PLAYER_REPLACEMENT.md): make the headphone-unplug behaviour a setting (today: unplug pauses, re-plug stays paused, as stock). Not urgent (Jo, 2026-11-15).
 - Own player: the EQ presets (0689, software EQ in the stock player). Planned as an ALSA plugin behind the MPD audio core, about 3-5 days; not important for now (Jo, 2026-11-15).
-- Battery: the Charging Limit (stop at about 80%, Settings > Battery & power) does not work on the Disc (Jo, 2026-11-16); to be looked at later.
+- Battery: Charging Limit on the own player (hw.c, 2026-11-24) needs a device test: plugged in above 80% the battery should stop charging (log "charge:" in /tmp/diskos-player.log). While the Disc is switched off nothing holds it.
 - Radio: copy the favourites between the SD card and the player from the UI (today the setting only chooses the file; copy it by hand, docs/RADIO.md) (Jo, 2026-11-16).
 - Radio, own player: send the song title to the UI as a frame over the player queue instead of /tmp/diskos-player-stream (Jo, 2026-11-16).
 - Playlists: optionally keep them on the SD card (like the radio favourites) instead of only in song.db on the player; check what that means for the stock and the own player (Jo, 2026-11-16, not urgent).
