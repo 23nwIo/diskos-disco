@@ -407,6 +407,7 @@ void ui_glyph_center_ink(lv_obj_t *label);                /* a one-icon label ce
 int  ui_pp_icon_playing(int real_playing);   /* returns the play/pause glyph state: prediction if held, else real */
 const char *ui_eq_name(int i);   /* EQ preset name for index 0..20 (drawer toast) */
 void ui_rescan_library(void);
+void ui_rescan_library_full(void);
 int  ui_theme_reload(const char *screen);   /* re-launch the UI to apply a theme change (main.c) */
 int  ui_play_mode_now(void);           /* the play mode the player is using (0..4), -1 unknown (main.c) */
 int  ui_queue_jump(int ord1);          /* Up Next: type-0 jump to 1-based position in the current queue (0 = sent) */

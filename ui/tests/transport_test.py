@@ -6,7 +6,7 @@ from pathlib import Path
 import os,subprocess,tempfile
 app=Path(__file__).resolve().parents[1]
 s=(app/'main.c').read_text();hint=s[s.index('static int      g_pp_hint'):s.index('/* set absolute volume')]
-scan=s[s.index('void ui_rescan_library(void)'):s.index('/* Poll for scan completion')]
+scan=s[s.index('static void rescan_library(int full)'):s.index('/* Poll for scan completion')]
 # transport_now is the command itself; ui_transport_command in front of it only paces rapid skips (an LVGL timer), so
 # the harness calls transport_now directly
 s=(app/'ui.c').read_text();action=s[s.index('static int transport_now(const char *cmd)\n{'):s.index('static void transport_cb(')]
@@ -71,6 +71,7 @@ static void ui_pp_glyph(const char *obj,int playing){(void)obj;snprintf(glyph,si
 static int scanner_active(void){return scan_busy;}
 static int sd_io_allowed(void){return sd_allowed;}
 static int scanner_start(void){scans++;return scan_fail?-1:0;}
+static int full_scans; static int scanner_start_full(void){full_scans++;return scan_fail?-1:0;}
 int ui_pp_icon_playing(int real);
 '''
 tests=r'''
@@ -120,6 +121,7 @@ int main(void){
     scan_busy=0;sd_allowed=0;ui_rescan_library();assert(scans==0 && strstr(toast,"not ready"));
     sd_allowed=1;scan_fail=1;ui_rescan_library();assert(scans==1 && strstr(toast,"Couldn't start"));
     scan_fail=0;ui_rescan_library();assert(scans==2 && !strcmp(toast,"Scanning library..."));
+    ui_rescan_library_full();assert(scans==2 && full_scans==1);   /* Settings > Full Rescan: every file's tags */
     puts("PASS honest scan admission, busy/error feedback and the started toast");
     puts("HARNESS COMPLETE");
 }

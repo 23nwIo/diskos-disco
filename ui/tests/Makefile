@@ -108,7 +108,7 @@ pytests: mpd_test
 	python3 run_pytests.py
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test
+run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test scanner_quick_test
 	./config_test
 	@echo "--- libdb ---"
 	./libdb_test
@@ -145,11 +145,12 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test ban
 	@echo "--- scanner date tags ---"
 	./scanner_date_test
 	./scanner_srcid_test
+	./scanner_quick_test
 	@echo "--- hitguess rules ---"
 	./hitguess_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test $(EXTRA)
+	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test scanner_quick_test $(EXTRA)
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@
@@ -159,6 +160,8 @@ hitguess_test: hitguess_test.c ../hitguess_core.c ../hitguess_core.h
 
 scanner_date_test: scanner_date_test.c ../scanner.c ../scanner.h sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_date_test.c sqlite3_host.o -pthread -ldl -lm -o $@
+scanner_quick_test: scanner_quick_test.c ../scanner.c ../scanner.h ../libdb.h sqlite3_host.o
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_quick_test.c sqlite3_host.o -pthread -ldl -lm -o $@
 scanner_srcid_test: scanner_srcid_test.c ../scanner.c ../scanner.h ../libdb.h sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. scanner_srcid_test.c sqlite3_host.o -pthread -ldl -lm -o $@
 

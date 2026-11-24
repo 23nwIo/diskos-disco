@@ -37,7 +37,7 @@ typedef enum {
     RMT_CMD_EQ_LIST,         /* the EQ presets and the current one (JSON answer) */
     RMT_CMD_EQ,              /* select EQ preset arg (0 = off .. 20) */
     RMT_CMD_EDIT,            /* change playlists / favourites: sub = rmt_edit_t */
-    RMT_CMD_RESCAN,          /* arg 1 start / 0 stop a library rescan */
+    RMT_CMD_RESCAN,          /* arg 1 start a quick / 2 a full library rescan, 0 stop it */
     RMT_CMD_BT_LIST,         /* Bluetooth state and devices (JSON answer) */
     RMT_CMD_BT,              /* sub = rmt_bt_t; q = device address, name = a local name */
     RMT_CMD_WORK_MODE,       /* arg 0 Playback, 1 USB DAC, 2 BT DAC, 3 USB storage, 4 BT streaming, 5 AirPlay */

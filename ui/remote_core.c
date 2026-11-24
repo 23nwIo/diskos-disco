@@ -497,8 +497,8 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
     if(!strcmp(ep, "rescan")){
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         char a[8]; int pr = param_str(r, "action", a, sizeof a);
-        rt.kind = pr || (strcmp(a, "start") && strcmp(a, "stop")) ? RMT_R_BAD_PARAM : RMT_R_CMD;
-        if(rt.kind == RMT_R_CMD){ rt.cmd.kind = RMT_CMD_RESCAN; rt.cmd.arg = !strcmp(a, "start"); }
+        rt.kind = pr || (strcmp(a, "start") && strcmp(a, "full") && strcmp(a, "stop")) ? RMT_R_BAD_PARAM : RMT_R_CMD;
+        if(rt.kind == RMT_R_CMD){ rt.cmd.kind = RMT_CMD_RESCAN; rt.cmd.arg = !strcmp(a, "stop") ? 0 : !strcmp(a, "full") ? 2 : 1; }
         return rt;
     }
     if(!strcmp(ep, "status")){ rt.kind = get ? RMT_R_CMD : RMT_R_BAD_METHOD; if(get) rt.cmd.kind = RMT_CMD_STATUS; return rt; }

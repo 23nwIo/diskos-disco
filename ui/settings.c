@@ -578,6 +578,11 @@ static void apply_rescan(int v){ (void)v;
     if(scanner_active()){ scanner_abort(); return; }
     fileops_confirm("Rescan library?", "Looks for new and changed music", "Rescan", rescan_go);
 }
+static void full_rescan_go(void){ ui_rescan_library_full(); }
+static void apply_full_rescan(int v){ (void)v;
+    if(scanner_active()){ ui_rescan_library(); return; }   /* a scan runs: the same stop as the Rescan row */
+    fileops_confirm("Read all tags again?", "Slow on large cards", "Rescan", full_rescan_go);
+}
 static void do_shutdown(void){ ui_power_off(); }
 static void apply_shutdown(int v){ (void)v;
     fileops_confirm("Shut down player?", "Switches the player off", "Shut down", do_shutdown);
@@ -1312,7 +1317,9 @@ static const setting_t TABLE[] = {
     { "Date & Time",   "Time Zone",   ST_CHOICE, "tz_idx", 0,0,0, TZ_LABEL, TZ_COUNT, NULL, apply_timezone, 0,
       "Automatic follows your location on Wi-Fi, with Automatic Time on. Or choose a zone.", NULL },
     { "Library",   "Rescan Library", ST_ACTION, NULL, 0,0,0, NULL,0, "Scan", apply_rescan, 0,
-      "Re-scan the SD card for new or removed music.", NULL },
+      "Looks for new, changed and removed music. Songs unchanged since the last scan are not read again.", NULL },
+    { "Library",   "Full Rescan", ST_ACTION, NULL, 0,0,0, NULL,0, "Scan", apply_full_rescan, 0,
+      "Reads the tags of every song again, also unchanged ones. Takes longer.", NULL },
     { "Library",   "Import Playlists", ST_ACTION, NULL, 0,0,0, NULL,0, "Import", apply_import_m3u, 0,
       "Import .m3u / .m3u8 playlists found on the SD card.", NULL },
     { "Library",   "Radio Favourites", ST_CYCLER, "radio_fav_sd", 0,0,0, OPT_RADIOFAV, 2, NULL, apply_radio_fav, 1,

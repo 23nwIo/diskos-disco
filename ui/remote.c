@@ -1186,7 +1186,7 @@ static int dispatch(const rmt_cmd_t *c, const char **why, char **body){
         if(scanner_active()){ *why = "A scan is already running"; return -1; }
         if(!ui_local_playback_allowed()){ *why = "Return the Disc to local playback to scan"; return -1; }
         if(!sd_io_allowed()){ *why = "The SD card is not ready"; return -1; }
-        int sr = scanner_start();
+        int sr = c->arg == 2 ? scanner_start_full() : scanner_start();   /* 1 quick (unchanged files not read), 2 full */
         if(sr == -2){ *why = "The SD card library is created first: connect the Disc to power"; return -1; }
         if(sr != 0){ *why = "Couldn't start the library scan"; return -1; }
         return 0;

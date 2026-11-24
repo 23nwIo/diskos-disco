@@ -1248,16 +1248,18 @@ static void localplayer_workmode_cb(lv_timer_t *t){
     done_gen = gen;   /* only mark this generation initialised once ALL three commands were actually sent */
     fprintf(stderr,"v2.40 workmode: local-init sent once (gen %u)\n", gen); fflush(stderr);
 }
-void ui_rescan_library(void){
+static void rescan_library(int full){
     if(scanner_active()){ if(scanner_cancel()) ui_toast("Cancelling scan..."); return; }   /* refused once it is committing: completion reports */   /* the row reads "Stop" while a scan runs */
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback to scan"); return; }
     if(!sd_io_allowed()){ ui_toast("SD card is not ready"); return; }
-    int sr = scanner_start();
+    int sr = full ? scanner_start_full() : scanner_start();
     if(sr == -2){ ui_toast("Connect power: the SD card library is created first"); return; }
     if(sr != 0){ ui_toast("Couldn't start library scan"); return; }
     if(th_zune()){ void zune_scan_show(void); zune_scan_show(); return; }
     ui_toast("Scanning library...");
 }
+void ui_rescan_library(void){ rescan_library(0); }        /* quick: files unchanged since their last read are not opened */
+void ui_rescan_library_full(void){ rescan_library(1); }   /* Settings > Full Rescan: every file's tags again */
 /* Poll for scan completion: reload the library from the rebuilt DB, refresh the view, toast. */
 /* 1 once every .m4b has been moved out of SONG into BOOKS. Until then a music play (which the stock player
  * builds server-side from the unfiltered SONG table) could queue a book, so the play path gates on this. */

@@ -298,7 +298,7 @@ All paths are relative to `http://<Disc address>:8088/<link code>/`. Parameters 
 | `POST api/favorite` with `on=0\|1` and `song_id` (none: the song playing now) | Favourite on/off. Song lists carry `"fav":true\|false`. |
 | `POST api/work_mode` with `mode=0..5` | 0 Playback, 1 USB DAC, 2 Bluetooth DAC, 3 USB storage, 4 Bluetooth streaming, 5 AirPlay. `api/state` and `api/status` carry `"work_mode"` (6 = web radio). |
 | `POST api/reboot` with `confirm=1` | Restart the Disc. |
-| `POST api/rescan` with `action=start\|stop` | Library rescan; `GET api/status` has `"scan":{"active":…,"done":N}`. |
+| `POST api/rescan` with `action=start\|full\|stop` | Library rescan: `start` quick (only new and changed files are read, [LIBRARY_DB](LIBRARY_DB.md)), `full` every file; `GET api/status` has `"scan":{"active":…,"done":N}`. |
 | `GET api/bluetooth` | `{"ok":true,"state":"on"\|"off"\|"turning_on","busy":…,"devices":[{"mac":"AA:BB:…","name":"shown name","own":"device's name","alias":"local name or empty","connected":…,"battery":80,"codec":"LDAC"…}],"codec":{"settable":…,"current":N,"live":"LDAC","choices":[{"id":0,"name":"SBC","hint":"…"},…]}}` (connected first; `busy`: a search or listing is running; `battery`: the connected headphones' battery in %, -1 unknown). |
 | `POST api/bluetooth` with `action=on\|off\|search\|refresh`, or `action=codec&codec=N` | Radio on/off (only acts if needed), a ~15 s search, list the known devices again, or the Bluetooth Codec setting (an id from `choices`). |
 | `POST api/bt_device` with `action=connect\|disconnect\|forget\|rename` and `mac=AA:BB:CC:DD:EE:FF` (+ `name`, up to 47 bytes, for rename) | As on the Disc; refused (409) while Bluetooth is off. |

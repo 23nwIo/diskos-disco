@@ -41,7 +41,9 @@ traffic can read the password. Use it on trusted networks only.
 
 Song paths (MPD "URIs") are relative to the SD card root, for example `Music/Blue Album/01 Uno.flac`. A track of a
 CUE sheet or an ISO image is `<file>/trackNNNN` (as MPD names CUE tracks), for example `Music/live.flac/track0002`.
-Only songs the Disc's library has scanned are listed; `mpc update` starts a library rescan (as Settings > Rescan).
+Only songs the Disc's library has scanned are listed; `mpc update` starts a quick library rescan (as Settings > Rescan Library: only new and changed files are read, see
+[LIBRARY_DB](LIBRARY_DB.md)), `mpc rescan` a full one that reads every file again (as Settings > Full Rescan). Both
+scan the whole card; a path argument is accepted and ignored. After copying music with rsync: `mpc -h <Disc> update`.
 
 ## The queue
 

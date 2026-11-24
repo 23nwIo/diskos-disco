@@ -368,6 +368,7 @@ static void test_core(void){
     CHECK(req("POST", p("/api/status"), "").kind == RMT_R_BAD_METHOD);
     r = req("POST", p("/api/rescan"), "action=start"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RESCAN && r.cmd.arg == 1);
     r = req("POST", p("/api/rescan"), "action=stop"); CHECK(r.kind == RMT_R_CMD && r.cmd.arg == 0);
+    r = req("POST", p("/api/rescan"), "action=full"); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_RESCAN && r.cmd.arg == 2);
     CHECK(req("POST", p("/api/rescan"), "").kind == RMT_R_BAD_PARAM);
     CHECK(req("GET", p("/api/rescan"), NULL).kind == RMT_R_BAD_METHOD);
     r = req("GET", p("/api/bluetooth"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_BT_LIST);

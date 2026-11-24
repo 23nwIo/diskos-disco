@@ -1041,67 +1041,127 @@ static void mark_seen(const char *path){
     sqlite3_bind_text(g_seen, 1, path, -1, SQLITE_TRANSIENT);
     if(sqlite3_step(g_seen) != SQLITE_DONE) g_prune_blocked = 1;
 }
+/* ---- Quick scan (Jo 2026-11-24: rsync uploads of a few songs into a 5000+ song library) ----
+ * A scan's time goes into opening every file and reading its tags. The card library remembers, per file, the size and
+ * modification time it had when its tags were last read in full (DISKOS_SCAN_STAMP). A quick scan (the default:
+ * Settings > Rescan Library, Remote Control, `mpc update`) still walks the whole card - new, removed and moved files
+ * are found as before - but does not open a file whose size and time are unchanged and whose ordinary SONG row is
+ * there: its row stays as it is. A full scan (Settings > Full Rescan, `mpc rescan`, action=full) reads every file.
+ * Only the card DB has stamps; the flash DB (stock player) always gets a full scan. Files read with a fallback
+ * (tags couldn't be loaded), CUE backing files and audiobooks (moved to BOOKS) get no usable stamp, so they are
+ * read every time, as before. SCAN_TAGS_VERSION in DISKOS_META: bump SCAN_TAGS_VERSION when the scanner starts to
+ * read something new from the tags (a new column, a fixed reader) - the next quick scan then reads everything once. */
+#define SCAN_TAGS_VERSION 1
+#define SCAN_STR_(x) #x
+#define SCAN_STR(x) SCAN_STR_(x)
+static int g_want_full;            /* requested by scanner_start_full (set before the worker starts) */
+static int g_quick;                /* this scan may skip unchanged files (worker thread) */
+static int g_reused;               /* files skipped as unchanged this scan (worker thread; logged) */
+static sqlite3_stmt *g_stamp_chk, *g_stamp_put;   /* NULL: no stamps (flash DB, or the table couldn't be made) */
+static const char *STAMP_DDL =
+    "CREATE TABLE IF NOT EXISTS DISKOS_SCAN_STAMP(PATH TEXT PRIMARY KEY, SIZE INTEGER NOT NULL, MTIME INTEGER NOT NULL);";
+static const char *STAMP_CHK =
+    "SELECT 1 FROM DISKOS_SCAN_STAMP F WHERE F.PATH=?1 AND F.SIZE=?2 AND F.MTIME=?3 AND EXISTS (SELECT 1 FROM SONG S "
+    "WHERE S.PATH=?1 AND COALESCE(S.IS_CUE,0)=0 AND COALESCE(S.IS_ISO,0)=0);";
+static const char *STAMP_PUT = "INSERT OR REPLACE INTO DISKOS_SCAN_STAMP(PATH, SIZE, MTIME) VALUES(?1, ?2, ?3);";
+static void stamp_bind(sqlite3_stmt *s, const char *path, const struct stat *st){
+    sqlite3_reset(s); sqlite3_clear_bindings(s);
+    sqlite3_bind_text(s, 1, path, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(s, 2, (sqlite3_int64)st->st_size);
+    sqlite3_bind_int64(s, 3, (sqlite3_int64)st->st_mtime);
+}
+/* 1: unchanged since its tags were read -> counted and marked seen (its row and IDs stay); 0: read it. */
+static int stamp_unchanged(const char *path, const struct stat *st){
+    if(!g_quick || !g_stamp_chk || g_scan_err) return 0;
+    stamp_bind(g_stamp_chk, path, st);
+    int rc = sqlite3_step(g_stamp_chk);
+    sqlite3_reset(g_stamp_chk);
+    if(rc == SQLITE_DONE) return 0;
+    if(rc != SQLITE_ROW){ g_scan_err = 1; return 1; }   /* query error -> fail closed (the scan rolls back) */
+    sqlite3_reset(g_seen); sqlite3_clear_bindings(g_seen);
+    sqlite3_bind_text(g_seen, 1, path, -1, SQLITE_TRANSIENT);
+    if(sqlite3_step(g_seen) != SQLITE_DONE){ g_scan_err = 1; return 1; }
+    g_reused++;
+    pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu);
+    return 1;
+}
+/* after a full read of the file's tags: remember its size and time */
+static void stamp_put(const char *path, const struct stat *st){
+    if(!g_stamp_put || g_scan_err) return;
+    stamp_bind(g_stamp_put, path, st);
+    if(sqlite3_step(g_stamp_put) != SQLITE_DONE) g_scan_err = 1;
+    sqlite3_reset(g_stamp_put);
+}
+/* DISKOS_META SCAN_TAGS_VERSION; -1 when not there */
+static int stamp_tags_version(void){
+    sqlite3_stmt *q = NULL; int v = -1;
+    if(sqlite3_prepare_v2(g_db, "SELECT V FROM DISKOS_META WHERE K='SCAN_TAGS_VERSION';", -1, &q, NULL) == SQLITE_OK
+       && sqlite3_step(q) == SQLITE_ROW) v = sqlite3_column_int(q, 0);
+    sqlite3_finalize(q);
+    return v;
+}
+
 /* Merge one file into SONG: record it as seen, then UPDATE the existing PATH in place (preserving ID +
  * ACCENT), or INSERT a new row if the PATH is new. Any DB error sets g_scan_err (blocks the commit). */
-static void upsert_song(const char *path, const char *fname){
-    if(g_scan_err) return;   /* an earlier write failed -> don't add writes to a possibly rolled-back txn */
+static int upsert_song(const char *path, const char *fname){
+    if(g_scan_err) return 0;   /* an earlier write failed -> don't add writes to a possibly rolled-back txn */
     char title[TAGLEN],artist[TAGLEN],album[TAGLEN],genre[TAGLEN],album_artist[TAGLEN];
     int track=0, disc=0; long long dur_ms=0; tagdate_t dt;
     int tst = tags_from_file(path, fname, title, artist, album, genre, album_artist, &track, &disc, &dt, &dur_ms);
     if(tst == 0){
         mark_seen(path);   /* couldn't open this pass -> keep any existing row; don't clobber good tags */
         g_skipped++;
-        return;
+        return 0;
     }
     /* record as seen (drives the post-walk delete of paths that vanished from the SD) */
     sqlite3_reset(g_seen); sqlite3_clear_bindings(g_seen);
     sqlite3_bind_text(g_seen, 1, path, -1, SQLITE_TRANSIENT);
-    if(sqlite3_step(g_seen)!=SQLITE_DONE){ g_scan_err=1; return; }
+    if(sqlite3_step(g_seen)!=SQLITE_DONE){ g_scan_err=1; return 0; }
     /* Track books we read REAL tags for this scan (rc==1), so the post-walk relocate can refresh their
      * BOOKS metadata without a fallback read ever clobbering previously-good tags. */
     if(tst == 1 && has_ext(fname, ".m4b") && g_bookok){
         sqlite3_reset(g_bookok); sqlite3_clear_bindings(g_bookok);
         sqlite3_bind_text(g_bookok, 1, path, -1, SQLITE_TRANSIENT);
-        if(sqlite3_step(g_bookok)!=SQLITE_DONE){ g_scan_err=1; return; }
+        if(sqlite3_step(g_bookok)!=SQLITE_DONE){ g_scan_err=1; return 0; }
     }
     if(dur_ms >= 0 && has_ext(fname, ".m4b") && g_durok){
         sqlite3_reset(g_durok); sqlite3_clear_bindings(g_durok);
         sqlite3_bind_text(g_durok, 1, path, -1, SQLITE_TRANSIENT);
-        if(sqlite3_step(g_durok)!=SQLITE_DONE){ g_scan_err=1; return; }
+        if(sqlite3_step(g_durok)!=SQLITE_DONE){ g_scan_err=1; return 0; }
     }
     /* L39: if this path already backs stock CUE/ISO virtual tracks, leave them entirely alone (marked
      * seen above so they survive the prune) - do NOT overwrite their per-track metadata via UPDATE, and
      * do NOT insert a duplicate plain row. */
     sqlite3_reset(g_cuechk); sqlite3_clear_bindings(g_cuechk);
-    if(sqlite3_bind_text(g_cuechk, 1, path, -1, SQLITE_TRANSIENT)!=SQLITE_OK){ g_scan_err=1; return; }
+    if(sqlite3_bind_text(g_cuechk, 1, path, -1, SQLITE_TRANSIENT)!=SQLITE_OK){ g_scan_err=1; return 0; }
     int cchk = sqlite3_step(g_cuechk);
-    if(cchk==SQLITE_ROW){ pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); return; }  /* CUE/ISO backing -> preserve */
-    if(cchk!=SQLITE_DONE){ g_scan_err=1; return; }   /* query error -> fail closed, never risk the UPDATE on unknown state */
+    if(cchk==SQLITE_ROW){ pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); return 0; }  /* CUE/ISO backing -> preserve */
+    if(cchk!=SQLITE_DONE){ g_scan_err=1; return 0; }   /* query error -> fail closed, never risk the UPDATE on unknown state */
     if(tst < 0){
         /* tags could not be LOADED (oversized/hostile atoms, mid-read IO) but the fallback is filled:
          * NEVER overwrite an existing row's good tags. Insert a filename-fallback row only when the path
          * is new, so a new file (e.g. an m4a with an oversized embedded cover) is still indexed + playable. */
         sqlite3_stmt *chk = NULL; int exists = 0;
-        if(sqlite3_prepare_v2(g_db, "SELECT 1 FROM SONG WHERE PATH=?1 LIMIT 1;", -1, &chk, NULL) != SQLITE_OK){ g_scan_err=1; return; }
-        if(sqlite3_bind_text(chk, 1, path, -1, SQLITE_TRANSIENT) != SQLITE_OK){ sqlite3_finalize(chk); g_scan_err=1; return; }
+        if(sqlite3_prepare_v2(g_db, "SELECT 1 FROM SONG WHERE PATH=?1 LIMIT 1;", -1, &chk, NULL) != SQLITE_OK){ g_scan_err=1; return 0; }
+        if(sqlite3_bind_text(chk, 1, path, -1, SQLITE_TRANSIENT) != SQLITE_OK){ sqlite3_finalize(chk); g_scan_err=1; return 0; }
         int erc = sqlite3_step(chk);
         sqlite3_finalize(chk);
         if(erc == SQLITE_ROW) exists = 1;
-        else if(erc != SQLITE_DONE){ g_scan_err=1; return; }   /* query error -> fail closed; never risk a duplicate INSERT on unknown state */
+        else if(erc != SQLITE_DONE){ g_scan_err=1; return 0; }   /* query error -> fail closed; never risk a duplicate INSERT on unknown state */
         if(exists){
             /* keep its tags, but the LENGTH is read independently of the tags: this scan's reading replaces the old
              * one (a replaced file), unless the length itself could not be read (-1) */
             if(dur_ms >= 0){
                 sqlite3_stmt *du = NULL;
                 if(sqlite3_prepare_v2(g_db, "UPDATE SONG SET DURATION=?2 WHERE PATH=?1 AND COALESCE(IS_CUE,0)=0 "
-                                            "AND COALESCE(IS_ISO,0)=0;", -1, &du, NULL) != SQLITE_OK){ g_scan_err=1; return; }
+                                            "AND COALESCE(IS_ISO,0)=0;", -1, &du, NULL) != SQLITE_OK){ g_scan_err=1; return 0; }
                 sqlite3_bind_text(du, 1, path, -1, SQLITE_TRANSIENT);
                 sqlite3_bind_int64(du, 2, (sqlite3_int64)dur_ms);
                 int urc = sqlite3_step(du);
                 sqlite3_finalize(du);
-                if(urc != SQLITE_DONE){ g_scan_err=1; return; }
+                if(urc != SQLITE_DONE){ g_scan_err=1; return 0; }
             }
-            pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); return;   /* preserve the existing tags */
+            pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); return 0;   /* preserve the existing tags */
         }
         /* new path -> fall through to the shared INSERT below with the filename fallback */
     } else {
@@ -1112,11 +1172,11 @@ static void upsert_song(const char *path, const char *fname){
         bind_meta(g_upd, 12, disc, track, album_artist);
         sqlite3_bind_int64(g_upd, 16, (sqlite3_int64)dur_ms);
         sqlite3_bind_text(g_upd, 17, date_pick(&dt), -1, SQLITE_TRANSIENT);
-        if(sqlite3_step(g_upd)!=SQLITE_DONE){ g_scan_err=1; return; }
+        if(sqlite3_step(g_upd)!=SQLITE_DONE){ g_scan_err=1; return 0; }
         if(sqlite3_changes(g_db) > 0){                     /* existing PATH updated in place */
             source_note(path);
             pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu);
-            return;
+            return 1;
         }
     }
     /* new PATH -> INSERT (new autoincrement ID, ACCENT = schema default 0). params: 1=PATH, 2..11 tags, 12=ADD_TIME */
@@ -1127,8 +1187,9 @@ static void upsert_song(const char *path, const char *fname){
     bind_meta(g_ins, 13, disc, track, album_artist);
     sqlite3_bind_int64(g_ins, 17, (sqlite3_int64)(dur_ms > 0 ? dur_ms : 0));   /* new row: a read error is just unknown */
     sqlite3_bind_text(g_ins, 18, date_pick(&dt), -1, SQLITE_TRANSIENT);
-    if(sqlite3_step(g_ins)==SQLITE_DONE){ source_note(path); pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); }
-    else g_scan_err=1;   /* insert failure (disk full, DB corruption) must block the commit */
+    if(sqlite3_step(g_ins)==SQLITE_DONE){ source_note(path); pthread_mutex_lock(&g_mu); g_done++; pthread_mutex_unlock(&g_mu); return tst == 1; }
+    g_scan_err=1;   /* insert failure (disk full, DB corruption) must block the commit */
+    return 0;
 }
 
 /* ---- CUE sheets (L16) ----
@@ -1771,7 +1832,9 @@ static void walk(const char *dir, int depth){
             g_scan_err = 1; continue;                        /* real I/O/access error -> don't commit a partial index */
         }
         if(S_ISDIR(st.st_mode)) walk(path, depth+1);
-        else if(S_ISREG(st.st_mode) && is_audio(e->d_name)) upsert_song(path, e->d_name);
+        else if(S_ISREG(st.st_mode) && is_audio(e->d_name)){
+            if(!stamp_unchanged(path, &st) && upsert_song(path, e->d_name)) stamp_put(path, &st);
+        }
         else if(S_ISREG(st.st_mode) && has_ext(e->d_name, ".cue")) cue_note(path);   /* written after the walk (cue_finish) */
         else if(S_ISREG(st.st_mode) && has_ext(e->d_name, ".iso")){ mark_seen(path); iso_note(path); }   /* SACD image (iso_finish) */
         else if(S_ISREG(st.st_mode) && is_unsupported_audio(e->d_name)){  /* AAC/M4A/OGG/... not indexed yet */
@@ -1786,6 +1849,9 @@ static void walk(const char *dir, int depth){
  * parent's). A missing/late SD, or a bare placeholder /tmp/sdcard dir, returns 0 - so we
  * never wipe the live library rebuilding from an unmounted card. */
 static int scan_root_ready(void){
+#ifdef SCAN_TEST_ANY_ROOT
+    return access(SCAN_ROOT, F_OK) == 0;   /* host tests only: a plain folder stands in for the mounted card */
+#endif
     struct stat sroot, sparent;
     if(stat(SCAN_ROOT, &sroot)!=0 || !S_ISDIR(sroot.st_mode)) return 0;
     char parent[MAXPATH];
@@ -1867,6 +1933,19 @@ static void *scan_thread(void *arg){
         g_ins=NULL; g_upd=NULL; g_seen=NULL; g_cuechk=NULL; g_bookok=NULL; g_durok=NULL;
         /* only the card DB has SOURCE_ID (ui/libdb.h): on the flash DB the prepare fails and the IDs are not kept */
         if(in_txn && sqlite3_prepare_v2(g_db, SRCID_PUT, -1, &g_srcid, NULL) != SQLITE_OK){ sqlite3_finalize(g_srcid); g_srcid = NULL; }
+        /* quick scan: only the card DB keeps file stamps; a full scan was asked for, or the stamps were taken by an older tag
+         * reader (SCAN_TAGS_VERSION) -> every file is read (and stamped) */
+        g_quick = 0; g_reused = 0; g_stamp_chk = g_stamp_put = NULL;
+        if(in_txn && libdb_is_card(DB_PATH)){
+            if(sqlite3_exec(g_db, STAMP_DDL, 0,0,0) == SQLITE_OK
+               && sqlite3_prepare_v2(g_db, STAMP_CHK, -1, &g_stamp_chk, NULL) == SQLITE_OK
+               && sqlite3_prepare_v2(g_db, STAMP_PUT, -1, &g_stamp_put, NULL) == SQLITE_OK)
+                g_quick = !g_want_full && stamp_tags_version() == SCAN_TAGS_VERSION;
+            else {
+                fprintf(stderr, "scanner: no file stamps (%s) -> full scan\n", sqlite3_errmsg(g_db));
+                sqlite3_finalize(g_stamp_chk); sqlite3_finalize(g_stamp_put); g_stamp_chk = g_stamp_put = NULL;
+            }
+        }
         /* a required column still missing: roll back and finish now, no walk (retried on the next scan) */
         if(in_txn && !g_scan_err && sqlite3_prepare_v2(g_db, INS_SONG, -1, &g_ins,  NULL)==SQLITE_OK
            && sqlite3_prepare_v2(g_db, UPD_SONG, -1, &g_upd,  NULL)==SQLITE_OK
@@ -1897,8 +1976,8 @@ static void *scan_thread(void *arg){
                 if(!g_scan_err) iso_finish();   /* SACD images -> per-track rows */
                 pthread_mutex_lock(&g_mu); found = g_done; pthread_mutex_unlock(&g_mu);
                 /* observability: one concise line per scan */
-                fprintf(stderr,"scanner: merged %d songs, skipped %d unreadable file(s), scan_err=%d\n",
-                        found, g_skipped, g_scan_err);
+                fprintf(stderr,"scanner: %s scan: merged %d songs (%d unchanged, not read), skipped %d unreadable file(s), scan_err=%d\n",
+                        g_quick ? "quick" : "full", found, g_reused, g_skipped, g_scan_err);
                 /* Commit only if the walk found audio AND the SD is STILL mounted afterwards (guards a
                  * card pulled / gone-I/O mid-scan; zero-found rolls back too). Then delete scanned-format
                  * rows whose PATH vanished from the SD - inside the txn, so it rolls back on any failure. */
@@ -1956,6 +2035,15 @@ static void *scan_thread(void *arg){
                                 "DELETE FROM BOOKS WHERE PATH LIKE '" SCAN_ROOT "/%' AND PATH NOT IN (SELECT PATH FROM seen);",0,0,0)==SQLITE_OK;
                         if(!r) del_ok = 0;   /* relocate failed -> roll back the whole scan */
                     }
+                    /* file stamps: forget files that are gone (only when the walk saw everything), and note which tag
+                     * reader took them; a failure here fails the scan like any other write */
+                    if(del_ok && g_stamp_put){
+                        if(!g_prune_blocked && sqlite3_exec(g_db, "DELETE FROM DISKOS_SCAN_STAMP WHERE PATH LIKE '" SCAN_ROOT "/%' "
+                                                                  "AND PATH NOT IN (SELECT PATH FROM seen);", 0,0,0) != SQLITE_OK) del_ok = 0;
+                        if(del_ok && sqlite3_exec(g_db, "CREATE TABLE IF NOT EXISTS DISKOS_META(K TEXT PRIMARY KEY, V INTEGER NOT NULL);"
+                                                        "INSERT OR REPLACE INTO DISKOS_META(K, V) VALUES('SCAN_TAGS_VERSION', "
+                                                        SCAN_STR(SCAN_TAGS_VERSION) ");", 0,0,0) != SQLITE_OK) del_ok = 0;
+                    }
                     /* A cancellation that lands AFTER the walk (or during the pruning SQL) must still keep the
                      * library as it was: check again immediately before COMMIT, and roll back instead. */
                     /* The commit decision and a cancel's acceptance are ONE transition under g_mu: once the worker
@@ -1977,6 +2065,8 @@ static void *scan_thread(void *arg){
         sqlite3_finalize(g_bookok); g_bookok=NULL;
         sqlite3_finalize(g_durok); g_durok=NULL;
         sqlite3_finalize(g_srcid); g_srcid=NULL;
+        sqlite3_finalize(g_stamp_chk); g_stamp_chk=NULL;
+        sqlite3_finalize(g_stamp_put); g_stamp_put=NULL;
     }
     sqlite3_close(g_db); g_db=NULL;   /* close even on a failed open: sqlite3_open_v2 may still return a handle */
     pthread_mutex_lock(&g_mu);
@@ -2002,7 +2092,7 @@ int scanner_cancel(void){
     if(accepted) atomic_store(&g_abort, 1);
     return accepted;
 }
-int scanner_start(void){
+static int scanner_start_mode(int full){
     /* A card without library.db: the UI makes it first (libdb_ui.c, on external power), with every table, and then
      * starts this scan itself. A scan here would make a library.db with only the scanner's tables (docs/LIBRARY_DB.md). */
     if(libdb_is_card(DB_PATH) && access(DB_PATH, F_OK) != 0) return -2;
@@ -2012,6 +2102,7 @@ int scanner_start(void){
      * cancellation aimed at the scan that is already running. */
     if(g_active){ pthread_mutex_unlock(&g_mu); sd_io_end(); return -1; }   /* already scanning */
     atomic_store(&g_abort, 0);
+    g_want_full = full;
     g_active=1; g_done=0; g_total=0; g_no_sd=0; g_cancelled=0; g_commit_decided=0; g_outcome=OUT_NONE; g_skipped=0; g_skipped_result=0; g_scan_err=0; g_unsupported=0;
     pthread_mutex_unlock(&g_mu);
     pthread_t th;
@@ -2022,6 +2113,9 @@ int scanner_start(void){
     pthread_detach(th);
     return 0;
 }
+
+int scanner_start(void){ return scanner_start_mode(0); }
+int scanner_start_full(void){ return scanner_start_mode(1); }
 
 /* ===================== [isolated test harness] =========================== */
 #ifdef SCANNER_TEST

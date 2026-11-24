@@ -877,7 +877,8 @@ static int handler(void *ud, int argc, char **argv, rmt_buf_t *o, const char **m
     if(!strcmp(c, "list")) return cmd_list(argc, argv, o, msg);
     if(!strcmp(c, "update") || !strcmp(c, "rescan")){
         ARGS(0, 1);
-        if(!scanner_active()){ int r = rsimple(RMT_CMD_RESCAN, 1, msg); if(r) return r; msrv_events(MPD_EV_UPDATE); }
+        /* as MPD: update = new and changed files only (quick scan), rescan = every file's tags again */
+        if(!scanner_active()){ int r = rsimple(RMT_CMD_RESCAN, !strcmp(c, "rescan") ? 2 : 1, msg); if(r) return r; msrv_events(MPD_EV_UPDATE); }
         rmt_buf_put(o, "updating_db: 1\n");
         return 0;
     }

@@ -112,6 +112,32 @@ else is ignored.
 
 On the flash DB there is no `SOURCE_ID` table, and the scanner keeps no IDs there.
 
+### Quick scan: `DISKOS_SCAN_STAMP`
+
+```sql
+CREATE TABLE DISKOS_SCAN_STAMP(PATH TEXT PRIMARY KEY, SIZE INTEGER NOT NULL, MTIME INTEGER NOT NULL);
+```
+
+One row per audio file whose tags the scanner read in full: its size in bytes and modification time (seconds), from
+the `lstat()` the walk does anyway. A **quick scan** (Settings > Library > Rescan Library, Remote Control, `mpc
+update`) still walks the whole card, so new, removed and moved files are found as before, but it does not open a file
+whose size and time match its row and whose ordinary `SONG` row (not CUE/ISO) is there: that row, its ID and
+everything keyed to it stay as they are. Only new and changed files are read. A **full scan** (Settings > Library >
+Full Rescan, `mpc rescan`, `api/rescan action=full`) reads every file. Asked for by Jo (2026-11-24): a few songs copied
+with rsync into a library of 5000+ should not cost a full read of every tag.
+
+- The table is written in the scan's transaction: a cancelled or failed scan leaves it as it was. Rows of files that
+  are gone are deleted with their songs (only when the walk saw everything, like the song prune).
+- Files read with the filename fallback (tags couldn't be loaded), CUE backing files and audiobooks (moved to `BOOKS`)
+  have no usable stamp and are read on every scan, as before.
+- `DISKOS_META` `SCAN_TAGS_VERSION` names the tag reader that made the stamps (`SCAN_TAGS_VERSION` in
+  `ui/scanner.c`). Bump it when the scanner starts to read something new from the tags: the next quick scan then
+  reads every file once. A library without the key (made before) gets one full read the same way.
+- rsync: with `-t` (part of `-a`) a file keeps its time, so an unchanged file is not read again; without it a copied
+  file gets a new time and is read once. A file changed in place with the same size and the same time (to the second)
+  is not noticed by a quick scan; Full Rescan reads it.
+- The flash DB (stock player) has no stamps: every scan there is a full one.
+
 ## A new library on the card
 
 Decided with Jo on 2026-11-23: the card library is never a copy of the flash library's songs. It is made new and
@@ -165,6 +191,8 @@ for them (as the stock player keeps them).
 - `ui/tests/libdb_test.c` covers the new library (flash schema and stock tables), the take-over by PATH, the
   connection settings, SOURCE_ID, the refusals and the player marker, with the card DB opened through libdb_vfs.
 - `ui/tests/scanner_srcid_test.c` covers reading the tags and writing SOURCE_ID.
+- `ui/tests/scanner_quick_test.c` covers the quick scan: unchanged files not read, changed/new/removed files, kept IDs,
+  Full Rescan and a new tag reader.
 - `ui/tests/libdb_vfs_test.c` covers closing the files under open connections, including four threads querying
   through a hold, and checks via `/proc/self/fd` that no file stays open on the card.
 
