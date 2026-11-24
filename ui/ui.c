@@ -1907,12 +1907,15 @@ static void np_backdrop_wash(void){
     if(!backdrop) return;
     lv_color_t canvas=TC(CANVAS);
     float lc=np_lum(canvas);
-    float worst=lc>0.18f?0.0f:255.0f;   /* black or white, per channel; 0.18: the luminance equally far from both */
+    int worst=lc>0.18f?0:255;   /* black or white, per channel; 0.18: the luminance equally far from both */
     lv_obj_t *texts[]={title,artist,album,t_elapsed};
     int opa=LV_OPA_COVER;
     for(int o=0;o<=LV_OPA_COVER;o+=5){
-        float k=o/255.0f;                 /* LVGL's colour mix: o/255 canvas over the worst cover */
-        float lb=np_lum_rgb(canvas.red*k+worst*(1-k),canvas.green*k+worst*(1-k),canvas.blue*k+worst*(1-k));
+        /* exactly LVGL's colour mix (integer channels, rounded, as in lv_color_op.c): a float mix lands between
+         * two steps and moved the threshold by one step (Ring light, theme_efficiency_test) */
+#define NP_MIX(c) (float)LV_UDIV255((uint32_t)(c)*(uint32_t)o+(uint32_t)worst*(uint32_t)(255-o)+LV_COLOR_MIX_ROUND_OFS)
+        float lb=np_lum_rgb(NP_MIX(canvas.red),NP_MIX(canvas.green),NP_MIX(canvas.blue));
+#undef NP_MIX
         int ok=1;
         for(unsigned i=0;i<sizeof texts/sizeof *texts&&ok;i++)
             if(texts[i]&&np_contrast(np_lum(lv_obj_get_style_text_color(texts[i],LV_PART_MAIN)),lb)<4.6f)ok=0;

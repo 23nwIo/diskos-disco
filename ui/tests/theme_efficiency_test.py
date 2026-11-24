@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='theme-efficiency-') as tmp:
   colors=[int(s.split()[1]) for s in text.splitlines() if s.startswith('NULL_MENU_COLORS')]
   result={'preset':preset,'variant':variant,'palette':palette,'frames':frames,'static':static,'menu_style_events':styles,'menu_color_writes':colors};results.append(result)
   if expected:
-   old=expected['cases'][index];assert frames==old['frames'],(preset,variant,palette,'animation pixels differ');assert static==old['static'],(preset,variant,palette,'static pixels differ')
+   old=expected['cases'][index];assert frames==old['frames'],(preset,variant,palette,'animation pixels differ');assert static==old['static'],(preset,variant,palette,'static pixels differ on',[k for k in static if static[k]!=old['static'].get(k)])
    if styles:assert styles[0]<=old['menu_style_events'][0],(styles,old['menu_style_events'])
    if colors:assert colors[0]<=old['menu_color_writes'][0],(colors,old['menu_color_writes'])   # never more style work than recorded
   print(f'PASS {preset}/{variant}/palette{palette}: {len(frames)} animation frames, four static screens'+(f', Null color writes {colors[0]}' if styles else ''),flush=True)
