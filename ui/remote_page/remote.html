@@ -35,11 +35,11 @@ function play(o){cmd('play_item',enc(o)).then(function(ok){if(ok)say('Playing',1
 function poll(){if(document.hidden||busy||(V!=='np'&&V!=='q'))return;busy=1;fetch(V==='q'?'api/state?q=1':'api/state',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){busy=0;if(V==='q'&&s.queue_ver!==qver)qload();
 $('t').textContent=s.has_track?(s.title||'-'):'Nothing playing';$('a').textContent=s.artist;$('al').textContent=s.album;
 var ra=s.source==='radio';if(ra){var sn=s.station||'Web radio',ok=s.radio_state!=='starting'&&s.radio_state!=='error';$('t').textContent=ok&&s.stream_title?s.stream_title:sn;$('a').textContent=s.radio_state==='starting'?'Starting…':s.radio_state==='error'?(s.radio_error||'Radio error'):s.stream_title?sn:'Web radio';$('al').textContent=s.station_url||''}$('al').classList.toggle('u',ra);
-var bc=s.source==='bandcamp';$('rs').textContent=bc?'Stop Bandcamp':'Stop radio';if(bc)bcnow(s);else if(bca){bca='';$('cv').classList.add('hide');art=''}
+var bc=s.source==='bandcamp';$('rs').textContent=bc?'Stop Bandcamp':'Stop radio';if(bc)bcnow(s);else if(bca){bca='';nocv();art=''}
 $('rs').classList.toggle('hide',!ra&&!bc);['pv','nx'].forEach(function(i){$(i).disabled=ra});$('pos').classList.toggle('hide',ra);$('pc').parentNode.classList.toggle('hide',ra);$('pmw').classList.toggle('hide',ra||bc||s.play_mode<0);
 var tx=[s.format,s.bits?s.bits+'-bit':'',s.sample_rate?(s.sample_rate%1000?(s.sample_rate/1000).toFixed(1):s.sample_rate/1000)+' kHz':'',s.kbps?s.kbps+' kbps':''].filter(Boolean).join(' · ');if(s.bt_codec||s.bt_device)tx+=(tx?' · ':'')+'Bluetooth '+[s.bt_codec,s.bt_device].filter(Boolean).join(' · ');$('tx').textContent=s.has_track||ra?tx:'';
 fav=ra?s.station_fav:s.favorite;$('fv').classList.toggle('hide',fav===null||fav===undefined);$('fv').dataset.r=ra?1:'';star($('fv'),fav);
-if(!bc&&s.art!==art){art=s.art;if(art)$('cv').src='api/cover?v='+encodeURIComponent(art);else $('cv').classList.add('hide')}
+if(!bc&&s.art!==art){art=s.art;if(art)$('cv').src='api/cover?v='+encodeURIComponent(art);else nocv()}
 $('pp').innerHTML=s.playing?'&#9208;':'&#9654;';
 if(!drag.pos){$('pos').max=Math.max(1,s.duration_ms);$('pos').value=s.position_ms}
 $('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);
@@ -66,7 +66,9 @@ $('oa').onchange=function(){cmd('outputs','aux='+(this.checked?1:0))};$('ob').on
 $('oau').onchange=function(){cmd('outputs','auto='+this.value)};
 var CN=['SBC','AAC','LDAC','aptX','aptX HD'];$('oc').onchange=function(){var e=this;cmd('outputs','codec='+e.value).then(function(ok){if(ok)say('Switching codec…',1)});e.blur()};
 $('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};
-$('cv').onload=function(){$('cv').classList.remove('hide')};$('cv').onerror=function(){$('cv').classList.add('hide')};
+/* no picture (a station): the box goes, and a cover still loading from before must not bring it back */
+function nocv(){var c=$('cv');c.classList.add('hide');c.removeAttribute('src')}
+$('cv').onload=function(){var c=$('cv');if(c.getAttribute('src')&&c.naturalWidth>1)c.classList.remove('hide');else nocv()};$('cv').onerror=nocv;
 $('fv').onclick=function(){var on=!fav;(($('fv').dataset.r)?cmd(on?'radio_fav_add':'radio_fav_remove','kind=radio_now'):favdo('on='+(on?1:0),on)).then(function(ok){if(ok)say(on?'Added to favourites':'Removed from favourites',1)})};
 $('rs').onclick=function(){if($('rs').textContent==='Stop Bandcamp')cmd('bandcamp','action=stop');else cmd('radio_stop')};function eqload(cur){fetch('api/eq',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok)return;var e=$('eqs');e.textContent='';
 j.presets.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name;e.appendChild(o)});e.value=j.current;e.dataset.n=(j.presets[j.current]||{}).name||''})}
@@ -166,7 +168,7 @@ t.plays?[{g:'&#8943;',a:'More',fn:function(){sheet(t.title,[['Play from here',fu
 var ts=r.tracks.map(function(t,i){t.i=i;return t}).filter(function(t){return m(t.title)});render(v,{ok:true,items:ts,total:ts.length},0);
 if(!r.tracks.length)$('list').textContent='This release has no tracks to play'}
 var bca='',bcat=0;function bcnow(s){var k=s.title+'|'+s.album;if(k===bca&&Date.now()-bcat<60000)return;bca=k;bcat=Date.now();bcget().then(function(j){var n=j.now||{};
-if(n.state==='error')say(n.error||'Bandcamp error');var a=n.release&&n.release.art;if(a){art='';$('cv').src=a}else $('cv').classList.add('hide')}).catch(function(){})}
+if(n.state==='error')say(n.error||'Bandcamp error');var a=n.release&&n.release.art;if(a){art='';$('cv').src=a}else nocv()}).catch(function(){})}
 function refresh(){poll()}
 /* Queue: the song playing now, the songs you queued (tap: play now; ⋯ move or remove), then Up Next (tap: play now).
  * The list carries a version: every change sends it, and the Disc refuses when the list changed in between. */
