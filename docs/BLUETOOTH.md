@@ -77,7 +77,9 @@ for the hands-free link (`Device1.ConnectProfile`, at most twice per connection;
 and their volume buttons move the Disc's Bluetooth volume (Settings › Audio › Outputs), like on a phone or a Linux PC.
 The Disc's level is sent to them as soon as they connect, so nothing gets louder. Headphones without it keep their own
 volume, and the Disc's Bluetooth volume scales the sound as before. To keep the Disc's volume separate even on
-headphones that have absolute volume: `touch /usr/data/diskos-own/no-abs-volume`. **Settings › Audio › Outputs ›
+headphones that have absolute volume: `touch /usr/data/diskos-own/no-abs-volume`. Whether a device has absolute
+volume is decided per connection: a link without it (a receiver such as the XQ-50 PRO2 may offer it on one connection
+and not on the next) is set back to the Disc's own volume on every new Bluetooth route. **Settings › Audio › Outputs ›
 Headphone Volume** sets what their volume buttons move: *Bluetooth only* (default) or *All outputs*, where the AUX volume
 moves by the same step (player command `0d06`, docs/PLAYER_PROTOCOL.md).
 

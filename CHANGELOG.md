@@ -6,6 +6,9 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 - Own player: the main volume (keys, screen, Remote Control) now moves the AUX and the Bluetooth volume together,
   also while one of them is off or nothing is plugged in, so neither is left far behind. Not yet tested on a Disc.
+- Own player: fixed the Bluetooth volume doing nothing after a receiver or headphones had once reported absolute
+  volume and then reconnected without it (BlueALSA stayed on native volume, which BlueZ refused). Not yet tested on a
+  Disc.
 - Remote Control: colour schemes. Each browser can pick **Colour scheme** next to **Page colour**; the default list has
   **Pink and black** (a pink frame around a black page, white text, pink muted text, light blue links). Schemes are
   `scheme=` lines in look.conf, editable on the system page.

@@ -128,6 +128,7 @@ static int core_slist(void *ctx, int idx){ (void)ctx; pb_stream_mode(1); return 
 static pl_core_t *g_core;
 static int *g_bt_vol;                      /* main's bt_vol: the volume the headphones were last given */
 static char g_abs_mac[18];                 /* headphones whose own volume is the Bluetooth volume (native BlueALSA) */
+static char soft_mac[18];                  /* headphones whose PCM was set to soft volume on this route */
 static void hp_transport(int op){ pb_transport(op, 0); }
 static void hp_volume(const char *mac, int v, int first){
     pl_core_t *c = g_core;
@@ -469,6 +470,25 @@ int main(int argc, char **argv){
         if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.vol_bt; }
         if(core.codec_seq != codec_seq){ codec_seq = core.codec_seq; pb_codec(core.codec_want); }
         if(g_abs_mac[0] && (!pb_bluetooth() || strcasecmp(g_abs_mac, pb_bt_mac()))) g_abs_mac[0] = 0;   /* they left */
+        /* Soft volume unless the link has absolute volume now. BlueALSA keeps a PCM's SoftVolume across BlueZ's transport
+         * coming and going, but absolute volume lives in the transport: when it went (avrcp "link gone") and the next one
+         * reports no Volume, BlueZ refuses the PCM volume ("No such property 'Volume'" in /tmp/bluealsa.log) and the
+         * Bluetooth volume did nothing (Jo 2026-11-24, XQ-50 PRO2 receiver). So: on every new Bluetooth route, and when
+         * the absolute-volume link is gone, the PCM goes back to soft volume and gets the Bluetooth volume again; a link
+         * that reports its Volume switches it off again (hp_volume). */
+        if(pb_bluetooth() && !pb_switching() && btav_fd() >= 0){
+            const char *bm = pb_bt_mac();
+            int abs = btav_volume_of(bm) >= 0;
+            if(g_abs_mac[0] && !abs){
+                logmsg("avrcp: %s: absolute volume gone with its link, back to soft volume", bm);
+                g_abs_mac[0] = 0; soft_mac[0] = 0;
+            }
+            if(!abs && !g_abs_mac[0] && strcasecmp(soft_mac, bm) && btav_soft_volume(bm, 1) == 0){
+                snprintf(soft_mac, sizeof soft_mac, "%s", bm);
+                bt_vol = -1;                                      /* the Bluetooth volume again, now scaled by BlueALSA */
+            }
+        }
+        if(!pb_bluetooth() || (soft_mac[0] && strcasecmp(soft_mac, pb_bt_mac()))) soft_mac[0] = 0;
         if(pb_bluetooth() && !pb_switching() && core.vol_bt != bt_vol){   /* the headphones' own volume (BlueALSA) */
             bt_vol = core.vol_bt;
             bto_volume(pb_bt_mac(), core.vol_bt, PL_VOL_MAX, logmsg);
