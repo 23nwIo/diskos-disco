@@ -716,7 +716,9 @@ const char RMT_LOOK_DEFAULT[] =
     "# color=<name> #<dark theme> [#<light theme>]\n"
     "color=Red #ff4d5e #d61f3b\ncolor=Yellow #ffcc33 #c99700\ncolor=Orange #ff9f43 #d35f00\ncolor=Pink #ff7eb6 #d6337a\n"
     "color=Purple #b48cff #7a4fd6\ncolor=Blue #4da3ff #0a66d1\ncolor=Green #3ccf7a #1a8f4c\ncolor=White #f2f2f2 #8a8a8a\n"
-    "color=Black #000000\n";
+    "color=Black #000000\n"
+    "# scheme=<name> #<frame> #<page> #<text> #<muted text> #<links and buttons>\n"
+    "scheme=Pink and black #dc007c #000000 #ffffff #f0067f #3fa3e8\n";
 static int hex_ok(const char *h){
     if(strlen(h) != 7 || h[0] != '#') return 0;
     for(int i = 1; i < 7; i++) if(!isxdigit((unsigned char)h[i])) return 0;
@@ -750,6 +752,17 @@ int rmt_look_parse(const char *text, rmt_look_t *lk){
             snprintf(lk->col[lk->ncol].dark, 8, "%.7s", d); snprintf(lk->col[lk->ncol].light, 8, "%.7s", li[0] ? li : d);
             for(int i = 0; i < lk->ncol; i++) if(!strcmp(lk->col[i].name, lk->col[lk->ncol].name)) return ln;   /* names pick them */
             lk->ncol++;
+        } else if(!strncmp(p, "scheme=", 7)){
+            char *v = p + 7, *h1 = strchr(v, '#');
+            if(!h1 || h1 == v || lk->nsch >= RMT_LOOK_SCHEMES) return ln;
+            char *ne = h1; while(ne > v && ne[-1] == ' ') ne--;
+            if(ne == v || (size_t)(ne - v) >= sizeof lk->sch[0].name) return ln;
+            char h[6][16] = {{0}};
+            if(sscanf(h1, "%15s %15s %15s %15s %15s %15s", h[0], h[1], h[2], h[3], h[4], h[5]) != 5) return ln;
+            for(int i = 0; i < 5; i++){ if(!hex_ok(h[i])) return ln; snprintf(lk->sch[lk->nsch].c[i], 8, "%.7s", h[i]); }
+            snprintf(lk->sch[lk->nsch].name, sizeof lk->sch[0].name, "%.*s", (int)(ne - v), v);
+            for(int i = 0; i < lk->nsch; i++) if(!strcmp(lk->sch[i].name, lk->sch[lk->nsch].name)) return ln;
+            lk->nsch++;
         } else return ln;
     }
     return lk->nsym && lk->ncol ? 0 : ln + 1;
@@ -761,6 +774,12 @@ void rmt_look_json(rmt_buf_t *b, const rmt_look_t *lk){
     for(int i = 0; i < lk->ncol; i++){
         rmt_buf_put(b, i ? ",{\"name\":" : "{\"name\":"); rmt_buf_str(b, lk->col[i].name);
         rmt_buf_printf(b, ",\"dark\":\"%s\",\"light\":\"%s\"}", lk->col[i].dark, lk->col[i].light);
+    }
+    rmt_buf_put(b, "],\"schemes\":[");
+    for(int i = 0; i < lk->nsch; i++){
+        rmt_buf_put(b, i ? ",{\"name\":" : "{\"name\":"); rmt_buf_str(b, lk->sch[i].name);
+        rmt_buf_printf(b, ",\"frame\":\"%s\",\"page\":\"%s\",\"text\":\"%s\",\"muted\":\"%s\",\"link\":\"%s\"}",
+                       lk->sch[i].c[0], lk->sch[i].c[1], lk->sch[i].c[2], lk->sch[i].c[3], lk->sch[i].c[4]);
     }
     rmt_buf_put(b, "]");
 }

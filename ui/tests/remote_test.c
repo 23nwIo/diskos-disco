@@ -194,7 +194,15 @@ static void test_party(void){
     CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\ncolor=R #654321\n", &lk) == 3 && rmt_look_parse("symbol=*\n", &lk) == 2);   /* names pick them; no colour */
     CHECK(rmt_look_parse("symbol=<b>\ncolor=R #123456\n", &lk) == 1 && rmt_look_parse("colour=R #123456\n", &lk) == 1 && rmt_look_parse("symbol=*\ncolor=#123456\n", &lk) == 2);
     rmt_buf_t lb = {0}; rmt_look_parse("symbol=*\ncolor=R #123456 #abcdef\n", &lk); rmt_look_json(&lb, &lk); char *lj = rmt_buf_take(&lb);
-    CHECK(lj && !strcmp(lj, "\"symbols\":[\"*\"],\"colors\":[{\"name\":\"R\",\"dark\":\"#123456\",\"light\":\"#abcdef\"}]")); free(lj);
+    CHECK(lj && !strcmp(lj, "\"symbols\":[\"*\"],\"colors\":[{\"name\":\"R\",\"dark\":\"#123456\",\"light\":\"#abcdef\"}],\"schemes\":[]")); free(lj);
+    /* page colour schemes: name, then frame, page, text, muted, link */
+    CHECK(rmt_look_parse(RMT_LOOK_DEFAULT, &lk) == 0 && lk.nsch == 1 && !strcmp(lk.sch[0].name, "Pink and black") && !strcmp(lk.sch[0].c[0], "#dc007c") && !strcmp(lk.sch[0].c[4], "#3fa3e8"));
+    CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\nscheme=S #111111 #222222 #333333 #444444\n", &lk) == 3);          /* one missing */
+    CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\nscheme=S #111111 #222222 #333333 #444444 #555555 #666666\n", &lk) == 3);
+    CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\nscheme=#111111 #222222 #333333 #444444 #555555\n", &lk) == 3);   /* no name */
+    CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\nscheme=S #111111 #222222 #333333 #444444 #55555g\n", &lk) == 3);
+    lb = (rmt_buf_t){0}; CHECK(rmt_look_parse("symbol=*\ncolor=R #123456\nscheme=S x #111111 #222222 #333333 #444444 #555555\n", &lk) == 0); rmt_look_json(&lb, &lk); lj = rmt_buf_take(&lb);
+    CHECK(lj && strstr(lj, ",\"schemes\":[{\"name\":\"S x\",\"frame\":\"#111111\",\"page\":\"#222222\",\"text\":\"#333333\",\"muted\":\"#444444\",\"link\":\"#555555\"}]")); free(lj);
     r = req("POST", p("/api/look"), "l=symbol%3D%E2%AD%90&l=&l=color%3DBlack+%23000000");
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_LOOK && r.cmd.arg == 1 && !strcmp(r.cmd.text, "symbol=\xe2\xad\x90\n\ncolor=Black #000000\n"));
     CHECK(req("POST", p("/api/look"), "l=symbol%3D%E2%AD%90").kind == RMT_R_BAD_PARAM && req("GET", p("/api/look"), NULL).cmd.arg == 0);

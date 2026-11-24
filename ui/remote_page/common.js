@@ -2,15 +2,22 @@
  * (api/look: look.conf on the card, which the host edits on the system page); this browser keeps what it picked.
  * ACC: the page colours until api/look answers (and for picks saved before 2026-11-24, by their old names). */
 function cap(s){return typeof s==='string'?s.charAt(0).toUpperCase()+s.slice(1):''}
-var LK={acc:'Orange',fav:'',fc:''},ACC={Orange:['#ff9f43','#d35f00'],Blue:['#4da3ff','#0a66d1'],Green:['#3ccf7a','#1a8f4c'],Purple:['#b48cff','#7a4fd6'],Red:['#ff6b6b','#cc2b2b']};
+var LK={acc:'Orange',fav:'',fc:'',sc:null},ACC={Orange:['#ff9f43','#d35f00'],Blue:['#4da3ff','#0a66d1'],Green:['#3ccf7a','#1a8f4c'],Purple:['#b48cff','#7a4fd6'],Red:['#ff6b6b','#cc2b2b']};
 var LOOK={symbols:['\u2764\ufe0f'],colors:[{name:'Red',dark:'#ff4d5e',light:'#d61f3b'}]};   /* until api/look answers */
 try{var lk=JSON.parse(localStorage.getItem('look')||'{}');if(lk.acc)LK.acc=cap(lk.acc);
 LK.fav=lk.fav==='heart'?'\u2764\ufe0f':lk.fav==='star'?'\u2b50':typeof lk.fav==='string'?lk.fav:'';   /* before 2026-11-23: names */
-LK.fc=cap(lk.fc)}catch(e){}
+LK.fc=cap(lk.fc);if(lk.sc&&lk.sc.page)LK.sc=lk.sc}catch(e){}
 function favsym(){return LOOK.symbols.indexOf(LK.fav)>=0?LK.fav:LOOK.symbols[0]}
 function favcol(){for(var i=0;i<LOOK.colors.length;i++)if(LOOK.colors[i].name===LK.fc)return LOOK.colors[i];return LOOK.colors[0]}
 function acccol(){for(var i=0;i<LOOK.colors.length;i++)if(LOOK.colors[i].name===LK.acc)return LOOK.colors[i];var a=ACC[LK.acc]||ACC.Orange;return{name:LK.acc,dark:a[0],light:a[1]}}
-function look(){var lt=matchMedia('(prefers-color-scheme: light)').matches?1:0,d=document.documentElement.style;d.setProperty('--acc',acccol()[lt?'light':'dark']);
+/* a colour scheme (LK.sc, a copy of the look.conf entry so it shows before api/look answers) sets the page's own colours;
+ * the light/dark variants of the favourite colour follow its page colour */
+function lum(h){var n=parseInt(h.slice(1),16);return((n>>16)*299+(n>>8&255)*587+(n&255)*114)/255000}
+function look(){var r=document.documentElement,d=r.style,sc=LK.sc,lt=sc?(lum(sc.page)>.5?1:0):matchMedia('(prefers-color-scheme: light)').matches?1:0;
+r.classList.toggle('sch',!!sc);['--frame','--bg','--fg','--mut','--card','--line'].forEach(function(k){d.removeProperty(k)});
+if(sc){d.setProperty('--frame',sc.frame);d.setProperty('--bg',sc.page);d.setProperty('--fg',sc.text);d.setProperty('--mut',sc.muted);
+d.setProperty('--card','color-mix(in srgb,'+sc.text+' 9%,'+sc.page+')');d.setProperty('--line','color-mix(in srgb,'+sc.text+' 18%,'+sc.page+')');r.style.colorScheme=lt?'light':'dark'}else d.removeProperty('color-scheme');
+d.setProperty('--acc',sc?sc.link:acccol()[lt?'light':'dark']);
 d.setProperty('--fav',favcol()[lt?'light':'dark']);try{localStorage.setItem('look',JSON.stringify(LK))}catch(e){}
 [].forEach.call(document.querySelectorAll('.fa'),function(b){star(b,b.dataset.on==='1')})}
 var $=function(i){return document.getElementById(i)};
@@ -44,7 +51,10 @@ function gname_set(n){try{localStorage.setItem('pn',n);localStorage.removeItem('
 function moved(m){if(!/reload the page/.test(m||''))return 0;var t=0;try{t=+sessionStorage.getItem('mv')||0;sessionStorage.setItem('mv',Date.now())}catch(e){}
 if(Date.now()-t>5000)location.reload();return 1}   /* at most one reload in 5 s: never a reload loop */
 /* the choices; the selects #lkf (the symbols as they are) and #lkc (the colours' names) when the page has them */
-function fillsel(){var f=$('lkf'),c=$('lkc'),a=$('lka');
+function fillsel(){var f=$('lkf'),c=$('lkc'),a=$('lka'),m=$('lkm'),ss=LOOK.schemes||[];
+if(LK.sc){var k=ss.filter(function(x){return x.name===LK.sc.name})[0];LK.sc=k||null}   /* the card's colours win; a removed scheme ends */
+if(m){m.textContent='';[{name:''}].concat(ss).forEach(function(x){var o=document.createElement('option');o.value=x.name;o.textContent=x.name||'Dark or light (as the device)';m.appendChild(o)});
+m.value=LK.sc?LK.sc.name:'';m.onchange=function(){LK.sc=ss.filter(function(x){return x.name===m.value})[0]||null;if(a)a.disabled=!!LK.sc;look()}}if(a)a.disabled=!!LK.sc;
 if(a){a.textContent='';LOOK.colors.forEach(function(x){var o=document.createElement('option');o.value=o.textContent=x.name;a.appendChild(o)});
 if(LOOK.colors.every(function(x){return x.name!==LK.acc})){var o=document.createElement('option');o.value=o.textContent=LK.acc;a.appendChild(o)}   /* an earlier pick stays */
 a.value=LK.acc;a.onchange=function(){LK.acc=a.value;look()}}if(f){f.textContent='';LOOK.symbols.forEach(function(s){var o=document.createElement('option');o.value=o.textContent=s;f.appendChild(o)});f.value=favsym();

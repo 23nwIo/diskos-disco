@@ -254,16 +254,20 @@ char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NU
 
 /* The favourite symbols and colours the pages offer (each browser picks one of each; Jo, 2026-11-23). Kept in
  * <card>/.diskos/state/look.conf: "symbol=<symbol>" and "color=<name> #rrggbb [#rrggbb for the light theme]" lines,
- * '#' comments. Without the file, RMT_LOOK_DEFAULT. */
+ * optional "scheme=<name> #frame #page #text #muted #link" lines (page colour schemes, Jo 2026-11-24), '#' comments.
+ * Without the file, RMT_LOOK_DEFAULT. */
 #define RMT_LOOK_FILE "look.conf"
 #define RMT_LOOK_SYMS 16
 #define RMT_LOOK_COLS 32
-typedef struct { int nsym, ncol; char sym[RMT_LOOK_SYMS][20]; struct { char name[24], dark[8], light[8]; } col[RMT_LOOK_COLS]; } rmt_look_t;
+#define RMT_LOOK_SCHEMES 8
+typedef struct { int nsym, ncol, nsch; char sym[RMT_LOOK_SYMS][20]; struct { char name[24], dark[8], light[8]; } col[RMT_LOOK_COLS];
+                 struct { char name[24], c[5][8]; } sch[RMT_LOOK_SCHEMES]; } rmt_look_t;   /* c: frame, page, text, muted, link */
 extern const char RMT_LOOK_DEFAULT[];
 /* 0 ok (at least one symbol and one colour), else the number of the first bad line (or of the last line + 1 when one
  * kind is missing / there are too many) */
 int  rmt_look_parse(const char *text, rmt_look_t *lk);
-void rmt_look_json(rmt_buf_t *b, const rmt_look_t *lk);   /* "symbols":[…],"colors":[{"name","dark","light"}] */
+/* "symbols":[…],"colors":[{"name","dark","light"}],"schemes":[{"name","frame","page","text","muted","link"}] */
+void rmt_look_json(rmt_buf_t *b, const rmt_look_t *lk);
 
 /* The pages (static HTML, remote_page.c, generated from ui/remote_page/ by ui/tools/gen_remote_page.py): the control
  * page at /<token>/ (Now playing, queue, library) and the system page at /<token>/system (Status, Bluetooth, Screen).

@@ -4,6 +4,9 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Remote Control: colour schemes. Each browser can pick **Colour scheme** next to **Page colour**; the default list has
+  **Pink and black** (a pink frame around a black page, white text, pink muted text, light blue links). Schemes are
+  `scheme=` lines in look.conf, editable on the system page.
 - Own player: the heart of the song playing (on the Disc and in Remote Control) now adds it to the favourites and
   removes it again; before, the own player ignored it. The Remote Control page reports "Added to favourites" only once
   the player shows the change, otherwise "The player did not change the favourites".
