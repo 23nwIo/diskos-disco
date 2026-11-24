@@ -25,6 +25,9 @@ typedef void (*panel_log_fn)(const char *fmt, ...);
 void panel_lock(panel_log_fn log);
 /* Back on: panel on, brightness `level` (1..40), bl_power 0, touch controller on. */
 void panel_unlock(int level, panel_log_fn log);
+/* Visible but still locked: panel on, brightness `level`, bl_power 0; the touch controller stays off. For a short
+ * notice on a locked screen (the charger plugged in); panel_lock ends it. */
+void panel_light(int level, panel_log_fn log);
 /* What the user sees: brightness above 0 and the rail powered. -1 when the backlight can't be read (log says why). */
 int panel_is_on(panel_log_fn log);
 /* The backlight brightness, -1 when unreadable (log says why). */

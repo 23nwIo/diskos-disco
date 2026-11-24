@@ -932,6 +932,8 @@ void ui_screen_lock(void){ panel_lock(panel_log); fprintf(stderr, "screen locked
 /* Light a locked screen from the UI's side (a pairing code, the shutdown screen, Remote Control). Not needed after a
  * power key press: the player has unlocked it already. */
 void ui_screen_unlock(void){ panel_unlock(ui_effective_brightness(), panel_log); fprintf(stderr, "screen unlocked by the UI\n"); }
+/* Show a locked screen for a moment without unlocking it (the charger notice): touch stays off; ui_screen_lock ends it. */
+void ui_screen_peek(void){ panel_light(ui_effective_brightness(), panel_log); fprintf(stderr, "screen shown, still locked\n"); }
 /* A theme re-launch while the screen is locked (Auto day/night switches at an idle boundary): stay locked instead of
  * lighting the screen in a pocket. Only a re-launch: at boot the brightness is whatever the boot left. */
 static int g_start_locked;

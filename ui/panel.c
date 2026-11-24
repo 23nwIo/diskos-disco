@@ -37,7 +37,7 @@ void panel_lock(panel_log_fn log){
     panel_ioctl(LCD_DEV, LCD_IOC_OFF, "display off", log);
 }
 
-void panel_unlock(int level, panel_log_fn log){
+void panel_light(int level, panel_log_fn log){
     char b[12];
     if(level < 1) level = 1;
     if(level > 40) level = 40;
@@ -45,6 +45,10 @@ void panel_unlock(int level, panel_log_fn log){
     panel_ioctl(LCD_DEV, LCD_IOC_ON, "display on", log);
     write_str(BACKLIGHT, b, log);                   /* the level first, then the rail on (no flash at the old level) */
     write_str(BL_POWER, "0", log);
+}
+
+void panel_unlock(int level, panel_log_fn log){
+    panel_light(level, log);
     panel_ioctl(TOUCH_DEV, TOUCH_IOC_ON, "touch on", log);
 }
 

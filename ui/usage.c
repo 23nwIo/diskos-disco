@@ -199,6 +199,14 @@ int usage_typec_cc_term_parse(const char *v){
     if(n == 9 && !strncmp(v, "Undefined", 9)) return 0;
     return -1;
 }
+int usage_typec_power_in_now(void){   /* uncached, for the charger notice on a locked screen (main.c, once a second) */
+    char v[32] = "";
+    FILE *f = fopen(TYPEC_CC_TERM, "r");
+    if(!f) return -1;
+    int r = fgets(v, sizeof v, f) ? usage_typec_cc_term_parse(v) : -1;
+    fclose(f);
+    return r;
+}
 static int typec_power_in(void){
     static uint32_t at; static int have, cached = -1;
     uint32_t now = lv_tick_get();

@@ -1651,6 +1651,53 @@ void ui_shutdown_screen(void){
     lv_refr_now(NULL);                                          /* on the panel before anything slow runs */
 }
 void ui_shutdown_hide(void){ if(g_sd_ov){ lv_obj_delete(g_sd_ov); g_sd_ov = NULL; } }
+
+/* Charger notice (Jo 2026-11-24): a charger plugged into a Disc whose screen is locked shows this for about a second,
+ * without unlocking (the touch controller stays off). A ring filled to the battery level, the charge symbol, the level. */
+static lv_obj_t *g_chg_ov;
+static void charge_notice_show(int pct){
+    if(g_chg_ov) lv_obj_delete(g_chg_ov);
+    lv_obj_t *o = lv_obj_create(lv_layer_top());
+    g_chg_ov = o;
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, 360, 360);
+    lv_obj_set_style_bg_color(o, TC(CANVAS), 0);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *ring = lv_arc_create(o);
+    lv_obj_remove_style(ring, NULL, LV_PART_KNOB);
+    lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ring, 124, 124);
+    lv_obj_align(ring, LV_ALIGN_CENTER, 0, -34);
+    lv_arc_set_rotation(ring, 270);
+    lv_arc_set_bg_angles(ring, 0, 360);
+    lv_arc_set_range(ring, 0, 100);
+    lv_arc_set_value(ring, pct >= 0 && pct <= 100 ? pct : 0);
+    lv_obj_set_style_arc_width(ring, 6, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ring, TC(TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ring, 6, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ring, ui_current_accent(), LV_PART_INDICATOR);
+    lv_obj_t *ic = lv_label_create(o);
+    lv_label_set_text(ic, LV_SYMBOL_CHARGE);
+    lv_obj_set_style_text_font(ic, TF(UI_38), 0);
+    lv_obj_set_style_text_color(ic, TC(TEXT_PRIMARY), 0);
+    lv_obj_align(ic, LV_ALIGN_CENTER, 0, -34);
+    lv_obj_t *t = lv_label_create(o);
+    lv_label_set_text(t, "Charging");
+    lv_obj_set_style_text_font(t, TH_F_TITLE, 0);
+    lv_obj_set_style_text_color(t, TC(TEXT_PRIMARY), 0);
+    lv_obj_align(t, LV_ALIGN_CENTER, 0, 58);
+    if(pct >= 0 && pct <= 100){
+        lv_obj_t *l = lv_label_create(o);
+        lv_label_set_text_fmt(l, "%d%%", pct);
+        lv_obj_set_style_text_font(l, TH_F_DETAIL, 0);
+        lv_obj_set_style_text_color(l, TC(TEXT_SECONDARY), 0);
+        lv_obj_align(l, LV_ALIGN_CENTER, 0, 88);
+    }
+    lv_refr_now(NULL);                                          /* drawn before the panel comes on */
+}
+static void charge_notice_hide(void){ if(g_chg_ov){ lv_obj_delete(g_chg_ov); g_chg_ov = NULL; } }
 long ui_playing_playlist(void){ return g_active_pid; }
 void ui_restart(void){ ui_theme_reload("fork"); }
 void ui_power_off(void){ power_shutdown_request(); }
@@ -4072,6 +4119,8 @@ int main(int argc, char **argv){
     /* The screen lock: set whenever the screen is fully off (bl_state 2), whoever turned it off (the idle timeout, the
      * Sleep tile, the power key). Brightness is then 0, and the player's power key raising it is the unlock (PW-10). */
     int locked = ui_screen_start_locked();
+    uint32_t chg_peek = 0;      /* the charger notice is up on a locked screen since this tick (| 1), 0 = not */
+    uint32_t last_pwrpoll = 0; int prev_power = -1;   /* charger plug-in watch (USB-C port, else charging) */
     unsigned last_vol_seq = 0;
     int last_volume = -1; /* first player report establishes a baseline, not user input */
     /* Start the boot splash HERE - after all the blocking startup init (hwclock, bt_boot_restore,
@@ -4555,7 +4604,14 @@ int main(int argc, char **argv){
             last_blpoll = lv_tick_get();
             int cbr = read_int_file("/sys/class/backlight/backlight/brightness");
             int cbp = read_int_file("/sys/class/backlight/backlight/bl_power");
-            if(cbr == 0 && !locked){
+            if(chg_peek && locked){
+                /* the charger notice lit a locked screen (brightness up, touch off). The player's power key sees it as
+                 * on and locks it (brightness 0): the user pressed Power to wake it, so unlock. */
+                if(cbr == 0){
+                    charge_notice_hide(); chg_peek = 0;
+                    ui_screen_unlock(); bl_state = 0; locked = 0; last_activity = lv_tick_get();
+                }
+            } else if(cbr == 0 && !locked){
                 /* player blanked via brightness-only -> cut the rail and lock. (Before the screen lock the idle
                  * screen-off left the brightness up, and a later power-key blank had to be caught here too: field
                  * report 2026-11-06, brightness 16, bl_power 4 after a power press. Now the idle off is locked itself.) */
@@ -4611,6 +4667,28 @@ int main(int argc, char **argv){
                     ui_shutdown_hide(); pk_shown = 0;
                 }
             }
+        }
+
+        /* Charger notice (Jo 2026-11-24): a charger plugged in while the screen is locked lights it for about a second
+         * to show it charges, without unlocking (touch stays off, the lock comes back). Plug-in = the USB-C port reports
+         * a power source (read uncached, once a second, only while locked); where the port says nothing, the battery
+         * starting to charge. Watched while awake too (cheaply, from the cached values) so a cable that was already in
+         * when the screen locked is no plug-in. */
+        if(lv_tick_elaps(last_pwrpoll) >= 1000){
+            last_pwrpoll = lv_tick_get();
+            int pin = locked ? usage_typec_power_in_now() : usage_plugged_in();
+            if(pin < 0) pin = g_batt_chg ? 1 : 0;
+            if(pin == 1 && prev_power == 0 && locked && bl_state == 2 && !chg_peek){
+                fprintf(stderr, "charger plugged in on a locked screen: notice\n");
+                charge_notice_show(g_batt_pct);
+                ui_screen_peek();
+                chg_peek = lv_tick_get() | 1;
+            }
+            prev_power = pin;
+        }
+        if(chg_peek && lv_tick_elaps(chg_peek) >= 1200){
+            charge_notice_hide(); chg_peek = 0;
+            if(locked) ui_screen_lock();              /* still locked: dark again */
         }
 
         /* screensaver + backlight power saving (the screen is the biggest drain):
