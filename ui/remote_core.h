@@ -261,7 +261,8 @@ char *rmt_buf_take(rmt_buf_t *b);                 /* the text (caller frees), NU
 #define RMT_LOOK_COLS 32
 #define RMT_LOOK_SCHEMES 8
 typedef struct { int nsym, ncol, nsch; char sym[RMT_LOOK_SYMS][20]; struct { char name[24], dark[8], light[8]; } col[RMT_LOOK_COLS];
-                 struct { char name[24], c[5][8]; } sch[RMT_LOOK_SCHEMES]; } rmt_look_t;   /* c: frame, page, text, muted, link */
+                 struct { char name[24], c[5][8]; } sch[RMT_LOOK_SCHEMES];   /* c: frame, page, text, muted, link */
+                 const char *why; } rmt_look_t;                               /* after a bad line: what is wrong */
 extern const char RMT_LOOK_DEFAULT[];
 /* 0 ok (at least one symbol and one colour), else the number of the first bad line (or of the last line + 1 when one
  * kind is missing / there are too many) */

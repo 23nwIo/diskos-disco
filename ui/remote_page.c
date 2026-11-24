@@ -485,7 +485,7 @@ const char RMT_SYS_HTML[] =
 "if(v==='scr'){shot();return}if(v==='public'){party();return}if(v==='status'){$('stv').textContent='Loading…';status();return}$('btl').textContent='Loading…';bt()}\n"
 "[].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});\n"
 "function lkfill(j){if(document.activeElement!==$('lkt'))$('lkt').value=j.text;if(j.bad_line)say('look.conf line '+j.bad_line+' is not right - the defaults are used')}\n"
-"looks(lkfill);$('lks').onclick=function(){cmd('look',$('lkt').value.split('\\n').map(function(l){return'l='+encodeURIComponent(l)}).join('&')).then(function(ok){if(ok){say('Saved',1);$('lkt').blur();looks(lkfill)}else say('A line is not right: symbol=…, color=Name #rrggbb [#rrggbb] or scheme=Name and 5 × #rrggbb')})};\n"
+"looks(lkfill);$('lks').onclick=function(){cmdj('look',$('lkt').value.split('\\n').map(function(l){return'l='+encodeURIComponent(l)}).join('&')).then(function(j){if(j.ok){say('Saved',1);$('lkt').blur();looks(lkfill)}})};\n"
 "document.addEventListener('visibilitychange',function(){refresh();shot()});tab(location.hash.slice(1));\n"
 "</script></html>\n";
 

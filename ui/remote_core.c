@@ -127,6 +127,7 @@ static int param(const rmt_req_t *r, const char *name, long *out){
 }
 static int hexv(int c){ return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
 /* name=value, url-decoded ('+' = space, %XX). 0 ok, -1 absent, -2 malformed / too long / a control byte */
+static int ln_count(const char *t){ int n = 0; for(; *t; t++) n += *t == '\n'; return n; }
 static int param_str_list(const char *list, const char *name, char *out, size_t cap){
     size_t nl = strlen(name);
     const char *p = list;
@@ -404,7 +405,15 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
             if(w < 0 || (size_t)w >= sizeof rt.cmd.text - o) bad = 1; else o += (size_t)w;
         }
         rmt_look_t lk;
-        if(bad || rmt_look_parse(rt.cmd.text, &lk)){ memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM; return rt; }
+        int bl = bad ? 0 : rmt_look_parse(rt.cmd.text, &lk), lines = ln_count(rt.cmd.text);
+        if(bad || bl){                                   /* the page says which line and why (remote_srv.c) */
+            memset(&rt.cmd, 0, sizeof rt.cmd); rt.kind = RMT_R_BAD_PARAM;
+            rt.cmd.kind = RMT_CMD_LOOK;
+            if(bad) snprintf(rt.cmd.text, sizeof rt.cmd.text, "Too much text (or a line over 159 bytes)");
+            else if(bl > lines) snprintf(rt.cmd.text, sizeof rt.cmd.text, "Not saved: %s", lk.why ? lk.why : "a line is not right");
+            else snprintf(rt.cmd.text, sizeof rt.cmd.text, "Not saved: line %d: %s", bl, lk.why ? lk.why : "not right");
+            return rt;
+        }
         rt.kind = RMT_R_CMD; rt.cmd.kind = RMT_CMD_LOOK; rt.cmd.arg = 1;
         return rt;
     }
@@ -730,41 +739,45 @@ int rmt_look_parse(const char *text, rmt_look_t *lk){
     for(const char *l = text ? text : ""; *l; ){
         const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l);
         char line[160]; ln++;
-        if(n >= sizeof line) return ln;
+        if(n >= sizeof line){ lk->why = "too long"; return ln; }
         memcpy(line, l, n); line[n] = 0;
         l += n + (e ? 1 : 0);
         while(n && (line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = 0;
         char *p = line; while(*p == ' ' || *p == '\t') p++;
         if(!*p || *p == '#') continue;
-        for(char *q = p; *q; q++) if((unsigned char)*q < 0x20 || *q == '<' || *q == '"' || *q == '\\') return ln;
+        for(char *q = p; *q; q++) if((unsigned char)*q < 0x20 || *q == '<' || *q == '"' || *q == '\\'){ lk->why = "< \" and \\ are not allowed"; return ln; }
         if(!strncmp(p, "symbol=", 7)){
             const char *v = p + 7;
-            if(!v[0] || strlen(v) >= sizeof lk->sym[0] || strchr(v, ' ') || lk->nsym >= RMT_LOOK_SYMS) return ln;
+            if(lk->nsym >= RMT_LOOK_SYMS){ lk->why = "too many symbols (16 at most)"; return ln; }
+            if(!v[0] || strlen(v) >= sizeof lk->sym[0] || strchr(v, ' ')){ lk->why = "one symbol, no spaces"; return ln; }
             snprintf(lk->sym[lk->nsym++], sizeof lk->sym[0], "%s", v);
         } else if(!strncmp(p, "color=", 6)){
             char *v = p + 6, *h1 = strchr(v, '#');
-            if(!h1 || h1 == v || lk->ncol >= RMT_LOOK_COLS) return ln;
+            if(lk->ncol >= RMT_LOOK_COLS){ lk->why = "too many colours (32 at most)"; return ln; }
+            if(!h1 || h1 == v){ lk->why = "a name, then #rrggbb"; return ln; }
             char *ne = h1; while(ne > v && ne[-1] == ' ') ne--;
-            if(ne == v || (size_t)(ne - v) >= sizeof lk->col[0].name) return ln;
+            if(ne == v || (size_t)(ne - v) >= sizeof lk->col[0].name){ lk->why = "a name of up to 23 characters"; return ln; }
             char d[16] = "", li[16] = "", extra[4] = "";
-            if(sscanf(h1, "%15s %15s %3s", d, li, extra) == 3 || !hex_ok(d) || (li[0] && !hex_ok(li))) return ln;
+            if(sscanf(h1, "%15s %15s %3s", d, li, extra) == 3 || !hex_ok(d) || (li[0] && !hex_ok(li))){ lk->why = "one or two colours as #rrggbb"; return ln; }
             snprintf(lk->col[lk->ncol].name, sizeof lk->col[0].name, "%.*s", (int)(ne - v), v);
             snprintf(lk->col[lk->ncol].dark, 8, "%.7s", d); snprintf(lk->col[lk->ncol].light, 8, "%.7s", li[0] ? li : d);
-            for(int i = 0; i < lk->ncol; i++) if(!strcmp(lk->col[i].name, lk->col[lk->ncol].name)) return ln;   /* names pick them */
+            for(int i = 0; i < lk->ncol; i++) if(!strcmp(lk->col[i].name, lk->col[lk->ncol].name)){ lk->why = "this colour name is used twice"; return ln; }   /* names pick them */
             lk->ncol++;
         } else if(!strncmp(p, "scheme=", 7)){
             char *v = p + 7, *h1 = strchr(v, '#');
-            if(!h1 || h1 == v || lk->nsch >= RMT_LOOK_SCHEMES) return ln;
+            if(lk->nsch >= RMT_LOOK_SCHEMES){ lk->why = "too many schemes (8 at most)"; return ln; }
+            if(!h1 || h1 == v){ lk->why = "a name, then 5 colours as #rrggbb"; return ln; }
             char *ne = h1; while(ne > v && ne[-1] == ' ') ne--;
-            if(ne == v || (size_t)(ne - v) >= sizeof lk->sch[0].name) return ln;
+            if(ne == v || (size_t)(ne - v) >= sizeof lk->sch[0].name){ lk->why = "a name of up to 23 characters"; return ln; }
             char h[6][16] = {{0}};
-            if(sscanf(h1, "%15s %15s %15s %15s %15s %15s", h[0], h[1], h[2], h[3], h[4], h[5]) != 5) return ln;
-            for(int i = 0; i < 5; i++){ if(!hex_ok(h[i])) return ln; snprintf(lk->sch[lk->nsch].c[i], 8, "%.7s", h[i]); }
+            if(sscanf(h1, "%15s %15s %15s %15s %15s %15s", h[0], h[1], h[2], h[3], h[4], h[5]) != 5){ lk->why = "5 colours as #rrggbb: frame, page, text, muted, links"; return ln; }
+            for(int i = 0; i < 5; i++){ if(!hex_ok(h[i])){ lk->why = "5 colours as #rrggbb: frame, page, text, muted, links"; return ln; } snprintf(lk->sch[lk->nsch].c[i], 8, "%.7s", h[i]); }
             snprintf(lk->sch[lk->nsch].name, sizeof lk->sch[0].name, "%.*s", (int)(ne - v), v);
-            for(int i = 0; i < lk->nsch; i++) if(!strcmp(lk->sch[i].name, lk->sch[lk->nsch].name)) return ln;
+            for(int i = 0; i < lk->nsch; i++) if(!strcmp(lk->sch[i].name, lk->sch[lk->nsch].name)){ lk->why = "this scheme name is used twice"; return ln; }
             lk->nsch++;
-        } else return ln;
+        } else { lk->why = "not symbol=, color= or scheme="; return ln; }
     }
+    if(!lk->nsym || !lk->ncol) lk->why = !lk->nsym ? "no symbol= line" : "no color= line";
     return lk->nsym && lk->ncol ? 0 : ln + 1;
 }
 void rmt_look_json(rmt_buf_t *b, const rmt_look_t *lk){

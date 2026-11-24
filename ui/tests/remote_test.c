@@ -205,6 +205,11 @@ static void test_party(void){
     CHECK(lj && strstr(lj, ",\"schemes\":[{\"name\":\"S x\",\"frame\":\"#111111\",\"page\":\"#222222\",\"text\":\"#333333\",\"muted\":\"#444444\",\"link\":\"#555555\"}]")); free(lj);
     r = req("POST", p("/api/look"), "l=symbol%3D%E2%AD%90&l=&l=color%3DBlack+%23000000");
     CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_LOOK && r.cmd.arg == 1 && !strcmp(r.cmd.text, "symbol=\xe2\xad\x90\n\ncolor=Black #000000\n"));
+    r = req("POST", p("/api/look"), "l=symbol%3D*&l=color%3DR+%23123456&l=scheme%3DS+%23111111+%23222222+%23333333+%23444444+%23555555&l=scheme%3DS+%23111111+%23222222+%23333333+%23444444+%23555555");
+    CHECK(r.kind == RMT_R_BAD_PARAM && r.cmd.kind == RMT_CMD_LOOK && !strcmp(r.cmd.text, "Not saved: line 4: this scheme name is used twice"));
+    r = req("POST", p("/api/look"), "l=symbol%3D*&l=%23+x");
+    CHECK(r.kind == RMT_R_BAD_PARAM && !strcmp(r.cmd.text, "Not saved: no color= line"));
+    CHECK(rmt_look_parse("symbol=*\ncolor=R #12345\n", &lk) == 2 && lk.why && !strcmp(lk.why, "one or two colours as #rrggbb"));
     CHECK(req("POST", p("/api/look"), "l=symbol%3D%E2%AD%90").kind == RMT_R_BAD_PARAM && req("GET", p("/api/look"), NULL).cmd.arg == 0);
     CHECK(preq("GET", "/Fest_1/api/look", NULL).kind == RMT_R_CMD && preq("POST", "/Fest_1/api/look", "l=symbol%3D*&l=color%3DR+%23123456").kind == RMT_R_NOT_FOUND);   /* guests choose, the host decides */
     /* the host's settings */

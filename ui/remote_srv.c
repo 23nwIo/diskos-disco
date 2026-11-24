@@ -304,7 +304,7 @@ static int handle(int c){
         break; }
     case RMT_R_CMD: run_cmd(c, rt.cmd); break;
     case RMT_R_BAD_METHOD: reply_json_err(c, "405 Method Not Allowed", "method", "Wrong method"); break;
-    case RMT_R_BAD_PARAM: reply_json_err(c, "400 Bad Request", "param", "Missing or invalid value"); break;
+    case RMT_R_BAD_PARAM: reply_json_err(c, "400 Bad Request", "param", rt.cmd.kind == RMT_CMD_LOOK && rt.cmd.text[0] ? rt.cmd.text : "Missing or invalid value"); break;
     default: reply(c, "404 Not Found", "text/plain", "not found", NULL); break;
     }
     return 0;
