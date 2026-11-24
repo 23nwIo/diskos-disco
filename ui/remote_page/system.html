@@ -7,7 +7,7 @@
 <div id=btv class=hide><div class=hd><b id=bts>Bluetooth</b><button id=bto class=pa>Turn on</button><button id=btf>Search</button></div><div id=btl></div><div id=btc class='card hide'><label for=btk>Bluetooth codec <span id=btn></span></label><select id=btk></select><div id=bth class=hint></div></div></div>
 <div id=sys class='card hide'><label for=wm>Working mode</label><select id=wm><option value=0>Playback<option value=1>USB DAC<option value=2>Bluetooth DAC
 <option value=4>Bluetooth streaming<option value=5>AirPlay<option value=3>USB storage</select><button id=rbt class=more>Restart the Disc</button>
-<label for=lka>Page colour (this browser)</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
+<label for=lka>Page colour (this browser)</label><select id=lka></select>
 <label for=lkf>Favourites</label><select id=lkf></select><label for=lkc>Their colour</label><select id=lkc></select>
 <details id=lkd><summary>Symbols and colours to choose from</summary><textarea id=lkt rows=14 spellcheck=false aria-label='Symbols and colours' style='width:100%;margin-top:.5em;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:.6em;padding:.6em;font:inherit;font-size:.9em'></textarea>
 <div class=hint>For every page and guest; saved on the SD card (.diskos/state/look.conf). One per line: symbol=&lt;symbol&gt;, color=&lt;name&gt; #&lt;dark theme&gt; [#&lt;light theme&gt;]. Emoji keep their own colours.</div><button id=lks class=more>Save</button></details></div>
@@ -104,7 +104,7 @@ function tab(v){if(v==='party')v='public';if(!$(v+'t'))v='status';V=v;[].forEach
 $('scv').classList.toggle('hide',v!=='scr');$('stv').classList.toggle('hide',v!=='status');$('sys').classList.toggle('hide',v!=='status');$('btv').classList.toggle('hide',v!=='bt');$('ptv').classList.toggle('hide',v!=='public');say('');
 if(v==='scr'){shot();return}if(v==='public'){party();return}if(v==='status'){$('stv').textContent='Loading…';status();return}$('btl').textContent='Loading…';bt()}
 [].forEach.call($('tabs').children,function(b){b.onclick=function(){tab(b.dataset.v)}});
-$('lka').value=LK.acc;$('lka').onchange=function(){LK.acc=$('lka').value;look()};function lkfill(j){if(document.activeElement!==$('lkt'))$('lkt').value=j.text;if(j.bad_line)say('look.conf line '+j.bad_line+' is not right - the defaults are used')}
+function lkfill(j){if(document.activeElement!==$('lkt'))$('lkt').value=j.text;if(j.bad_line)say('look.conf line '+j.bad_line+' is not right - the defaults are used')}
 looks(lkfill);$('lks').onclick=function(){cmd('look',$('lkt').value.split('\n').map(function(l){return'l='+encodeURIComponent(l)}).join('&')).then(function(ok){if(ok){say('Saved',1);$('lkt').blur();looks(lkfill)}else say('A line is not right: symbol=… or color=Name #rrggbb [#rrggbb]')})};
 document.addEventListener('visibilitychange',function(){refresh();shot()});tab(location.hash.slice(1));
 </script></html>

@@ -26,6 +26,31 @@ def read(name):
         return f.read()
 
 
+def strip_comments(page):
+    """Drop the comments that stand on lines of their own in the page's script (from <script> on): they are for the
+    reader of ui/remote_page/, not for the phone (each page stays under 32 KB, remote_test). A comment after code on
+    the same line stays: telling it apart from a string or regex that holds '/*' needs a real parser."""
+    at = page.find('<script>')
+    if at < 0:
+        return page
+    out, inside = [], False
+    for line in page[at:].split('\n'):
+        t = line.strip()
+        if inside:
+            if t.endswith('*/') and '*/' not in t[:-2]:
+                inside = False
+            elif '*/' in t:
+                sys.exit('a comment ends mid-line: %r' % line)
+            continue
+        if t.startswith('/*') and '*/' not in t[2:]:
+            inside = True
+            continue
+        if t.startswith('/*') and t.endswith('*/') and t.find('*/') == len(t) - 2:
+            continue
+        out.append(line)
+    return page[:at] + '\n'.join(out)
+
+
 def c_lines(text):
     out = []
     for line in text.rstrip('\n').split('\n'):
@@ -45,6 +70,7 @@ def build():
         if page.count('@@STYLE@@') != 1 or page.count('@@COMMON@@') != 1:
             sys.exit('%s: needs @@STYLE@@ and @@COMMON@@ exactly once' % name)
         page = page.replace('@@STYLE@@', style).replace('@@COMMON@@', common)
+        page = strip_comments(page)
         parts.append('const char %s[] =\n%s;\n' % (sym, c_lines(page)))
     return '\n'.join(parts)
 

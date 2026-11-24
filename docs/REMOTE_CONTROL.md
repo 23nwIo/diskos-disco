@@ -225,7 +225,7 @@ show the same ranking at the top while the game runs; the breakdown comes at the
 ### Page look
 
 Below **Restart the Disc** in the system page's Status tab: **Page colour** (orange, the default, blue, green, purple or red: buttons,
-tabs, sliders and scroll bars) **Favourites** (the symbol, shown as itself) and **Their colour** (by name). Which symbols and colours there are is
+tabs, sliders and scroll bars) **Favourites** (the symbol, shown as itself) and **Their colour** (by name). **Page colour** offers the same colours. Which symbols and colours there are is
 for the host to say: **Symbols and colours to choose from** below them edits `.diskos/state/look.conf` on the SD card,
 one per line, `symbol=<symbol>` and `color=<name> #<dark theme> [#<light theme>]` (one hex colour is used for both
 themes), `#` starts a comment. Without the file: ❤️ ⭐ ☭ 𖤐 𐕣 and Red, Yellow, Orange, Pink, Purple, Blue, Green, White,

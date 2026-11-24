@@ -13,7 +13,7 @@
 <div class=hd><button id=bk aria-label=Back>&#8249;</button><b id=ti></b><button id=hm aria-label=More class=hide>&#8943;</button><button id=pa class='pa hide'></button></div>
 <img id=bcv class='bcv hide' alt=''><div id=list></div><button id=mo class='more hide'>Load more</button></div>
 <div id=me class='card hide blk'><div id=nmw><label for=nm>Your name (shown with your songs)</label><input id=nm maxlength=24 autocomplete=nickname></div>
-<label for=lka>Page colour</label><select id=lka><option value=orange>Orange<option value=blue>Blue<option value=green>Green<option value=purple>Purple<option value=red>Red</select>
+<label for=lka>Page colour</label><select id=lka></select>
 <label for=lkf>Your songs and favourites are marked with</label><select id=lkf></select><label for=lkc>in</label><select id=lkc></select>
 <div id=rules class=hint></div><div id=upw class=hide><button id=upb>Upload a song…</button></div></div><input id=uf type=file class=hide>
 <div id=shb class=hide></div><div id=sh class=hide></div>
@@ -150,6 +150,6 @@ if(v==='q'){qver=-1;$('ql').textContent='Loading…';poll();return}if(v==='np'){
 $('pa').onclick=function(){var a=cur().act;if(a)a[1]()};$('hm').onclick=function(){var v=cur();if(v.menu)sheet(v.t,v.menu())};$('bk').onclick=function(){if(st.length>1){st.pop();$('q').value='';load(0)}};$('shb').onclick=shut;$('mo').onclick=function(){load(items.length)};
 var qt;$('q').oninput=function(){var l=cur().l;clearTimeout(qt);qt=setTimeout(function(){load(0)},l==='bandcamp'?900:l==='radio_search'?600:300)};
 $('nm').value=NM;$('nm').onchange=function(){NM=$('nm').value.trim();while(new TextEncoder().encode(NM).length>24)NM=NM.slice(0,-1);$('nm').value=NM;gname_set(NM);poll();if(NM)say('Hi '+NM+'!',1)};
-$('lka').value=LK.acc;$('lka').onchange=function(){LK.acc=$('lka').value;look()};
+
 var tk=0;setInterval(function(){tk++;if(V==='np'||V==='q'||tk%5===0)poll()},1000);document.addEventListener('visibilitychange',poll);poll();
 </script></html>

@@ -1,13 +1,16 @@
-/* the page's look, per browser: accent colour, the favourite symbol and its colour. The choices come from the Disc
- * (api/look: look.conf on the card, which the host edits on the system page); this browser keeps what it picked. */
-var LK={acc:'orange',fav:'',fc:''},ACC={orange:['#ff9f43','#d35f00'],blue:['#4da3ff','#0a66d1'],green:['#3ccf7a','#1a8f4c'],purple:['#b48cff','#7a4fd6'],red:['#ff6b6b','#cc2b2b']};
+/* the page's look, per browser: page colour, the favourite symbol and its colour. The choices come from the Disc
+ * (api/look: look.conf on the card, which the host edits on the system page); this browser keeps what it picked.
+ * ACC: the page colours until api/look answers (and for picks saved before 2026-11-24, by their old names). */
+function cap(s){return typeof s==='string'?s.charAt(0).toUpperCase()+s.slice(1):''}
+var LK={acc:'Orange',fav:'',fc:''},ACC={Orange:['#ff9f43','#d35f00'],Blue:['#4da3ff','#0a66d1'],Green:['#3ccf7a','#1a8f4c'],Purple:['#b48cff','#7a4fd6'],Red:['#ff6b6b','#cc2b2b']};
 var LOOK={symbols:['\u2764\ufe0f'],colors:[{name:'Red',dark:'#ff4d5e',light:'#d61f3b'}]};   /* until api/look answers */
-try{var lk=JSON.parse(localStorage.getItem('look')||'{}');if(ACC[lk.acc])LK.acc=lk.acc;
+try{var lk=JSON.parse(localStorage.getItem('look')||'{}');if(lk.acc)LK.acc=cap(lk.acc);
 LK.fav=lk.fav==='heart'?'\u2764\ufe0f':lk.fav==='star'?'\u2b50':typeof lk.fav==='string'?lk.fav:'';   /* before 2026-11-23: names */
-LK.fc=typeof lk.fc==='string'?lk.fc.charAt(0).toUpperCase()+lk.fc.slice(1):''}catch(e){}
+LK.fc=cap(lk.fc)}catch(e){}
 function favsym(){return LOOK.symbols.indexOf(LK.fav)>=0?LK.fav:LOOK.symbols[0]}
 function favcol(){for(var i=0;i<LOOK.colors.length;i++)if(LOOK.colors[i].name===LK.fc)return LOOK.colors[i];return LOOK.colors[0]}
-function look(){var lt=matchMedia('(prefers-color-scheme: light)').matches?1:0,d=document.documentElement.style;d.setProperty('--acc',ACC[LK.acc][lt]);
+function acccol(){for(var i=0;i<LOOK.colors.length;i++)if(LOOK.colors[i].name===LK.acc)return LOOK.colors[i];var a=ACC[LK.acc]||ACC.Orange;return{name:LK.acc,dark:a[0],light:a[1]}}
+function look(){var lt=matchMedia('(prefers-color-scheme: light)').matches?1:0,d=document.documentElement.style;d.setProperty('--acc',acccol()[lt?'light':'dark']);
 d.setProperty('--fav',favcol()[lt?'light':'dark']);try{localStorage.setItem('look',JSON.stringify(LK))}catch(e){}
 [].forEach.call(document.querySelectorAll('.fa'),function(b){star(b,b.dataset.on==='1')})}
 var $=function(i){return document.getElementById(i)};
@@ -41,7 +44,10 @@ function gname_set(n){try{localStorage.setItem('pn',n);localStorage.removeItem('
 function moved(m){if(!/reload the page/.test(m||''))return 0;var t=0;try{t=+sessionStorage.getItem('mv')||0;sessionStorage.setItem('mv',Date.now())}catch(e){}
 if(Date.now()-t>5000)location.reload();return 1}   /* at most one reload in 5 s: never a reload loop */
 /* the choices; the selects #lkf (the symbols as they are) and #lkc (the colours' names) when the page has them */
-function fillsel(){var f=$('lkf'),c=$('lkc');if(f){f.textContent='';LOOK.symbols.forEach(function(s){var o=document.createElement('option');o.value=o.textContent=s;f.appendChild(o)});f.value=favsym();
+function fillsel(){var f=$('lkf'),c=$('lkc'),a=$('lka');
+if(a){a.textContent='';LOOK.colors.forEach(function(x){var o=document.createElement('option');o.value=o.textContent=x.name;a.appendChild(o)});
+if(LOOK.colors.every(function(x){return x.name!==LK.acc})){var o=document.createElement('option');o.value=o.textContent=LK.acc;a.appendChild(o)}   /* an earlier pick stays */
+a.value=LK.acc;a.onchange=function(){LK.acc=a.value;look()}}if(f){f.textContent='';LOOK.symbols.forEach(function(s){var o=document.createElement('option');o.value=o.textContent=s;f.appendChild(o)});f.value=favsym();
 f.onchange=function(){LK.fav=f.value;look();if(typeof qver!=='undefined')qver=-1}}
 if(c){c.textContent='';LOOK.colors.forEach(function(x){var o=document.createElement('option');o.value=o.textContent=x.name;c.appendChild(o)});c.value=favcol().name;c.onchange=function(){LK.fc=c.value;look()}}}
 function looks(then){fetch('api/look',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(!j.ok||!j.symbols.length||!j.colors.length)return;LOOK=j;fillsel();look();if(then)then(j)}).catch(function(){})}
