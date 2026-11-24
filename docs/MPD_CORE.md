@@ -105,7 +105,7 @@ The diskOS toolchain is C only; the script header says how to add g++ 11.2 with 
   headphones gone).
   By hand: `0d01` (docs/PLAYER_PROTOCOL.md). Each output has its own volume (`0d02`, `0d03`),
   kept in `/usr/data/diskos-own/volumes`; the volume the UI shows (`a714`) is the lead output's (Bluetooth when on,
-  else AUX), and the volume keys and `0715` move every output that is on by the same step. When the DAC joins a
+  else AUX), and the volume keys and `0715` move both volumes (AUX and Bluetooth, on or off) by the same step. When the DAC joins a
   running stream, its start sequence and mixer route go first. The player writes the state for the UI to
   `/tmp/diskos-player-outputs` (ui/own_player.h `opl_outputs_t`).
 - **Codec switch by hand** (`0d04`, Outputs > Bluetooth Codec): pause, close the Bluetooth output (aplay lets go of

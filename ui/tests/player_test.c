@@ -144,14 +144,14 @@ static void test_core(void){
     c.transport = count_pause; npause = 0;
     c.max_volume = 120; c.jack = 0; c.bal = -1;
     c.vol_aux = 30; c.vol_bt = 50; c.volume = 50;                    /* Bluetooth is the lead now */
-    nsent = 0; CHECK(send1(&c, "0715000C0034") == 0);                /* 52: both outputs on move? only Bluetooth is on */
-    CHECK(c.volume == 52 && c.vol_bt == 52 && c.vol_aux == 30 && nsent == 1 && !strcmp(sent[0], "a714000C0034"));
+    nsent = 0; CHECK(send1(&c, "0715000C0034") == 0);                /* 52: only Bluetooth is on, AUX moves along */
+    CHECK(c.volume == 52 && c.vol_bt == 52 && c.vol_aux == 32 && nsent == 1 && !strcmp(sent[0], "a714000C0034"));
     pl_core_bal(&c, 0); CHECK(c.bal == 0 && c.out_bt == 1);          /* the first level is only recorded */
     pl_core_jack(&c, 1);                                             /* a plug in: AUX on, Bluetooth off, AUX volume shown */
-    CHECK(c.out_aux == 1 && c.out_bt == 0 && c.volume == 30 && npause == 0);
+    CHECK(c.out_aux == 1 && c.out_bt == 0 && c.volume == 32 && npause == 0);
     pl_core_jack(&c, 0); CHECK(npause == 1);                         /* the last plug out, AUX only: pause */
     CHECK(send1(&c, "0d01000C0003") == 0 && c.out_aux == 1 && c.out_bt == 1 && c.volume == 52);   /* both by hand */
-    pl_core_volume_step(&c, -1); CHECK(c.vol_bt == 51 && c.vol_aux == 29 && c.volume == 51);
+    pl_core_volume_step(&c, -1); CHECK(c.vol_bt == 51 && c.vol_aux == 31 && c.volume == 51);
     CHECK(send1(&c, "0d02000C0014") == 0 && c.vol_aux == 20 && c.volume == 51);
     CHECK(send1(&c, "0d03000C0010") == 0 && c.vol_bt == 16 && c.volume == 16);
     pl_core_set_volume(&c, 0); CHECK(c.vol_bt == 0 && c.vol_aux == 4);  /* each within 0..max: the gap stays until a limit */
@@ -189,7 +189,7 @@ static void test_core(void){
         CHECK(h.vol_bt == 0 && h.vol_aux == 0);                       /* AUX stops at 0 */
         CHECK(send1(&h, "0d01000C0002") == 0 && h.out_aux == 0);
         pl_core_set_bt_volume(&h, 20);
-        CHECK(h.vol_bt == 20 && h.vol_aux == 0);                      /* AUX off: left alone */
+        CHECK(h.vol_bt == 20 && h.vol_aux == 20);                     /* AUX off: moves too */
     }
 
     /* Auto Outputs (0d05): newest (the default), all connected, off */

@@ -61,7 +61,7 @@ const char RMT_PAGE_HTML[] =
 "<div class=card><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=120 value=0>\n"
 "<div class=hd><label for=bal style=flex:1>Balance <span id=bv></span></label><button id=bc class=more style=margin:0>Centre</button></div>\n"
 "<input id=bal type=range min=-10 max=10 step=1 value=0>\n"
-"<div id=ow class=hide><div class=hint>Outputs: the Volume above moves every output that is on.</div><div class=hd><label style=flex:1><input type=checkbox id=oa> AUX <span id=oav></span></label></div><input id=ova type=range min=0 max=120 value=0 aria-label='AUX volume'>\n"
+"<div id=ow class=hide><div class=hint>Outputs: the Volume above moves both volumes, on or off.</div><div class=hd><label style=flex:1><input type=checkbox id=oa> AUX <span id=oav></span></label></div><input id=ova type=range min=0 max=120 value=0 aria-label='AUX volume'>\n"
 "<div class=hd><label style=flex:1><input type=checkbox id=ob> Bluetooth <span id=obv></span></label></div><input id=ovb type=range min=0 max=120 value=0 aria-label='Bluetooth volume'>\n"
 "<div id=ocw class=hide><label for=oc>Bluetooth codec (this connection; the music pauses briefly) <span id=ocs></span></label><select id=oc></select></div>\n"
 "<label for=oau>Auto Outputs (when something connects)</label><select id=oau><option value=0>Off<option value=1>Newest<option value=2>All connected</select></div>\n"

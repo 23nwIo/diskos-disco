@@ -1035,7 +1035,7 @@ static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",
                                              "Every connected device plays." };
 static const char *const OPT_HPVOL[] = { "Bluetooth only", "All outputs" };
 static const char *const OPT_HPVOL_D[] = { "Only the Bluetooth volume follows them.",
-                                           "AUX, when it plays too, moves by the same step." };
+                                           "The AUX volume moves by the same step." };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
 static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 static const char *const D_ARTCACHE[] = {
@@ -1125,9 +1125,9 @@ static const setting_t TABLE[] = {
     { "Outputs",  "Headphone Volume", ST_CHOICE, "hp_vol_all", 0,0,0, OPT_HPVOL, 2, NULL, apply_hp_vol, 0,
       "What the Bluetooth headphones' own volume buttons change, for headphones that send their volume.", OPT_HPVOL_D },
     { "Outputs",  "AUX Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
-      "The volume keys move every output that is on by the same step.", NULL },
+      "The volume keys move both volumes by the same step, whether the output is on or not.", NULL },
     { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,
-      "The volume keys move every output that is on by the same step.", NULL },
+      "The volume keys move both volumes by the same step, whether the output is on or not.", NULL },
     { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
 #ifdef DISKOS_TEST_OUTPUTS   /* device-unverified: test builds only */

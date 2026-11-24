@@ -76,7 +76,7 @@ typedef struct {
     /* Outputs (diskOS, own player only; docs/PLAYER_PROTOCOL.md "Outputs"): MPD plays to every output that is on. A
      * plug going in turns AUX on and Bluetooth off; headphones routed by the UI (0666 2 + 06b3) turn Bluetooth on and
      * AUX off; 0d01 sets both by hand. Each has its own volume; core.volume (what the UI shows) is the lead output's:
-     * Bluetooth when it is on, else AUX. The volume keys and 0715 move every output that is on by the same step. */
+     * Bluetooth when it is on, else AUX. The volume keys and 0715 move both volumes by the same step, on or off. */
     int out_aux, out_bt;
     int vol_aux, vol_bt;           /* 0..max_volume */
     int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3); 0666 6 (the UI routed
@@ -126,12 +126,12 @@ void pl_core_jack(pl_core_t *c, int plugged);
 void pl_core_bal(pl_core_t *c, int plugged);
 /* 1 when a plug is in either jack (the stock player uses the high gain curve only then) */
 int pl_core_plugged(const pl_core_t *c);
-/* Set the volume shown in the UI to v (0715, keys): every output that is on moves by the same step, each within
+/* Set the volume shown in the UI to v (0715, keys): both volumes (AUX, Bluetooth, on or off) move by the same step, each within
  * 0..max_volume. Tells the UI (a714) when the lead volume changed. */
 void pl_core_set_volume(pl_core_t *c, int v);
 /* The headphones changed their own volume (AVRCP absolute volume, btavrcp.h): the Bluetooth volume becomes v (within
  * 0..max_volume); the UI hears it (a714) when Bluetooth is the lead output. AUX is left alone, unless hp_vol_all (0d06)
- * is set and AUX is on: then AUX moves by the same step. */
+ * is set: then AUX moves by the same step. */
 void pl_core_set_bt_volume(pl_core_t *c, int v);
 /* Set both volumes as stored (at start); the UI is told the lead one. */
 void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt);

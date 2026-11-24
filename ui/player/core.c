@@ -42,7 +42,6 @@ static int clampv(const pl_core_t *c, int v){ return v < 0 ? 0 : v > c->max_volu
 /* what plays: Bluetooth when it is on and the headphones are there; the DAC when AUX is on or stands in for Bluetooth
  * that waits for the headphones (playback.c pb_route plays to one output at least) */
 static int bt_eff(const pl_core_t *c){ return c->out_bt && c->bt_ready; }
-static int aux_eff(const pl_core_t *c){ return c->out_aux || !bt_eff(c); }
 /* the lead output's volume becomes the one shown; the UI hears a change */
 static void lead_volume(pl_core_t *c, int tell){
     int v = bt_eff(c) ? c->vol_bt : c->vol_aux;
@@ -54,8 +53,10 @@ static void lead_volume(pl_core_t *c, int tell){
 void pl_core_set_volume(pl_core_t *c, int v){
     v = clampv(c, v);
     int d = v - c->volume;
-    if(aux_eff(c)) c->vol_aux = clampv(c, c->vol_aux + d);
-    if(bt_eff(c)) c->vol_bt = clampv(c, c->vol_bt + d);
+    /* Both volumes move, whether their output is on or connected or not (Jo 2026-11-24: an AUX volume left far below
+     * the Bluetooth one while only Bluetooth played surprised; the main volume should move both). */
+    c->vol_aux = clampv(c, c->vol_aux + d);
+    c->vol_bt = clampv(c, c->vol_bt + d);
     c->volume = bt_eff(c) ? c->vol_bt : c->vol_aux;
     logf_(c, "volume = %d (AUX %d%s, Bluetooth %d%s)", c->volume, c->vol_aux, c->out_aux ? "" : " off",
           c->vol_bt, c->out_bt ? "" : " off");
@@ -67,7 +68,7 @@ void pl_core_set_bt_volume(pl_core_t *c, int v){
     if(v == c->vol_bt) return;
     int d = v - c->vol_bt;
     c->vol_bt = v;
-    if(c->hp_vol_all && c->out_aux){                         /* 0d06 1: AUX that plays alongside moves by the same step */
+    if(c->hp_vol_all){                                       /* 0d06 1: AUX moves by the same step, on or off */
         c->vol_aux = clampv(c, c->vol_aux + d);
         logf_(c, "volume: Bluetooth %d, AUX %d (from the headphones)", v, c->vol_aux);
     } else logf_(c, "volume: Bluetooth %d (from the headphones)", v);
