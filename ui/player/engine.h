@@ -55,8 +55,9 @@ int eng_ready(void);
  * closed first, so calling it again with bt on reopens nothing that stays, but a Bluetooth output that was off is
  * opened anew. Kept over a restart of MPD. 0 or -1. */
 int eng_output(int aux, int bt, unsigned rate);
-/* AUX plays on S/PDIF (hw:0,4) instead of the DAC; takes effect with the next eng_output */
-void eng_set_spdif(int on);
+/* AUX plays on S/PDIF (hw:0,4) instead of the DAC, at 44.1 kHz for a song rate of that family, else 48 kHz (the
+ * driver takes no more); 0 = the DAC. Takes effect with the next eng_output. */
+void eng_set_spdif(unsigned rate);
 /* The S/PDIF output's software volume, 0..100 % (MPD's curve); kept and set again after a restart of MPD. 0 or -1. */
 int eng_spdif_volume(unsigned pct);
 int eng_load(const char *path, long off_ms, long len_ms, long start_ms, int paused);

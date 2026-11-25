@@ -192,7 +192,7 @@ nothing next, the player (`playback.c` `list_ended`):
 the analog DAC on hw:0,3). The stock player plays S/PDIF on **hw:0,4** (DMA4) and sets **`LO2_MUX` = 13**
 (mq_player `set_out_device` 0x47bf24, out mode 4: the card is found in /proc/asound/cards, device 4; read from the
 binary, not measured). The DAC route is DMA3 -> `LO3_MUX` = 12 the same way. The own player now has a fifth MPD
-output `spdif` (hw:0,4, 24 bit: the S/PDIF driver refuses S32_LE with "ingenic_spdif_params_check" -22 and takes S24_LE and S16_LE at 44.1 and 48 kHz, Jo's aplay runs 2026-11-25): 0666 4 sets `spdif` in the core, and AUX then plays on that output with
+output `spdif` (hw:0,4, 24 bit: the S/PDIF driver refuses S32_LE with "ingenic_spdif_params_check" -22 and takes S24_LE and S16_LE at 44.1 and 48 kHz but not 96 or 192 kHz, Jo's aplay runs 2026-11-25; so two outputs `spdif44` / `spdif48`, picked by the song's rate family in `prepare`, MPD converts 88.2/96/176.4/192 kHz down): 0666 4 sets `spdif` in the core, and AUX then plays on that output with
 `LO2_MUX` = 13 instead of starting the DAC (`playback.c` `prepare`, `engine.c` `eng_set_spdif`); 0666 6 goes back.
 Bluetooth is left as it is. The AUX volume works as MPD's software volume on that output (`mixer_type "software"`, `setvol` = AUX volume / 120, MPD's curve; set again after an MPD restart), since an external DAC may have none (Jo's has none). The switch is Settings > Audio >
 Outputs > Optical (S/PDIF) (cfg `spdif`, through the stock form in modes.c: pause, PCM quiet, 0666, 0657 8, play on);

@@ -79,7 +79,7 @@ int eng_cmd(const char *c, char *out, unsigned cap){            /* "stop" and "c
 static int e_out_bt = 0, e_out_aux = 1, e_outputs_calls; static unsigned e_out_rate;
 int eng_output(int aux, int bt, unsigned rate){ e_out_aux = aux; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
 static int e_spdif;
-void eng_set_spdif(int on){ e_spdif = on; }
+void eng_set_spdif(unsigned rate){ e_spdif = (int)rate; }
 static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8], bt_sel[16] = "SBC";
 static int bt_codec_started = -1;
 int bto_info(const char *mac, unsigned *rate, char *sel, size_t selcap, char *avail, size_t availcap, bto_log_fn log){
@@ -437,8 +437,10 @@ static void test_playback(void){
     /* S/PDIF (0666 4): AUX plays on hw:0,4 with LO2_MUX = 13, the DAC is not started */
     CHECK(pl_core_handle(&c, "0666000C0004", 12) == 0 && c.spdif == 1);
     starts = d_starts; pb_route();
-    CHECK(e_spdif == 1 && e_out_aux == 1 && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 13 && d_starts == starts);
-    CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && d_starts == starts && !strcmp(mix_last, "LO2_MUX"));
+    CHECK(e_spdif > 0 && e_out_aux == 1 && d_starts == starts);
+    CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && d_starts == starts && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 13);
+    CHECK(e_spdif == 44100);                                   /* the song's rate picks the output */
+    CHECK(pb_play_list(QD_ALBUM, 1, "Mixed") == 0 && e_spdif == 96000 && d_starts == starts);   /* engine.c maps it to 48 kHz */
     CHECK(pl_core_handle(&c, "0666000C0006", 12) == 0 && c.spdif == 0);
     c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
     CHECK(e_spdif == 0 && e_out_aux == 1);

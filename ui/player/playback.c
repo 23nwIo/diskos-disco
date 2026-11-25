@@ -123,14 +123,21 @@ static void tell_state(int state, int force){
 }
 /* before MPD opens the PCM: the DAC start sequence for this rate (eng_set_prepare) */
 static int g_spdif;                 /* AUX is the S/PDIF out (C->spdif, pb_route): no DAC start, its own mixer route */
+static unsigned g_sp_rate;          /* the song rate S/PDIF was set up for (prepare), 0 none */
 static void prepare(unsigned rate){
     if(!g_aux) return;
-    if(g_spdif){ mix_route_spdif(L); return; }   /* DMA4 -> S/PDIF; the level is fixed, nothing to start */
+    if(g_spdif){                                 /* DMA4 -> S/PDIF; nothing to start, the output for the rate family */
+        mix_route_spdif(L);
+        if(rate != g_sp_rate){ g_sp_rate = rate; eng_set_spdif(rate); eng_output(g_aux, g_bt, g_bt_rate); }
+        return;
+    }
     mix_route_dac(L);                        /* DMA3 -> DAC; without it hw_params fails (mixer.h) */
     if(rate == dac_current_rate()) return;
     unsigned char a, l; pb_attenuation(&a, &l);
     dac_start(rate, a, l, L);
 }
+/* the rate the AUX output is set up for: a next song of another rate is not queued (it starts with prepare) */
+static unsigned out_rate(void){ return g_spdif ? g_sp_rate : dac_current_rate(); }
 static unsigned rnd(unsigned k){ return k ? (unsigned)(random() % k) : 0; }
 
 /* The playing list, in RAM only (Jo, 2026-11-22): g_songs[k] is the SONG.ID at 1-based position k + 1. Q holds the
@@ -169,7 +176,7 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
     eng_set_prepare(prepare);
     list_drop();
-    g_spdif = 0; eng_set_spdif(0);
+    g_spdif = 0; g_sp_rate = 0; eng_set_spdif(0);
     g_bt = 0; g_aux = 1; g_bt_codec = -1; g_bt_mac[0] = 0; g_bt_rate = 0; g_bt_sel[0] = g_bt_avail[0] = 0; g_cs_pid = -1;
     g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
     g_upn = g_cur_up = g_next_up = g_pend_up = g_up_party = g_solo = g_next_rep = 0; g_up_seq = 0; g_up_ngone = 0;
@@ -232,7 +239,7 @@ static void queue_next(sqlite3 *d){
     if(g_cur_up && (C->play_mode == PQ_REPEAT_ONE || (g_solo && C->play_mode == PQ_REPEAT_ALL))){   /* the same song again */
         qd_row_t *u = malloc(sizeof *u);
         g_next = g_pending = -1;
-        if(u && playable_song(d, g_cur_up, u) && eng_set_next(u->path, PART(u), dac_current_rate()) == 0) g_next_rep = 1;
+        if(u && playable_song(d, g_cur_up, u) && eng_set_next(u->path, PART(u), out_rate()) == 0) g_next_rep = 1;
         else eng_set_next(NULL, 0, 0, 0);
         free(u);
         return;
@@ -244,7 +251,7 @@ static void queue_next(sqlite3 *d){
         g_next = g_pending = -1;
         while(u && g_upn > 0){
             int id = g_up[0];
-            int x = playable_song(d, id, u) ? eng_set_next(u->path, PART(u), dac_current_rate()) : -1;
+            int x = playable_song(d, id, u) ? eng_set_next(u->path, PART(u), out_rate()) : -1;
             if(x == 0){ g_next_up = id; break; }
             if(x == 1){ g_pend_up = id; L("up next: next song has another sample rate, started after this one (no gapless)"); break; }
             up_take(id);                                  /* can't be played: it never will, the UI drops it too */
@@ -260,7 +267,7 @@ static void queue_next(sqlite3 *d){
     qd_row_t *r = malloc(sizeof *r);
     g_next = g_pending = -1;
     for(int tries = 0; r && ni >= 0 && tries < Q.n; tries++){
-        int x = playable(d, ni, r) ? eng_set_next(r->path, PART(r), dac_current_rate()) : -1;
+        int x = playable(d, ni, r) ? eng_set_next(r->path, PART(r), out_rate()) : -1;
         if(x == 0){ g_next = ni; break; }
         if(x == 1){ g_pending = ni; L("queue: next song has another sample rate, started after this one (no gapless)"); break; }
         Q.cur = ni;                               /* look past it; repeat one moves on like repeat all */
@@ -605,7 +612,11 @@ void pb_route(void){
         g_bt_codec = C->bt_codec;
         bt_read();
     }
-    if(C->spdif != g_spdif){ g_spdif = C->spdif; eng_set_spdif(g_spdif); if(aux) g_aux = 0; }   /* AUX moves: set it up anew */
+    if(C->spdif != g_spdif){                            /* AUX moves: set it up anew */
+        g_spdif = C->spdif; g_sp_rate = 0;
+        eng_set_spdif(g_spdif ? (g_es_valid && g_es.rate ? g_es.rate : 44100) : 0);
+        if(aux) g_aux = 0;
+    }   /* AUX moves: set it up anew */
     if(aux && !g_aux && g_es_valid && g_es.state != ENG_STOP && g_es.rate){
         g_aux = 1;                                      /* the DAC joins a running stream: its start sequence first */
         prepare(g_es.rate);

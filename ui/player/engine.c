@@ -19,7 +19,7 @@
 
 static pid_t g_pid = -1;
 static int g_out_aux = 1, g_out_bt;        /* the outputs in use: the DAC, Bluetooth at g_out_rate */
-static int g_spdif;                        /* AUX plays on S/PDIF instead of the DAC (eng_set_spdif) */
+static unsigned g_spdif;                   /* AUX plays on S/PDIF instead of the DAC: 44100 or 48000, 0 off (eng_set_spdif) */
 static int g_spdif_pct = -1;               /* its software volume in percent; -1 not set yet (MPD starts at 100) */
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
@@ -56,20 +56,17 @@ static const char CONF[] =
     "  format \"96000:16:2\"\n}\n"
     /* S/PDIF (the optical out in the 3.5 mm jack): the stock player plays it on DMA4 = hw:0,4 with LO2_MUX = 13
      * (mq_player set_out_device, out mode 4 SPDIF_TX; playback.c prepare). The S/PDIF driver refuses S32_LE
-     * (ingenic_spdif_params_check, -22) and takes S24_LE and S16_LE (Jo's aplay runs, 2026-11-25), so 24 bits. The
-     * AUX volume is MPD's software volume here (eng_spdif_volume): an external DAC may have no volume of its own. It is
-     * the only output with a mixer, so "setvol" sets it alone. */
-    "audio_output {\n"
-    "  type \"alsa\"\n"
-    "  name \"spdif\"\n"
-    "  device \"hw:0,4\"\n"
-    "  mixer_type \"software\"\n"
-    "  auto_resample \"no\"\n"
-    "  auto_format \"no\"\n"
-    "  format \"*:24:*\"\n"
-    "}\n";
+     * (ingenic_spdif_params_check, -22) and takes S24_LE and S16_LE at 44.1 and 48 kHz, but not 96 or 192 kHz (Jo's
+     * aplay runs, 2026-11-25): so 24 bits, and one output per rate family, like Bluetooth; MPD converts a 96 kHz song
+     * to 48 kHz (eng_set_spdif picks the output by the song's rate). The AUX volume is MPD's software volume here
+     * (eng_spdif_volume): an external DAC may have no volume of its own. "setvol" sets these two mixers alone. */
+#define SPDIF_OUT(name, rate) \
+    "audio_output {\n  type \"alsa\"\n  name \"" name "\"\n  device \"hw:0,4\"\n  mixer_type \"software\"\n" \
+    "  auto_resample \"no\"\n  auto_format \"no\"\n  format \"" rate ":24:2\"\n}\n"
+    SPDIF_OUT("spdif44", "44100")
+    SPDIF_OUT("spdif48", "48000");
 /* MPD's output ids: the order above */
-enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_SPDIF, OUT_N };
+enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_SPDIF44, OUT_SPDIF48, OUT_N };
 
 /* The Bluetooth pipe's command: the device's aplay with the BlueALSA plugin, to the headphones in ENG_BT_DEV, through
  * "plug" so that a link at another rate or sample format still opens. $1 = the stream rate. aplay's messages go to
@@ -217,7 +214,7 @@ static int cmd(const char *c){
     return x == 0 ? 0 : -1;
 }
 
-void eng_set_spdif(int on){ g_spdif = on ? 1 : 0; }
+void eng_set_spdif(unsigned rate){ g_spdif = !rate ? 0 : rate % 11025 == 0 ? 44100 : 48000; }   /* 88.2 kHz -> 44.1 */
 int eng_spdif_volume(unsigned pct){
     if(pct > 100) pct = 100;
     g_spdif_pct = (int)pct;
@@ -229,7 +226,7 @@ int eng_output(int aux, int bt, unsigned rate){
     g_out_aux = aux; g_out_bt = bt; g_out_rate = rate;
     if(!eng_ready()) return -1;
     int bt_out = rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
-    int aux_out = g_spdif ? OUT_SPDIF : OUT_DAC;
+    int aux_out = g_spdif == 44100 ? OUT_SPDIF44 : g_spdif ? OUT_SPDIF48 : OUT_DAC;
     char line[32], r[256];
     int fail = 0;
     /* off first, so a Bluetooth output that is switched (another rate) or reopened (a new codec) is closed before */
@@ -244,7 +241,7 @@ int eng_output(int aux, int bt, unsigned rate){
         int x = xcmd(line, r, sizeof r);
         if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); fail = 1; }
     }
-    g_log("engine: outputs%s%s%s", aux ? (g_spdif ? " spdif" : " dac") : "", bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
+    g_log("engine: outputs%s%s%s", aux ? (g_spdif == 44100 ? " spdif44" : g_spdif ? " spdif48" : " dac") : "", bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
           aux || bt ? "" : " none");
     return fail ? -1 : 0;
 }
