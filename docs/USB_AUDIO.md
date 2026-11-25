@@ -46,7 +46,7 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
 - **New devices: offset -100 and off** (silent at any main volume until raised on purpose). Reason (Jo): use on
   concert-size PA systems - a loud surprise can injure people.
 - **Max volume cap per device** (adjustable).
-- **Fade-in per device**: default ON, default 4 s, from 0 to the target volume when the output is switched on and when
+- **Fade-in per device**: default ON, default 4 s (duration adjustable in the config file for now, no UI), from 0 to the target volume when the output is switched on and when
   playback starts after a pause; not on normal volume changes.
 - The offset of a plugged but switched-off device can be changed. Hardware mixer: written directly via ALSA, no MPD.
 - **Order of operations**: on plug-in the card's hardware mixer is set to the computed level at once, before any stream
