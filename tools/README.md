@@ -13,6 +13,8 @@ first. A couple of the device's behaviors are non-obvious and easy to get wrong.
 | `diskos-shot.sh` | Capture the device screen to a PNG |
 | `diskos-touch.sh` | Drive the touchscreen over SSH (tap / swipe) via the on-device injector |
 | `tinj.c` | The on-device touch injector, built once and pushed (used by `diskos-touch.sh`) |
+| `dacpower.c` | On-device: power the CS43131 DAC down or up by hand (`dacpower down\|up [device...]`) |
+| `mqsend.c` | On-device: send one or more raw frames to the `/player` queue, non-blocking (`mqsend FRAME...`) |
 
 ## Requirements
 - `sshpass` and `ssh` (OpenSSH)
@@ -89,7 +91,11 @@ Notes and limits:
 ## Debugging playback / IPC
 - Player log: `/usr/data/fiio/log/fiio_player.log`
 - PCM state: `/proc/asound/card*/pcm*p/sub*/status` (`RUNNING` means audio is actually playing)
-- Send a raw `/player` command frame: `/usr/data/psend <FRAME>` (on the device)
+- Send a raw `/player` command frame: `/usr/data/psend <FRAME>` (on the device; source `ui/psend.c`), or several
+  at once with `mqsend` (`tools/mqsend.c`)
+- Power the DAC down/up as the stock player does: `dacpower down|up [/dev/cs43131 ...]` (`tools/dacpower.c`)
+- Build either one like `tinj`: `mipsel-linux-musl-gcc -O2 -static -o mqsend mqsend.c`, then copy it to `/tmp` on
+  the device (RAM, gone after a reboot)
 
 ## Notes
 - The device is 2.4 GHz Wi-Fi only; SSH can blip occasionally. The scripts use short connect timeouts;
