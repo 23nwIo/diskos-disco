@@ -20,6 +20,7 @@
 static pid_t g_pid = -1;
 static int g_out_aux = 1, g_out_bt;        /* the outputs in use: the DAC, Bluetooth at g_out_rate */
 static int g_spdif;                        /* AUX plays on S/PDIF instead of the DAC (eng_set_spdif) */
+static int g_spdif_pct = -1;               /* its software volume in percent; -1 not set yet (MPD starts at 100) */
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
 static eng_log_fn g_log;
@@ -55,13 +56,14 @@ static const char CONF[] =
     "  format \"96000:16:2\"\n}\n"
     /* S/PDIF (the optical out in the 3.5 mm jack): the stock player plays it on DMA4 = hw:0,4 with LO2_MUX = 13
      * (mq_player set_out_device, out mode 4 SPDIF_TX; playback.c prepare). The S/PDIF driver refuses S32_LE
-     * (ingenic_spdif_params_check, -22) and takes S24_LE and S16_LE (Jo's aplay runs, 2026-11-25), so 24 bits; the
-     * level is fixed (the external DAC sets the volume). */
+     * (ingenic_spdif_params_check, -22) and takes S24_LE and S16_LE (Jo's aplay runs, 2026-11-25), so 24 bits. The
+     * AUX volume is MPD's software volume here (eng_spdif_volume): an external DAC may have no volume of its own. It is
+     * the only output with a mixer, so "setvol" sets it alone. */
     "audio_output {\n"
     "  type \"alsa\"\n"
     "  name \"spdif\"\n"
     "  device \"hw:0,4\"\n"
-    "  mixer_type \"none\"\n"
+    "  mixer_type \"software\"\n"
     "  auto_resample \"no\"\n"
     "  auto_format \"no\"\n"
     "  format \"*:24:*\"\n"
@@ -153,6 +155,7 @@ static int spawn(void){
     xcmd("consume 0", r, sizeof r);
     xcmd("single 0", r, sizeof r);
     eng_output(g_out_aux, g_out_bt, g_out_rate);   /* the outputs in use, also after a restart of MPD */
+    if(g_spdif_pct >= 0){ char l[24]; snprintf(l, sizeof l, "setvol %d", g_spdif_pct); xcmd(l, r, sizeof r); }   /* MPD starts at 100 */
     g_log("engine: connected");
     return 0;
 }
@@ -215,6 +218,13 @@ static int cmd(const char *c){
 }
 
 void eng_set_spdif(int on){ g_spdif = on ? 1 : 0; }
+int eng_spdif_volume(unsigned pct){
+    if(pct > 100) pct = 100;
+    g_spdif_pct = (int)pct;
+    if(!eng_ready()) return -1;
+    char line[24]; snprintf(line, sizeof line, "setvol %u", pct);
+    return cmd(line);                              /* a software mixer takes it even while its output is off */
+}
 int eng_output(int aux, int bt, unsigned rate){
     g_out_aux = aux; g_out_bt = bt; g_out_rate = rate;
     if(!eng_ready()) return -1;

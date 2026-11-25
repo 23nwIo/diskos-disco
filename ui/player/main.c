@@ -338,7 +338,7 @@ int main(int argc, char **argv){
     if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     if(use_wd) pb_resume_begin(sd_is_mounted, RESUME_FLAG);    /* host runs (-n) have no library */
-    int att_vol = -1, att_gain = -1, att_bal = -1, att_curve = -1, bt_vol = -1;
+    int att_vol = -1, att_gain = -1, att_bal = -1, att_curve = -1, bt_vol = -1, spdif_vol = -1;
     g_core = &core; g_bt_vol = &bt_vol;
     btav_cb hp = { logmsg, hp_transport, hp_volume };
     if(use_wd || getenv("DISKOS_PLAYER_BUS"))                /* host runs (-n) only on a bus they name */
@@ -508,6 +508,8 @@ int main(int argc, char **argv){
             dac_set_attenuation(a, l, logmsg);
             att_vol = core.vol_aux; att_gain = gain; att_bal = core.balance; att_curve = curve;
         }
+        if(core.vol_aux != spdif_vol && eng_spdif_volume((unsigned)(core.vol_aux * 100 / PL_VOL_MAX)) == 0)
+            spdif_vol = core.vol_aux;                     /* S/PDIF: the AUX volume as MPD's software volume (engine.c) */
         if(core.vol_aux != saved_aux || core.vol_bt != saved_bt){
             if(!vol_changed) vol_changed = t;
             if(t - vol_changed >= VOL_SAVE_DELAY_S){
