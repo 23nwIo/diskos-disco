@@ -95,11 +95,16 @@ int main(void){
 
     /* MPD's ALSA file */
     char conf[400]; snprintf(conf, sizeof conf, "%s/asound.conf", ua_root);
-    CHECK(ua_alsa_conf_write(conf, 2, 1, lg) == 0);
+    CHECK(ua_alsa_conf_write(conf, 2, 1, 0, lg) == 0);
     get("/asound.conf", b, sizeof b); CHECK(strstr(b, "pcm.diskos_usb {\n  type hw\n  card 2\n  device 1\n}\n") != NULL);
-    CHECK(ua_alsa_conf_write(conf, -1, 0, lg) == 0);
+    CHECK(ua_alsa_conf_write(conf, 3, 0, 1, lg) == 0);            /* no control of its own: softvol, its control on that card */
+    get("/asound.conf", b, sizeof b);
+    CHECK(strstr(b, "type softvol\n  slave.pcm {\n    type hw\n    card 3\n    device 0\n  }\n") != NULL);
+    CHECK(strstr(b, "name \"diskOS USB Playback Volume\"\n    card 3\n    count 2\n") && strstr(b, "min_dB -60.0\n  max_dB 0.0\n  resolution 121\n"));
+    CHECK(ua_alsa_conf_write(conf, -1, 0, 0, lg) == 0);
     get("/asound.conf", b, sizeof b); CHECK(strstr(b, "type null") != NULL && !strstr(b, "type hw"));
-    CHECK(ua_alsa_conf_write("/nonexistent-dir/x.conf", 1, 0, lg) == -1);
+    CHECK(ua_alsa_conf_write("/nonexistent-dir/x.conf", 1, 0, 0, lg) == -1);
+    CHECK(ua_softvol_prepare(9, lg) == -1);                        /* no control device */
 
     char cmd[600]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", tmpl);
     if(system(cmd) != 0) printf("cleanup failed\n");

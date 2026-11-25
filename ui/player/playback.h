@@ -56,11 +56,10 @@ void pb_route(void);
 int pb_bluetooth(void);
 int pb_aux(void);
 int pb_digital(void);
-/* 1 while playing to the USB sound card. pb_usb_card: main.c says whether a card is there (present) and whether it has
- * no volume control of its own (soft: MPD's software volume); a card that replaces another one is 0 first. Takes effect
- * with the next pb_route. */
+/* 1 while playing to the USB sound card. pb_usb_card: main.c says whether a card is there (a card that replaces
+ * another one is 0 first). Takes effect with the next pb_route. */
 int pb_usb(void);
-void pb_usb_card(int present, int soft);
+void pb_usb_card(int present);
 const char *pb_bt_mac(void);
 const char *pb_bt_codec(void);
 const char *pb_bt_codecs(void);

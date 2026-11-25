@@ -80,7 +80,7 @@ static int e_out_bt = 0, e_out_aux = 1, e_out_dig = 0, e_outputs_calls; static u
 int eng_output(int aux, int dig, int bt, unsigned rate){ e_out_aux = aux; e_out_dig = dig; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
 static int e_spdif;
 void eng_set_spdif(unsigned rate){ e_spdif = (int)rate; }
-void eng_usb(int on, int soft, unsigned gen){ (void)on; (void)soft; (void)gen; }
+void eng_usb(int on, unsigned gen){ (void)on; (void)gen; }
 static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8], bt_sel[16] = "SBC";
 static int bt_codec_started = -1;
 int bto_info(const char *mac, unsigned *rate, char *sel, size_t selcap, char *avail, size_t availcap, bto_log_fn log){

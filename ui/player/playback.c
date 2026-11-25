@@ -43,7 +43,7 @@ static int g_up_ngone;
 static eng_status_t g_es;
 static int g_bt;                   /* playing to Bluetooth (pb_route) */
 static int g_usb;                   /* playing to the USB sound card (pb_route) */
-static int g_usb_card, g_usb_soft;  /* a USB sound card is there (main.c, usbaudio.c); it has no volume control */
+static int g_usb_card;              /* a USB sound card is there (main.c, usbaudio.c) */
 static unsigned g_usb_gen;          /* bumps with every card that comes, so MPD opens its output anew */
 static int g_aux = 1;              /* playing to the DAC, AUX analog (pb_route); off: the DAC is powered down */
 static int g_dig;                  /* playing to S/PDIF, AUX digital (pb_route) */
@@ -641,7 +641,7 @@ void pb_route(void){
     if(!aux && !dig && !bt && !usb) L("route: no output is on - playback waits");
     else L("route:%s%s%s%s%s, link at %u Hz", aux ? " DAC" : "", dig ? " S/PDIF" : "", usb ? " USB" : "", bt ? " " : "", bt ? g_bt_mac : "", bt ? g_bt_rate : 0);
     if(bt) bto_volume(g_bt_mac, C->app_bt, PL_VOL_MAX, L);   /* the headphones' level before their output opens */
-    eng_usb(usb, g_usb_soft, g_usb_gen);
+    eng_usb(usb, g_usb_gen);
     if(g_cs_pid < 0) eng_output(aux, dig, bt, g_bt_rate);   /* during a codec switch pb_tick sets the outputs once it is done */
     if(dig_off){ mix_unroute_spdif(L); g_sp_rate = 0; }
     if(dac_off) dac_power_down(L);                      /* AUX analog off: no DAC power (dac_start powers it up again) */
@@ -683,9 +683,9 @@ int pb_switching(void){ return g_cs_pid >= 0; }
 int pb_aux(void){ return g_aux; }
 int pb_digital(void){ return g_dig; }
 int pb_usb(void){ return g_usb; }
-void pb_usb_card(int present, int soft){
+void pb_usb_card(int present){
     if(present && !g_usb_card) g_usb_gen++;      /* a card came (another one: main.c calls 0 first) */
-    g_usb_card = present; g_usb_soft = soft;
+    g_usb_card = present;
 }
 const char *pb_bt_codec(void){ return g_bt ? g_bt_sel : ""; }
 const char *pb_bt_codecs(void){ return g_bt ? g_bt_avail : ""; }

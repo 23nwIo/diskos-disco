@@ -165,7 +165,7 @@ typedef struct {
                                     * connected that is off (player/core.h) */
     int usb, vol_usb;              /* playing to the USB sound card; its volume 0..120 */
     int usb_ready;                 /* a USB sound card is there */
-    int usb_soft;                  /* it has no volume control: MPD's software volume (shared with AUX digital) */
+    int usb_soft;                  /* it has no volume control of its own: ours by alsa-lib softvol (usbaudio.c) */
     char usb_name[80];             /* its product name */
     int main_vol;                  /* the main volume (each output: main + its offset, within its cap); -1 unknown */
     int cap[4], fade[4];           /* per output (0 AUX, 1 Bluetooth, 2 digital, 3 USB: player/core.h PL_O_*) */

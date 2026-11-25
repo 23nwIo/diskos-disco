@@ -61,10 +61,21 @@ int ua_mixer_set(int card, const ua_mixer_t *m, int volume, int scale, ua_log_fn
 long ua_mixer_raw(const ua_mixer_t *m, int volume, int scale);
 /* pure: how good a control name is as the output volume: 0 not at all, higher is better */
 int ua_mixer_rank(const char *name);
+/* A card without a volume control of its own gets one from us: alsa-lib's softvol plugin (ua_alsa_conf_write soft)
+ * scales the samples by a user control on the card. alsa-lib would create that control at 0 dB (full level) when MPD
+ * opens the stream; so it is made here first, at 0 = silence, with exactly what softvol checks (integer, 2 channels,
+ * 0..UA_SOFTVOL_MAX, a dB scale), and softvol takes it as it is (pcm_softvol.c softvol_load_control, alsa-lib 1.2.12).
+ * Each card has its own control, so no output shares a volume with another one. 0, or -1 (then the card must not be
+ * played: its level could not be controlled). */
+#define UA_SOFTVOL_NAME   "diskOS USB Playback Volume"
+#define UA_SOFTVOL_MAX    120                    /* steps; 0 = silence (softvol), 120 = 0 dB */
+#define UA_SOFTVOL_MIN_DB (-60.0)
+int ua_softvol_prepare(int card, ua_log_fn log);
 
 /* ---- MPD's view ----
  * MPD's USB output plays to the ALSA name "diskos_usb", which this file defines (engine.c points MPD's alsa-lib at it
  * with ALSA_CONFIG_PATH). alsa-lib reads its files again when one changed (snd_config_update_r: inode or mtime), so
- * another card needs no restart of MPD: the file is replaced and the output opened again. card < 0: a null device. */
-int ua_alsa_conf_write(const char *path, int card, int pcm, ua_log_fn log);
+ * another card needs no restart of MPD: the file is replaced and the output opened again. card < 0: a null device;
+ * soft: through softvol with UA_SOFTVOL_NAME (ua_softvol_prepare first). */
+int ua_alsa_conf_write(const char *path, int card, int pcm, int soft, ua_log_fn log);
 #endif

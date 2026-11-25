@@ -25,7 +25,7 @@ static int g_spdif_pct = -1;               /* its software volume in percent; -1
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
 static int g_hung;                         /* MPD stopped answering and was killed; no commands until it is gone */
-static int g_out_usb;                      /* the USB sound card: 0 off, 1 with its own volume (usb_hw), 2 MPD's (usb_sw) */
+static int g_out_usb;                      /* playing to the USB sound card */
 static unsigned g_usb_gen;                 /* eng_usb's card generation the USB output was last opened for */
 static int g_dig_held;                     /* eng_hold_spdif: S/PDIF closed in MPD for a moment, though it stays on */
 static eng_log_fn g_log;
@@ -73,12 +73,11 @@ static const char CONF[] =
     /* USB sound card (docs/USB_AUDIO.md): "diskos_usb" is defined in ENG_USB_CONF, which MPD's alsa-lib reads besides
      * its own alsa.conf (ALSA_CONFIG_PATH, spawn) and reads again when it is replaced (usbaudio.c ua_alsa_conf_write):
      * another card needs no restart of MPD. No fixed format: MPD takes what the card offers and converts the rest.
-     * usb_hw: the card's own volume control does the volume (main.c, ALSA controls); usb_sw: a card without one gets
-     * MPD's software volume, which "setvol" shares with S/PDIF (main.c takes the lower one when both play). */
-    "audio_output {\n  type \"alsa\"\n  name \"usb_hw\"\n  device \"diskos_usb\"\n  mixer_type \"none\"\n}\n"
-    "audio_output {\n  type \"alsa\"\n  name \"usb_sw\"\n  device \"diskos_usb\"\n  mixer_type \"software\"\n}\n";
+     * The volume is the card's own control, or for a card without one a softvol control of ours (usbaudio.c), set by
+     * main.c: never MPD's software volume, which belongs to S/PDIF alone. */
+    "audio_output {\n  type \"alsa\"\n  name \"usb\"\n  device \"diskos_usb\"\n  mixer_type \"none\"\n}\n";
 /* MPD's output ids: the order above */
-enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_SPDIF44, OUT_SPDIF48, OUT_USB_HW, OUT_USB_SW, OUT_N };
+enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_SPDIF44, OUT_SPDIF48, OUT_USB, OUT_N };
 
 /* The Bluetooth pipe's command: the device's aplay with the BlueALSA plugin, to the headphones in ENG_BT_DEV, through
  * "plug" so that a link at another rate or sample format still opens. $1 = the stream rate. aplay's messages go to
@@ -254,16 +253,15 @@ int eng_spdif_volume(unsigned pct){
     return cmd(line);                              /* a software mixer takes it even while its output is off */
 }
 static int muted(void){ return !g_out_dac && !g_out_dig && !g_out_bt && !g_out_usb; }
-void eng_usb(int on, int soft, unsigned gen){
-    int want = on ? (soft ? 2 : 1) : 0;
-    if(want && gen != g_usb_gen && g_out_usb && eng_ready()){   /* another card: closed, so it opens with the new file */
+void eng_usb(int on, unsigned gen){
+    if(on && gen != g_usb_gen && g_out_usb && eng_ready()){   /* another card: closed, so it opens with the new file */
         char line[32], r[256];
-        snprintf(line, sizeof line, "disableoutput %d", g_out_usb == 2 ? OUT_USB_SW : OUT_USB_HW);
+        snprintf(line, sizeof line, "disableoutput %d", OUT_USB);
         xcmd(line, r, sizeof r);
         g_log("engine: USB sound card changed - its output opens again");
     }
-    g_out_usb = want;
-    if(want) g_usb_gen = gen;
+    g_out_usb = !!on;
+    if(on) g_usb_gen = gen;
 }
 unsigned eng_blocked_seq(void){ return g_blocked; }
 int eng_output(int dac, int dig, int bt, unsigned rate){
@@ -273,7 +271,7 @@ int eng_output(int dac, int dig, int bt, unsigned rate){
     int bt_out = rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
     int dig_out = g_spdif == 48000 ? OUT_SPDIF48 : OUT_SPDIF44;
     int dig_mpd = dig && !g_dig_held;              /* held: on, but closed in MPD for the moment */
-    int usb_out = g_out_usb == 2 ? OUT_USB_SW : g_out_usb ? OUT_USB_HW : -1;
+    int usb_out = g_out_usb ? OUT_USB : -1;
     char line[32], r[256];
     int fail = 0;
     if(muted() && !was_muted && !g_armed){
@@ -301,7 +299,7 @@ int eng_output(int dac, int dig, int bt, unsigned rate){
     g_log("engine: outputs%s%s%s%s%s%s", dac ? " dac" : "", dig ? (dig_out == OUT_SPDIF48 ? " spdif48" : " spdif44") : "",
           dig && !dig_mpd ? " (held)" : "",
           bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
-          usb_out == OUT_USB_SW ? " usb_sw" : usb_out == OUT_USB_HW ? " usb_hw" : "", dac || dig || bt || g_out_usb ? "" : " none");
+          g_out_usb ? " usb" : "", dac || dig || bt || g_out_usb ? "" : " none");
     return fail ? -1 : 0;
 }
 int eng_hold_spdif(int hold){

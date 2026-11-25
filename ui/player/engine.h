@@ -59,10 +59,10 @@ int eng_ready(void);
  * and the song waits as a paused start at its place; until an output is on again every start is held back (it stays
  * paused) and eng_blocked_seq bumps. Kept over a restart of MPD. 0 or -1. */
 int eng_output(int dac, int dig, int bt, unsigned rate);
-/* The USB sound card's output (on: playing to it; soft: it has no volume control, MPD's software volume does it;
- * gen: changes when another card took its place, so the output is opened again). Takes effect with the next
- * eng_output; kept over a restart of MPD. */
-void eng_usb(int on, int soft, unsigned gen);
+/* The USB sound card's output (on: playing to it; gen: changes when another card took its place, so the output is
+ * opened again). Its volume is the card's control (main.c), never MPD's. Takes effect with the next eng_output; kept
+ * over a restart of MPD. */
+void eng_usb(int on, unsigned gen);
 /* 1: S/PDIF closes in MPD for a moment though it stays on (no pause, no "no output"); 0: it opens again. A running
  * S/PDIF stream stalls when the DAC is powered or started, so playback.c closes it around that, as the stock player
  * reopens its PCM after dac_power_down. 0 or -1. */

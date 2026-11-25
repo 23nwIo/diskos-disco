@@ -13,6 +13,9 @@
 #include <sys/ioctl.h>
 #include <time.h>  /* struct timespec, needed by sound/asound.h */
 #include <sound/asound.h>
+#ifndef SNDRV_CTL_TLVT_DB_SCALE
+#define SNDRV_CTL_TLVT_DB_SCALE 1      /* <sound/tlv.h>, not in every kernel header set */
+#endif
 #include <unistd.h>
 
 char ua_root[256];
@@ -176,8 +179,45 @@ int ua_mixer_find(int card, ua_mixer_t *m, ua_log_fn log){
         log("usb audio: card %d: volume \"%s\" %ld..%ld, %d channel(s)%s", card, m->name, m->min, m->max, m->channels,
             m->sw_numid ? ", with its switch" : "");
         rc = 0;
-    } else log("usb audio: card %d: no playback volume control - MPD's software volume", card);
+    } else log("usb audio: card %d: no playback volume control", card);
     free(ids);
+out:
+    close(fd);
+    return rc;
+}
+int ua_softvol_prepare(int card, ua_log_fn log){
+    int fd = ctl_open(card, log);
+    if(fd < 0) return -1;
+    int rc = -1;
+    struct snd_ctl_elem_info in; memset(&in, 0, sizeof in);
+    in.id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+    snprintf((char *)in.id.name, sizeof in.id.name, "%s", UA_SOFTVOL_NAME);
+    if(ioctl(fd, SNDRV_CTL_IOCTL_ELEM_INFO, &in) == 0){
+        if(in.type == SNDRV_CTL_ELEM_TYPE_INTEGER && in.count == 2 && in.value.integer.min == 0 && in.value.integer.max == UA_SOFTVOL_MAX
+           && (in.access & SNDRV_CTL_ELEM_ACCESS_TLV_READ)){ rc = 0; goto out; }   /* ours from before: kept */
+        struct snd_ctl_elem_id id = in.id;
+        if(ioctl(fd, SNDRV_CTL_IOCTL_ELEM_REMOVE, &id) != 0){ log("usb audio: card %d: remove \"%s\": %s", card, UA_SOFTVOL_NAME, strerror(errno)); goto out; }
+    }
+    memset(&in, 0, sizeof in);
+    in.id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+    snprintf((char *)in.id.name, sizeof in.id.name, "%s", UA_SOFTVOL_NAME);
+    in.type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    in.access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READWRITE;
+    in.count = 2;
+    in.value.integer.min = 0; in.value.integer.max = UA_SOFTVOL_MAX; in.value.integer.step = 0;
+    if(ioctl(fd, SNDRV_CTL_IOCTL_ELEM_ADD, &in) != 0){ log("usb audio: card %d: add \"%s\": %s", card, UA_SOFTVOL_NAME, strerror(errno)); goto out; }
+    /* the dB scale as softvol writes it (add_tlv_info): min, step | mute */
+    struct { struct snd_ctl_tlv h; unsigned int v[4]; } t; memset(&t, 0, sizeof t);
+    t.h.numid = in.id.numid; t.h.length = sizeof t.v;
+    t.v[0] = SNDRV_CTL_TLVT_DB_SCALE; t.v[1] = 2 * sizeof(int);
+    t.v[2] = (unsigned int)(int)(UA_SOFTVOL_MIN_DB * 100);
+    t.v[3] = (unsigned int)(int)((0.0 - UA_SOFTVOL_MIN_DB) * 100 / UA_SOFTVOL_MAX);
+    if(ioctl(fd, SNDRV_CTL_IOCTL_TLV_WRITE, &t) != 0) log("usb audio: card %d: dB scale of \"%s\": %s", card, UA_SOFTVOL_NAME, strerror(errno));
+    struct snd_ctl_elem_value v; memset(&v, 0, sizeof v);
+    v.id.numid = in.id.numid;                              /* silence until the player sets the level */
+    if(ioctl(fd, SNDRV_CTL_IOCTL_ELEM_WRITE, &v) != 0){ log("usb audio: card %d: \"%s\" = 0: %s", card, UA_SOFTVOL_NAME, strerror(errno)); goto out; }
+    log("usb audio: card %d: no volume control of its own - \"%s\" (softvol) made, at silence", card, UA_SOFTVOL_NAME);
+    rc = 0;
 out:
     close(fd);
     return rc;
@@ -212,10 +252,15 @@ int ua_mixer_set(int card, const ua_mixer_t *m, int volume, int scale, ua_log_fn
 }
 
 /* ---- MPD's view ---- */
-int ua_alsa_conf_write(const char *path, int card, int pcm, ua_log_fn log){
-    char tmp[320], b[256];
+int ua_alsa_conf_write(const char *path, int card, int pcm, int soft, ua_log_fn log){
+    char tmp[320], b[512];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
-    if(card >= 0) snprintf(b, sizeof b, "# written by diskos-player (usbaudio.c): the USB sound card MPD plays to\n"
+    if(card >= 0 && soft)
+        snprintf(b, sizeof b, "# written by diskos-player (usbaudio.c): the USB sound card MPD plays to, its volume by softvol\n"
+                              "pcm.diskos_usb {\n  type softvol\n  slave.pcm {\n    type hw\n    card %d\n    device %d\n  }\n"
+                              "  control {\n    name \"%s\"\n    card %d\n    count 2\n  }\n  min_dB %.1f\n  max_dB 0.0\n  resolution %d\n}\n",
+                 card, pcm < 0 ? 0 : pcm, UA_SOFTVOL_NAME, card, UA_SOFTVOL_MIN_DB, UA_SOFTVOL_MAX + 1);
+    else if(card >= 0) snprintf(b, sizeof b, "# written by diskos-player (usbaudio.c): the USB sound card MPD plays to\n"
                                         "pcm.diskos_usb {\n  type hw\n  card %d\n  device %d\n}\n", card, pcm < 0 ? 0 : pcm);
     else snprintf(b, sizeof b, "# written by diskos-player (usbaudio.c): no USB sound card\npcm.diskos_usb {\n  type null\n}\n");
     FILE *f = fopen(tmp, "we");

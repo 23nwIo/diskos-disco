@@ -166,13 +166,14 @@ static void fade_apply(pl_core_t *c, double t){
 /* ---- the USB sound card (usbaudio.c; docs/USB_AUDIO.md) ---- */
 static ua_card_t g_ua;                     /* the card in use (the newest plugged) */
 static int g_ua_have;
-static ua_mixer_t g_ua_mix;                /* its volume control (ok 0: MPD's software volume) */
+static ua_mixer_t g_ua_mix;                /* its volume control: its own, or ours by softvol (g_ua_soft) */
+static int g_ua_soft;
 static ua_card_t g_ua_seen[UA_MAX_CARDS];  /* the last scan, to tell which card is new */
 static int g_ua_nseen;
 
-/* ---- the volumes to the hardware: the DAC's attenuation, S/PDIF's and a USB card's software volume (MPD's "setvol",
- * shared by both: the lower one when both play), the USB card's own control, the headphones (BlueALSA). Only what
- * changed; force: all again. ---- */
+/* ---- the volumes to the hardware: the DAC's attenuation, S/PDIF's software volume (MPD's "setvol", which no other
+ * output uses), the USB card's volume control (its own or our softvol one), the headphones (BlueALSA). Only what
+ * changed. ---- */
 static int g_att_vol = -1, g_att_gain = -1, g_att_bal = -1, g_att_curve = -1, g_bt_last = -1, g_soft_vol = -1, g_usb_vol = -1;
 static double g_bt_at;
 static void apply_volumes(pl_core_t *c, double t){
@@ -183,12 +184,10 @@ static void apply_volumes(pl_core_t *c, double t){
         dac_set_attenuation(a, l, logmsg);
         g_att_vol = c->app_aux; g_att_gain = gain; g_att_bal = c->balance; g_att_curve = curve;
     }
-    int usb_soft = g_ua_have && !g_ua_mix.ok && pb_usb();
-    int soft = usb_soft && pb_digital() ? (c->app_usb < c->app_dig ? c->app_usb : c->app_dig) : usb_soft ? c->app_usb : c->app_dig;
-    if(soft != g_soft_vol && eng_spdif_volume((unsigned)(soft * 100 / PL_VOL_MAX)) == 0) g_soft_vol = soft;
-    if(g_ua_have && g_ua_mix.ok && c->app_usb != g_usb_vol){
-        if(ua_mixer_set(g_ua.card, &g_ua_mix, c->app_usb, PL_VOL_MAX, logmsg) == 0) g_usb_vol = c->app_usb;
-        else g_usb_vol = c->app_usb;              /* logged; not again every turn */
+    if(c->app_dig != g_soft_vol && eng_spdif_volume((unsigned)(c->app_dig * 100 / PL_VOL_MAX)) == 0) g_soft_vol = c->app_dig;
+    if(g_ua_have && c->app_usb != g_usb_vol){
+        ua_mixer_set(g_ua.card, &g_ua_mix, c->app_usb, PL_VOL_MAX, logmsg);   /* a failure is logged, not retried every turn */
+        g_usb_vol = c->app_usb;
     }
     if(pb_bluetooth() && !pb_switching() && c->app_bt != g_bt_last && (!fade_busy(PL_O_BT) || c->app_bt == 0 || t - g_bt_at >= FADE_BT_STEP_S)){
         g_bt_last = c->app_bt; g_bt_at = t;        /* the headphones' own volume (BlueALSA) */
@@ -228,29 +227,35 @@ static void usb_tick(pl_core_t *c, double t){
     if(g_ua_have){
         logmsg("usb audio: card %d %s %s", g_ua.card, g_ua.key, still ? "replaced by a newer one" : "gone");
         g_ua_have = 0;
-        pb_usb_card(0, 0);
+        pb_usb_card(0);
         pl_core_usb(c, 0, NULL, 0, NULL);
     }
     if(pick < 0){
-        ua_alsa_conf_write(ENG_USB_CONF, -1, 0, logmsg);
+        ua_alsa_conf_write(ENG_USB_CONF, -1, 0, 0, logmsg);
         return;
     }
     g_ua = now[pick]; g_ua_have = 1; g_usb_vol = -1;
     logmsg("usb audio: card %d (%s, \"%s\", id %s) pcm %d%s", g_ua.card, g_ua.key, g_ua.name, g_ua.id, g_ua.pcm,
            g_ua.serial[0] ? "" : ", no serial number");
+    int soft = 0;
     if(ua_mixer_find(g_ua.card, &g_ua_mix, logmsg) != 0 || !g_ua_mix.ok){
-        memset(&g_ua_mix, 0, sizeof g_ua_mix);
-        logmsg("usb audio: no volume control - MPD's software volume");
+        /* none of its own: one of ours (softvol), made at silence; without it the card is not used */
+        soft = 1;
+        if(ua_softvol_prepare(g_ua.card, logmsg) != 0 || ua_mixer_find(g_ua.card, &g_ua_mix, logmsg) != 0 || !g_ua_mix.ok){
+            logmsg("usb audio: card %d: its level can't be controlled - not used", g_ua.card);
+            g_ua_have = 0;
+            ua_alsa_conf_write(ENG_USB_CONF, -1, 0, 0, logmsg);
+            return;
+        }
     }
     pl_core_usb(c, 1, g_ua.key, g_ua.serial[0] != 0, g_ua.name);
     if(c->out_usb) fade_start(c, PL_O_USB, t);
     fade_apply(c, t);
-    if(g_ua_mix.ok){                               /* now, before any stream opens (a new card: muted) */
-        ua_mixer_set(g_ua.card, &g_ua_mix, c->app_usb, PL_VOL_MAX, logmsg);
-        g_usb_vol = c->app_usb;
-    }
-    ua_alsa_conf_write(ENG_USB_CONF, g_ua.card, g_ua.pcm, logmsg);
-    pb_usb_card(1, !g_ua_mix.ok);
+    ua_mixer_set(g_ua.card, &g_ua_mix, c->app_usb, PL_VOL_MAX, logmsg);   /* now, before any stream opens (new: silent) */
+    g_usb_vol = c->app_usb;
+    g_ua_soft = soft;
+    ua_alsa_conf_write(ENG_USB_CONF, g_ua.card, g_ua.pcm, soft, logmsg);
+    pb_usb_card(1);
 }
 
 /* ---- the headphones' buttons and volume (btavrcp.c, AVRCP through BlueZ) ---- */
@@ -347,7 +352,7 @@ static void write_outputs(const pl_core_t *c, const char *path){
              "main=%d\ncap=%d %d %d %d\nfade=%d %d %d %d\n",
              pb_aux(), pb_bluetooth(), pb_digital(), c->vol_aux, c->vol_bt, c->vol_dig, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
              pb_switching(), c->auto_out, c->notice_seq, c->notice, pb_usb(), c->vol_usb, c->usb_ready, c->usb_ready ? c->usb_name : "",
-             c->usb_ready && g_ua_have && !g_ua_mix.ok, c->volume, c->cap[PL_O_AUX], c->cap[PL_O_BT], c->cap[PL_O_DIG], c->cap[PL_O_USB],
+             c->usb_ready && g_ua_have && g_ua_soft, c->volume, c->cap[PL_O_AUX], c->cap[PL_O_BT], c->cap[PL_O_DIG], c->cap[PL_O_USB],
              c->fade[PL_O_AUX], c->fade[PL_O_BT], c->fade[PL_O_DIG], c->fade[PL_O_USB]);
     if(!strcmp(b, last)) return;
     char tmp[300];
@@ -472,7 +477,7 @@ int main(int argc, char **argv){
     g_fcore = &core;
     eng_set_before_play(before_play);
     if(use_wd && (mkdir(ENG_RUN_DIR, 0755) == 0 || errno == EEXIST))
-        ua_alsa_conf_write(ENG_USB_CONF, -1, 0, logmsg);       /* no card until usb_tick finds one (not one of a run before) */
+        ua_alsa_conf_write(ENG_USB_CONF, -1, 0, 0, logmsg);       /* no card until usb_tick finds one (not one of a run before) */
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
     if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */

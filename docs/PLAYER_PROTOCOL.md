@@ -91,7 +91,7 @@ each output plays at clamp(main + offset, 0, min(limit, max volume)). Devices: `
 over: AUX analog becomes the main volume, the Bluetooth volume goes to the first headphones seen. Fade in: from 0 to
 the volume over `fade_s` seconds (`/usr/data/diskos-own/audio.conf`, default 4) when an output comes on and when
 playback starts after a pause. The state for the UI is in `/tmp/diskos-player-outputs` (`usb=`, `vol_usb=`,
-`usb_ready=`, `usb_name=`, `usb_soft=`, `main=`, `cap=a b d u`, `fade=a b d u` besides the older lines; notice 4: a USB
+`usb_ready=`, `usb_name=`, `usb_soft=` (1: the card has no volume control, ours by softvol), `main=`, `cap=a b d u`, `fade=a b d u` besides the older lines; notice 4: a USB
 sound card connected that is off).
 
 ## Replies (player to UI, on `/ui`)

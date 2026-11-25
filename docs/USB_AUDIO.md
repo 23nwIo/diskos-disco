@@ -54,8 +54,10 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
 - The offset of a plugged but switched-off device can be changed. Hardware mixer: written directly via ALSA, no MPD.
 - **Order of operations**: on plug-in the card's hardware mixer is set to the computed level at once, before any stream
   opens. Cards without a hardware mixer get MPD's software volume set before the output is enabled.
-- Mixer choice: the first `Playback Volume` control of the card (Speaker, PCM, Headphone, Master, ...); none ->
-  MPD software volume.
+- Mixer choice: the first `Playback Volume` control of the card (Speaker, PCM, Headphone, Master, ...). A card without
+  one gets its own: alsa-lib's `softvol` with a control `diskOS USB Playback Volume` on that card (0..120, -60..0 dB,
+  0 = silence). The player creates the control itself at silence before MPD opens the card, because softvol would
+  create it at 0 dB. No output shares a volume with another one (MPD's software volume is S/PDIF's alone).
 - Stored in `/usr/data/diskos-own/volumes` (as the volumes were before), written only 3 s after a change and at
   power off, never periodically. At most 48 devices; the least recently used one goes.
 
@@ -67,8 +69,7 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
 - `ui/player/main.c`: `usb_tick` once a second (newest card; a new card's control is set before anything can play),
   fade in (`before_play` hook from engine.c, outputs coming on in the route change), `apply_volumes`.
 - `ui/player/core.c`: main + offset per device, limits, fade flags, `pl_core_usb`, 0d08/0d09/0d0a, 0642 5.
-- `ui/player/engine.c`: outputs `usb_hw` (no mixer) and `usb_sw` (software mixer; shares MPD's `setvol` with S/PDIF,
-  so when both play the lower volume wins - a known limit), `eng_usb`.
+- `ui/player/engine.c`: output `usb` (no MPD mixer; the volume is the card's control or our softvol one), `eng_usb`.
 - UI: Settings > Audio > Outputs (USB audio, USB Volume, Limits and Fade In), Remote Control `api/outputs`.
 - Fade length: `fade_s=N` in `/usr/data/diskos-own/audio.conf` (0..30, default 4), read at player start.
 - Known: the C-Media test card has no serial number and disconnects whenever its headphones are pulled, so it comes
