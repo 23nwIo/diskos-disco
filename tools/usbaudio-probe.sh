@@ -65,6 +65,10 @@ for d in /sys/bus/usb/devices/*; do
   done
 done
 
+sec "block devices (the card reader in the same USB device)"
+run cat /proc/partitions
+run cat /proc/mounts
+
 sec "ALSA"
 run cat /proc/asound/cards
 run cat /proc/asound/devices
