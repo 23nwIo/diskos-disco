@@ -15,6 +15,7 @@ first. A couple of the device's behaviors are non-obvious and easy to get wrong.
 | `tinj.c` | The on-device touch injector, built once and pushed (used by `diskos-touch.sh`) |
 | `dacpower.c` | On-device: power the CS43131 DAC down or up by hand (`dacpower down\|up [device...]`) |
 | `mqsend.c` | On-device: send one or more raw frames to the `/player` queue, non-blocking (`mqsend FRAME...`) |
+| `usbaudio-probe.sh` | On-device: collect USB host role, USB-C state, snd-usb-audio, ALSA card formats/rates and mixer controls of a USB sound card into `/tmp/usbaudio-probe-<label>.txt` |
 
 ## Requirements
 - `sshpass` and `ssh` (OpenSSH)
