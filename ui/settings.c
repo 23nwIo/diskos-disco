@@ -376,7 +376,9 @@ static void apply_replay_gain(int v){ ui_set_replay_gain(v); }
 static void apply_gain(int v){ ui_set_gain(v); }
 static void apply_dac_filter(int v){ ui_set_dac_filter(v); }
 static void apply_gapless(int v){ ui_set_gapless(v); }
+#ifdef DISKOS_TEST_OUTPUTS
 static void apply_spdif(int v){ ui_set_output(v); }   /* SPDIF: stock toggle form: pause -> silent -> 0666 -> 0657 8 -> resume (modes.c); the toggle then mirrors the real route */
+#endif
 static void apply_memory(int v){ ui_set_memory(v); }
 static void apply_maxvol(int v){ ui_set_maxvol(v); }
 static void apply_balance(int v){ ui_set_balance(v); }
@@ -1131,8 +1133,10 @@ static const setting_t TABLE[] = {
     { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
     /* the own player only (the Outputs page); the stock player's S/PDIF switch stays untested (modes.c) */
+#ifdef DISKOS_TEST_OUTPUTS   /* coax S/PDIF: no signal at the jack on Jo's Disc, the stock player fails too (todo.md) */
     { "Outputs",  "Coaxial (S/PDIF)", ST_TOGGLE, "spdif", 0,1,1, NULL,0, NULL, apply_spdif, 0,
       "AUX plays digital S/PDIF (coaxial) on the 3.5 mm jack instead of the DAC: a 3.5 mm to RCA cable to the coaxial input of an external DAC. AUX Volume sets its level. Off again after a restart.", NULL },
+#endif
     {"Music screen","Text",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musictext,0,"Track font and alignment",NULL},
     {"Music screen","Information",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicinfo,0,"Clock, album and track details",NULL},
     {"Music screen","Progress",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicprogress,0,"Progress colour and shape",NULL},
