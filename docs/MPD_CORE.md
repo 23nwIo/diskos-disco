@@ -198,7 +198,7 @@ Bluetooth is left as it is. The AUX volume works as MPD's software volume on tha
 Outputs > Coaxial (S/PDIF) (cfg `spdif`, through the stock form in modes.c: pause, PCM quiet, 0666, 0657 8, play on);
 it is off again after a player restart, as the route always was. Host-tested; not yet heard on a Disc.
 
-The Disc's S/PDIF is **coaxial** (electrical) on the 3.5 mm jack: FiiO lists "coaxial output", and a TOSLINK cable stayed dark with hw:0,4 running at 44.1 kHz / 24 bit and `LO2_MUX` = 13 (Jo, 2026-11-25). A 3.5 mm to RCA cable goes to the external DAC's coaxial input.
+The Disc's S/PDIF is **coaxial** (electrical) on the 3.5 mm jack: FiiO lists "coaxial output", and a TOSLINK cable stayed dark with hw:0,4 running at 44.1 kHz / 24 bit and `LO2_MUX` = 13 (Jo, 2026-11-25). A 3.5 mm to RCA cable goes to the external DAC's coaxial input. The stock player's S/PDIF switch (`set_spdif_mode_link` 0x4f0ee0) also powers the DAC down (`dac_power_down` 0x4e83b8: `_IO('M',47)` on /dev/cs43131) and up again on leaving it (`_IO('M',48)`); the own player does the same (`dac.c` `dac_power_down`), since the coaxial signal shares the jack with the DAC's output. Silent without it on Jo's coax DAC (2026-11-25).
 
 ## Next
 

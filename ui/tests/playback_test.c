@@ -105,6 +105,8 @@ int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(
 }
 static unsigned d_rate; static int d_starts;
 unsigned dac_current_rate(void){ return d_rate; }
+static int d_downs;
+void dac_power_down(void (*l)(const char *, ...)){ (void)l; d_rate = 0; d_downs++; }
 void dac_attenuation(int v, int g, int bl, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)bl; (void)b; *a = *c = 0; }
 int dac_start(unsigned r, unsigned char a, unsigned char c, void (*l)(const char *, ...)){ (void)a; (void)c; (void)l; d_rate = r; d_starts++; return 0; }
 
@@ -436,15 +438,15 @@ static void test_playback(void){
     CHECK(!pb_bluetooth() && e_out_bt == 0 && e_out_aux == 1);
     /* S/PDIF (0666 4): AUX plays on hw:0,4 with LO2_MUX = 13, the DAC is not started */
     CHECK(pl_core_handle(&c, "0666000C0004", 12) == 0 && c.spdif == 1);
-    starts = d_starts; pb_route();
-    CHECK(e_spdif > 0 && e_out_aux == 1 && d_starts == starts);
+    starts = d_starts; int downs = d_downs; pb_route();
+    CHECK(e_spdif > 0 && e_out_aux == 1 && d_starts == starts && d_downs == downs + 1 && d_rate == 0);   /* the DAC off */
     CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && d_starts == starts && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 13);
     CHECK(e_spdif == 44100);                                   /* the song's rate picks the output */
     CHECK(pb_play_list(QD_ALBUM, 1, "Mixed") == 0 && e_spdif == 96000 && d_starts == starts);   /* engine.c maps it to 48 kHz */
     CHECK(pl_core_handle(&c, "0666000C0006", 12) == 0 && c.spdif == 0);
     c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
     CHECK(e_spdif == 0 && e_out_aux == 1);
-    CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && !strcmp(mix_last, "LO3_MUX") && mix_last_v == 12);
+    CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && !strcmp(mix_last, "LO3_MUX") && mix_last_v == 12 && d_rate == 44100);   /* started again */
     /* headphones pulled */
     e_state = ENG_PLAY; pb_engine_event();
     CHECK(pb_transport(PL_T_PAUSE, 0) == 0 && e_state == ENG_PAUSE);

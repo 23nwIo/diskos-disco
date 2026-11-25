@@ -615,6 +615,7 @@ void pb_route(void){
     if(C->spdif != g_spdif){                            /* AUX moves: set it up anew */
         g_spdif = C->spdif; g_sp_rate = 0;
         eng_set_spdif(g_spdif ? (g_es_valid && g_es.rate ? g_es.rate : 44100) : 0);
+        if(g_spdif) dac_power_down(L);                  /* as the stock player: coaxial S/PDIF shares the jack with the DAC */
         if(aux) g_aux = 0;
     }   /* AUX moves: set it up anew */
     if(aux && !g_aux && g_es_valid && g_es.state != ENG_STOP && g_es.rate){

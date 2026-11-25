@@ -13,6 +13,7 @@
 #define IOW1(nr)   (0x80014d00UL | (unsigned long)(nr))   /* _IOW('M',nr,1 byte), MIPS encoding */
 #define IO_M48     0x20004d30UL
 #define IO_M46     0x20004d2eUL
+#define IO_M47     0x20004d2fUL   /* dac_power_down (mq_player 0x4e83b8, set_spdif_mode_link on) */
 
 static int g_a = -1, g_c = -1, g_dry, g_reset_done;
 static unsigned g_rate;
@@ -101,3 +102,9 @@ void dac_set_attenuation(unsigned char a, unsigned char c, dac_log_fn log){
 }
 
 unsigned dac_current_rate(void){ return g_rate; }
+
+void dac_power_down(dac_log_fn log){
+    if(!g_dry && g_a >= 0 && ioctl(g_a, IO_M47, 0) != 0) log("dac: power down: %s", strerror(errno));
+    else log("dac: powered down%s", g_dry ? " (dry run)" : "");
+    g_rate = 0; g_reset_done = 0;                    /* dac_start powers it up (M48) and starts it anew */
+}

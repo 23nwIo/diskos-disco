@@ -30,4 +30,8 @@ int dac_start(unsigned rate_hz, unsigned char a_right, unsigned char c_left, dac
 void dac_set_attenuation(unsigned char a_right, unsigned char c_left, dac_log_fn log);
 /* The rate the DAC was last started with, 0 if never. */
 unsigned dac_current_rate(void);
+/* Power the DAC down (the stock player's dac_power_down: _IO('M',47) on /dev/cs43131, when it switches to S/PDIF).
+ * The coaxial S/PDIF signal shares the 3.5 mm jack, and a running DAC drowns it. The next dac_start powers it up
+ * again (_IO('M',48)) and runs the whole start sequence. */
+void dac_power_down(dac_log_fn log);
 #endif
