@@ -10,6 +10,8 @@
 #include "../player/dac.h"
 #include "../player/hw.h"
 #include "../player/mpdcli.h"
+#include <sys/socket.h>
+#include <sys/time.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -465,6 +467,15 @@ static void test_dac_mpd(void){
     CHECK(mc_get(r, "song", v, sizeof v) && !strcmp(v, "2"));
     CHECK(!mc_get(r, "songid", v, sizeof v));
     CHECK(!mc_get(r, "stat", v, sizeof v));
+    {   /* a timeout (MPD stuck) and a closed connection are told apart by errno (engine.c hung) */
+        int sv[2]; CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+        struct timeval tv = { 0, 200000 }; setsockopt(sv[0], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        char o[64];
+        errno = 0; CHECK(mc_cmd(sv[0], "status", o, sizeof o) == -1 && (errno == EAGAIN || errno == EWOULDBLOCK));
+        close(sv[1]); signal(SIGPIPE, SIG_IGN);           /* as in main.c */
+        errno = 0; CHECK(mc_cmd(sv[0], "status", o, sizeof o) == -1 && errno != EAGAIN && errno != EWOULDBLOCK);
+        close(sv[0]);
+    }
 }
 
 int main(int argc, char **argv){

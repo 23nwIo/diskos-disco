@@ -24,6 +24,8 @@ static unsigned g_blocked;                 /* bumps when a start was held back: 
 static int g_spdif_pct = -1;               /* its software volume in percent; -1 not set yet (MPD starts at 100) */
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
+static int g_hung;                         /* MPD stopped answering and was killed; no commands until it is gone */
+static int g_dig_held;                     /* eng_hold_spdif: S/PDIF closed in MPD for a moment, though it stays on */
 static eng_log_fn g_log;
 /* MPD song ids of the two slots (see eng_load) and a paused start that has not been played yet */
 static int g_cur = -1, g_next = -1, g_armed;
@@ -88,20 +90,32 @@ static void disconnect(void){
 /* MPD closes a client connection that has been silent for connection_timeout (60 s by default; a connection in "idle"
  * is exempt). The command connection is silent most of the time, so it is opened again whenever it is found closed. */
 static int reconnect_cmd(void){
-    if(g_pid <= 0) return -1;
+    if(g_pid <= 0 || g_hung) return -1;
     if(g_cmd >= 0) close(g_cmd);
     g_cmd = mc_connect(ENG_SOCK, ENG_TIMEOUT_MS);
     if(g_cmd < 0) g_log("engine: reconnect %s: %s", ENG_SOCK, strerror(errno));
     return g_cmd >= 0 ? 0 : -1;
 }
 /* every command goes through here: one retry on a fresh connection when the old one was closed */
+/* MPD that gets no answer out within ENG_TIMEOUT_MS is stuck (e.g. closing an ALSA output whose stream stalled,
+ * device 2026-11-25): every further command would wait as long again and the watchdog reboots the Disc after 10 s.
+ * So it is killed at once; eng_check sees it go and starts it anew. */
+static void hung(const char *c){
+    g_log("engine: MPD gave no answer to \"%s\" within %d ms - killing it, it starts anew", c, ENG_TIMEOUT_MS);
+    g_hung = 1;
+    disconnect();
+    if(g_pid > 0) kill(g_pid, SIGKILL);
+}
 static int xcmd(const char *c, char *out, size_t cap){
+    if(g_hung) return -1;
     if(g_cmd < 0 && reconnect_cmd() != 0) return -1;
     int x = mc_cmd(g_cmd, c, out, cap);
     if(x >= 0) return x;
+    if(errno == EAGAIN || errno == EWOULDBLOCK){ hung(c); return -1; }   /* a timeout, not a closed connection */
     if(reconnect_cmd() != 0) return -1;
     x = mc_cmd(g_cmd, c, out, cap);
-    if(x < 0){ g_log("engine: \"%s\": no answer from MPD", c); close(g_cmd); g_cmd = -1; }
+    if(x < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) hung(c);
+    else if(x < 0){ g_log("engine: \"%s\": no answer from MPD", c); close(g_cmd); g_cmd = -1; }
     return x;
 }
 
@@ -117,6 +131,7 @@ static int g_cert_check = 1;                             /* what MPD was started
 static int cert_check_wanted(void){ return access(OPL_NO_CERT_CHECK, F_OK) != 0; }
 int eng_cert_stale(void){ return g_pid > 0 && cert_check_wanted() != g_cert_check; }
 static int spawn(void){
+    g_hung = 0; g_dig_held = 0;
     if(mkdir(ENG_RUN_DIR, 0755) != 0 && errno != EEXIST){ g_log("engine: mkdir %s: %s", ENG_RUN_DIR, strerror(errno)); return -1; }
     FILE *f = fopen(ENG_CONF, "we");
     if(!f || fputs(CONF, f) < 0){ g_log("engine: write %s: %s", ENG_CONF, strerror(errno)); if(f) fclose(f); return -1; }
@@ -167,7 +182,7 @@ int eng_start(int dry, eng_log_fn log){
 
 void eng_stop(void){
     disconnect();
-    if(g_pid > 0){ kill(g_pid, SIGTERM); waitpid(g_pid, NULL, 0); g_pid = -1; }
+    if(g_pid > 0){ kill(g_pid, g_hung ? SIGKILL : SIGTERM); waitpid(g_pid, NULL, 0); g_pid = -1; }
 }
 
 int eng_restart(void){
@@ -178,7 +193,7 @@ int eng_restart(void){
     return spawn();
 }
 
-int eng_ready(void){ return g_pid > 0 && g_idle >= 0; }
+int eng_ready(void){ return g_pid > 0 && g_idle >= 0 && !g_hung; }
 int eng_idle_fd(void){ return g_idle; }
 
 int eng_idle_event(void){
@@ -202,7 +217,7 @@ void eng_check(void){
     pid_t r = waitpid(g_pid, &st, WNOHANG);
     if(r != g_pid) return;
     g_log("engine: MPD exited (%s %d)", WIFEXITED(st) ? "status" : "signal", WIFEXITED(st) ? WEXITSTATUS(st) : WTERMSIG(st));
-    g_pid = -1; disconnect();
+    g_pid = -1; g_hung = 0; disconnect();
     g_cur = g_next = -1; g_armed = 0;                    /* its queue is gone with it */
     if(++g_restarts > ENG_MAX_RESTARTS){ g_log("engine: too many restarts, no sound from now on"); return; }
     spawn();
@@ -231,6 +246,7 @@ int eng_output(int dac, int dig, int bt, unsigned rate){
     if(!eng_ready()) return -1;
     int bt_out = rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
     int dig_out = g_spdif == 48000 ? OUT_SPDIF48 : OUT_SPDIF44;
+    int dig_mpd = dig && !g_dig_held;              /* held: on, but closed in MPD for the moment */
     char line[32], r[256];
     int fail = 0;
     if(muted() && !was_muted && !g_armed){
@@ -245,19 +261,26 @@ int eng_output(int dac, int dig, int bt, unsigned rate){
     }
     /* off first, so a Bluetooth output that is switched (another rate) or reopened (a new codec) is closed before */
     for(int i = 0; i < OUT_N; i++){
-        if((i == OUT_DAC && dac) || (i == dig_out && dig) || (i == bt_out && bt)) continue;
+        if((i == OUT_DAC && dac) || (i == dig_out && dig_mpd) || (i == bt_out && bt)) continue;
         snprintf(line, sizeof line, "disableoutput %d", i);
         xcmd(line, r, sizeof r);
     }
     for(int i = 0; i < OUT_N; i++){
-        if(!((i == OUT_DAC && dac) || (i == dig_out && dig) || (i == bt_out && bt))) continue;
+        if(!((i == OUT_DAC && dac) || (i == dig_out && dig_mpd) || (i == bt_out && bt))) continue;
         snprintf(line, sizeof line, "enableoutput %d", i);
         int x = xcmd(line, r, sizeof r);
         if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); fail = 1; }
     }
-    g_log("engine: outputs%s%s%s%s", dac ? " dac" : "", dig ? (dig_out == OUT_SPDIF48 ? " spdif48" : " spdif44") : "",
+    g_log("engine: outputs%s%s%s%s%s", dac ? " dac" : "", dig ? (dig_out == OUT_SPDIF48 ? " spdif48" : " spdif44") : "",
+          dig && !dig_mpd ? " (held)" : "",
           bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "", dac || dig || bt ? "" : " none");
     return fail ? -1 : 0;
+}
+int eng_hold_spdif(int hold){
+    if(g_dig_held == !!hold) return 0;
+    g_dig_held = !!hold;
+    if(!g_out_dig) return 0;
+    return eng_output(g_out_dac, g_out_dig, g_out_bt, g_out_rate);
 }
 
 int eng_cmd(const char *c, char *out, unsigned cap){

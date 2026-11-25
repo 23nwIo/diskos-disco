@@ -16,6 +16,7 @@ static int read_line(int fd, char *b, size_t cap){
         char c;
         ssize_t r = read(fd, &c, 1);
         if(r < 0 && errno == EINTR) continue;
+        if(r == 0) errno = ECONNRESET;           /* closed; a timeout leaves EAGAIN (engine.c tells them apart) */
         if(r != 1) return -1;
         if(c == '\n') break;
         if(i + 1 < cap) b[i++] = c;

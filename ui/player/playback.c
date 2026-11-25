@@ -138,6 +138,12 @@ static void prepare_dac(unsigned rate){
     dac_start(rate, a, l, L);
 }
 static void prepare(unsigned rate){ prepare_dig(rate); prepare_dac(rate); }
+/* Powering the DAC down or up, or its start sequence, stalls a running S/PDIF stream (device 2026-11-25: coax went
+ * silent when AUX analog went off, and closing the stalled output later hung MPD until the watchdog rebooted). The
+ * stock player too reopens its PCM after dac_power_down (set_spdif_mode_link: close_player, open_player). So S/PDIF
+ * closes before such a DAC change and opens again after it. */
+static int dig_hold(void){ if(!g_dig || !eng_ready()) return 0; eng_hold_spdif(1); return 1; }
+static void dig_release(int held){ if(!held) return; mix_route_spdif(L); eng_hold_spdif(0); }
 /* the rate the AUX outputs are set up for: a next song of another rate is not queued (it starts with prepare) */
 static unsigned out_rate(void){ return g_aux ? dac_current_rate() : g_dig ? g_sp_rate : 0; }
 static unsigned rnd(unsigned k){ return k ? (unsigned)(random() % k) : 0; }
@@ -427,7 +433,9 @@ static void update_status(void){
     if(eng_status(&s) != 0) return;
     if(g_aux && s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
         unsigned char a, l; pb_attenuation(&a, &l);
+        int held = dig_hold();
         dac_start(s.rate, a, l, L);
+        dig_release(held);
     }
     int was = g_es_valid ? g_es.state : ENG_STOP;
     if(s.state != was || (g_es_valid && strcmp(s.file, g_es.file)))
@@ -622,6 +630,7 @@ void pb_route(void){
         g_sp_rate = 0; eng_set_spdif(0);
         if(running){ mix_route_spdif(L); g_sp_rate = g_es.rate; eng_set_spdif(g_es.rate); }   /* joins a running stream */
     }
+    int held = dig && g_dig && running && aux != g_aux ? dig_hold() : 0;   /* the DAC changes under running S/PDIF */
     if(aux && !g_aux && running){ g_aux = 1; prepare_dac(g_es.rate); }   /* the DAC joins a running stream: its start first */
     g_aux = aux; g_dig = dig; g_bt = bt;
     if(!aux && !dig && !bt) L("route: no output is on - playback waits");
@@ -629,6 +638,7 @@ void pb_route(void){
     if(g_cs_pid < 0) eng_output(aux, dig, bt, g_bt_rate);   /* during a codec switch pb_tick sets the outputs once it is done */
     if(dig_off){ mix_unroute_spdif(L); g_sp_rate = 0; }
     if(dac_off) dac_power_down(L);                      /* AUX analog off: no DAC power (dac_start powers it up again) */
+    dig_release(held);
     if(bt) bto_volume(g_bt_mac, C->vol_bt, PL_VOL_MAX, L);
 }
 

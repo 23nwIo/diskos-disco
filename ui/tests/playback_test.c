@@ -103,12 +103,16 @@ static char mix_last[32]; static unsigned mix_last_v;
 int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(const char *, ...)){
     (void)dev; (void)log; snprintf(mix_last, sizeof mix_last, "%s", name); mix_last_v = value; return 0;
 }
+static char seq[64];                 /* S/PDIF held (H) and released (R), DAC down (D) and started (S), in order */
+static void seq_add(char ch){ size_t n = strlen(seq); if(n + 1 < sizeof seq){ seq[n] = ch; seq[n + 1] = 0; } }
+static int e_held;
+int eng_hold_spdif(int h){ e_held = h; seq_add(h ? 'H' : 'R'); return 0; }
 static unsigned d_rate; static int d_starts;
 unsigned dac_current_rate(void){ return d_rate; }
 static int d_downs;
-void dac_power_down(void (*l)(const char *, ...)){ (void)l; d_rate = 0; d_downs++; }
+void dac_power_down(void (*l)(const char *, ...)){ (void)l; d_rate = 0; d_downs++; seq_add('D'); }
 void dac_attenuation(int v, int g, int bl, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)bl; (void)b; *a = *c = 0; }
-int dac_start(unsigned r, unsigned char a, unsigned char c, void (*l)(const char *, ...)){ (void)a; (void)c; (void)l; d_rate = r; d_starts++; return 0; }
+int dac_start(unsigned r, unsigned char a, unsigned char c, void (*l)(const char *, ...)){ (void)a; (void)c; (void)l; d_rate = r; d_starts++; seq_add('S'); return 0; }
 
 static double mono_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + (double)t.tv_nsec / 1e9; }
 
@@ -446,12 +450,23 @@ static void test_playback(void){
     /* analog and digital at once: the DAC joins the running stream */
     e_state = ENG_PLAY; pb_engine_event();
     CHECK(pl_core_handle(&c, "0d01000C0005", 12) == 0);
-    pb_route();
+    seq[0] = 0; pb_route();
     CHECK(pb_aux() && pb_digital() && e_out_aux == 1 && e_out_dig == 1 && d_rate == 96000 && d_starts == starts + 1);
+    CHECK(!strcmp(seq, "HSR") && !e_held);                     /* S/PDIF closed while the DAC starts, then reopened */
+    /* analog off while digital plays: S/PDIF closed around the DAC's power-down, then reopened (device 2026-11-25) */
+    CHECK(pl_core_handle(&c, "0d01000C0004", 12) == 0);
+    seq[0] = 0; pb_route();
+    CHECK(!pb_aux() && pb_digital() && e_out_dig == 1 && e_out_aux == 0 && !strcmp(seq, "HDR") && !e_held);
+    CHECK(!strcmp(mix_last, "LO2_MUX") && mix_last_v == 13);   /* its route set again before it opens */
+    CHECK(pl_core_handle(&c, "0d01000C0005", 12) == 0);
+    seq[0] = 0; pb_route();
+    CHECK(pb_aux() && pb_digital() && !strcmp(seq, "HSR"));
+    starts = d_starts;
     /* digital off: closed first, then its mixer route goes */
     CHECK(pl_core_handle(&c, "0d01000C0001", 12) == 0);
-    pb_route();
+    seq[0] = 0; pb_route();
     CHECK(pb_aux() && !pb_digital() && e_out_dig == 0 && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 0);
+    CHECK(seq[0] == 0);                                        /* the DAC stays as it is: nothing held */
     /* nothing on: no output in MPD, the DAC powered down */
     downs = d_downs;
     CHECK(pl_core_handle(&c, "0d01000C0000", 12) == 0);
