@@ -186,6 +186,18 @@ nothing next, the player (`playback.c` `list_ended`):
 - Streams are not counted in history, statistics or Last.fm (`mdb_is_stream_path`).
 - Host-tested (playback_test `test_list_end`); not checked on a Disc.
 
+## S/PDIF (optical out)
+
+2026-11-25 (Jo: a TOSLINK cable to an external DAC was silent; the own player ignored 0666 4 and always played to
+the analog DAC on hw:0,3). The stock player plays S/PDIF on **hw:0,4** (DMA4) and sets **`LO2_MUX` = 13**
+(mq_player `set_out_device` 0x47bf24, out mode 4: the card is found in /proc/asound/cards, device 4; read from the
+binary, not measured). The DAC route is DMA3 -> `LO3_MUX` = 12 the same way. The own player now has a fifth MPD
+output `spdif` (hw:0,4, S32_LE like the DAC): 0666 4 sets `spdif` in the core, and AUX then plays on that output with
+`LO2_MUX` = 13 instead of starting the DAC (`playback.c` `prepare`, `engine.c` `eng_set_spdif`); 0666 6 goes back.
+Bluetooth is left as it is. The level is fixed (the external DAC sets the volume). The switch is Settings > Audio >
+Outputs > Optical (S/PDIF) (cfg `spdif`, through the stock form in modes.c: pause, PCM quiet, 0666, 0657 8, play on);
+it is off again after a player restart, as the route always was. Host-tested; not yet heard on a Disc.
+
 ## Next
 
 Web radio: use MPD's ICY title instead of the UI's poll. Bluetooth: bluealsa plugin built into MPD as the primary way (Jo 2026-11-15; needs a static

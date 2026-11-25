@@ -122,8 +122,10 @@ static void tell_state(int state, int force){
     g_told = s;
 }
 /* before MPD opens the PCM: the DAC start sequence for this rate (eng_set_prepare) */
+static int g_spdif;                 /* AUX is the S/PDIF out (C->spdif, pb_route): no DAC start, its own mixer route */
 static void prepare(unsigned rate){
     if(!g_aux) return;
+    if(g_spdif){ mix_route_spdif(L); return; }   /* DMA4 -> S/PDIF; the level is fixed, nothing to start */
     mix_route_dac(L);                        /* DMA3 -> DAC; without it hw_params fails (mixer.h) */
     if(rate == dac_current_rate()) return;
     unsigned char a, l; pb_attenuation(&a, &l);
@@ -167,6 +169,7 @@ void pb_init(pl_core_t *c, const char *song_db, const char *sysconfig_db, pb_log
     srandom((unsigned)time(NULL) ^ (unsigned)(now_s() * 1000.0));
     eng_set_prepare(prepare);
     list_drop();
+    g_spdif = 0; eng_set_spdif(0);
     g_bt = 0; g_aux = 1; g_bt_codec = -1; g_bt_mac[0] = 0; g_bt_rate = 0; g_bt_sel[0] = g_bt_avail[0] = 0; g_cs_pid = -1;
     g_next = g_pending = -1; g_es_valid = 0; g_told = -1; g_announce = 0; g_mem_ok = 0; g_rs = 0; g_rs_flag_t = 0;
     g_upn = g_cur_up = g_next_up = g_pend_up = g_up_party = g_solo = g_next_rep = 0; g_up_seq = 0; g_up_ngone = 0;
@@ -413,7 +416,7 @@ static void announce(const eng_status_t *s){
 static void update_status(void){
     eng_status_t s;
     if(eng_status(&s) != 0) return;
-    if(g_aux && s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
+    if(g_aux && !g_spdif && s.state == ENG_PLAY && s.rate && s.rate != dac_current_rate()){
         unsigned char a, l; pb_attenuation(&a, &l);
         dac_start(s.rate, a, l, L);
     }
@@ -602,12 +605,13 @@ void pb_route(void){
         g_bt_codec = C->bt_codec;
         bt_read();
     }
+    if(C->spdif != g_spdif){ g_spdif = C->spdif; eng_set_spdif(g_spdif); if(aux) g_aux = 0; }   /* AUX moves: set it up anew */
     if(aux && !g_aux && g_es_valid && g_es.state != ENG_STOP && g_es.rate){
         g_aux = 1;                                      /* the DAC joins a running stream: its start sequence first */
         prepare(g_es.rate);
     }
     g_aux = aux; g_bt = bt;
-    L("route: %s%s%s, link at %u Hz", aux ? "DAC" : "", aux && bt ? " + " : "", bt ? g_bt_mac : "", bt ? g_bt_rate : 0);
+    L("route: %s%s%s, link at %u Hz", aux ? (g_spdif ? "S/PDIF" : "DAC") : "", aux && bt ? " + " : "", bt ? g_bt_mac : "", bt ? g_bt_rate : 0);
     if(g_cs_pid < 0) eng_output(aux, bt, g_bt_rate);    /* during a codec switch pb_tick sets the outputs once it is done */
     if(bt) bto_volume(g_bt_mac, C->vol_bt, PL_VOL_MAX, L);
 }

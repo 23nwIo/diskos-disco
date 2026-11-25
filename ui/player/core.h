@@ -12,6 +12,7 @@
                                     * the own player takes the station with 0d10 */
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
 #define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
+#define PL_ROUTE_SPDIF 4           /* 0666: S/PDIF (the optical out): AUX plays there instead of the DAC */
 #define PL_VOL_MAX    120
 /* 0d05: what connecting and disconnecting does to the outputs (Settings > Audio > Outputs > Auto Outputs) */
 #define PL_AUTO_OFF    0           /* nothing: the choice stays as it is; a device that is not on gets a notice */
@@ -78,6 +79,7 @@ typedef struct {
      * AUX off; 0d01 sets both by hand. Each has its own volume; core.volume (what the UI shows) is the lead output's:
      * Bluetooth when it is on, else AUX. The volume keys and 0715 move both volumes by the same step, on or off. */
     int out_aux, out_bt;
+    int spdif;                     /* 0666 4: AUX is the S/PDIF out (until 0666 6) */
     int vol_aux, vol_bt;           /* 0..max_volume */
     int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3); 0666 6 (the UI routed
                                     * away, or the headphones' link is gone) clears it. out_bt may stay 1 without it: the

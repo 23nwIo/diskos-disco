@@ -78,6 +78,8 @@ int eng_cmd(const char *c, char *out, unsigned cap){            /* "stop" and "c
 }
 static int e_out_bt = 0, e_out_aux = 1, e_outputs_calls; static unsigned e_out_rate;
 int eng_output(int aux, int bt, unsigned rate){ e_out_aux = aux; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
+static int e_spdif;
+void eng_set_spdif(int on){ e_spdif = on; }
 static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8], bt_sel[16] = "SBC";
 static int bt_codec_started = -1;
 int bto_info(const char *mac, unsigned *rate, char *sel, size_t selcap, char *avail, size_t availcap, bto_log_fn log){
@@ -97,7 +99,10 @@ int bto_codec_start(const char *mac, int value, bto_log_fn log){   /* a child th
 }
 int bto_volume(const char *mac, int v, int max, bto_log_fn log){ (void)mac; (void)max; (void)log; bt_vol_set = v; return 0; }
 void bto_codec(const char *mac, int value, bto_log_fn log){ (void)mac; (void)log; snprintf(bt_codec_asked, sizeof bt_codec_asked, "%d", value); }
-int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(const char *, ...)){ (void)dev; (void)name; (void)value; (void)log; return 0; }
+static char mix_last[32]; static unsigned mix_last_v;
+int mix_set_enum(const char *dev, const char *name, unsigned value, void (*log)(const char *, ...)){
+    (void)dev; (void)log; snprintf(mix_last, sizeof mix_last, "%s", name); mix_last_v = value; return 0;
+}
 static unsigned d_rate; static int d_starts;
 unsigned dac_current_rate(void){ return d_rate; }
 void dac_attenuation(int v, int g, int bl, int b, unsigned char *a, unsigned char *c){ (void)v; (void)g; (void)bl; (void)b; *a = *c = 0; }
@@ -429,6 +434,15 @@ static void test_playback(void){
     CHECK(bt_codec_started == -1);                            /* already AAC: nothing to do */
     c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
     CHECK(!pb_bluetooth() && e_out_bt == 0 && e_out_aux == 1);
+    /* S/PDIF (0666 4): AUX plays on hw:0,4 with LO2_MUX = 13, the DAC is not started */
+    CHECK(pl_core_handle(&c, "0666000C0004", 12) == 0 && c.spdif == 1);
+    starts = d_starts; pb_route();
+    CHECK(e_spdif == 1 && e_out_aux == 1 && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 13 && d_starts == starts);
+    CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && d_starts == starts && !strcmp(mix_last, "LO2_MUX"));
+    CHECK(pl_core_handle(&c, "0666000C0006", 12) == 0 && c.spdif == 0);
+    c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
+    CHECK(e_spdif == 0 && e_out_aux == 1);
+    CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && !strcmp(mix_last, "LO3_MUX") && mix_last_v == 12);
     /* headphones pulled */
     e_state = ENG_PLAY; pb_engine_event();
     CHECK(pb_transport(PL_T_PAUSE, 0) == 0 && e_state == ENG_PAUSE);

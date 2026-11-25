@@ -19,6 +19,7 @@
 
 static pid_t g_pid = -1;
 static int g_out_aux = 1, g_out_bt;        /* the outputs in use: the DAC, Bluetooth at g_out_rate */
+static int g_spdif;                        /* AUX plays on S/PDIF instead of the DAC (eng_set_spdif) */
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
 static eng_log_fn g_log;
@@ -51,9 +52,21 @@ static const char CONF[] =
     "audio_output {\n  type \"pipe\"\n  name \"bt48\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 48000\"\n"
     "  format \"48000:16:2\"\n}\n"
     "audio_output {\n  type \"pipe\"\n  name \"bt96\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 96000\"\n"
-    "  format \"96000:16:2\"\n}\n";
+    "  format \"96000:16:2\"\n}\n"
+    /* S/PDIF (the optical out in the 3.5 mm jack): the stock player plays it on DMA4 = hw:0,4 with LO2_MUX = 13
+     * (mq_player set_out_device, out mode 4 SPDIF_TX; playback.c prepare). Same sample format as the DAC; the level
+     * is fixed (the external DAC sets the volume). */
+    "audio_output {\n"
+    "  type \"alsa\"\n"
+    "  name \"spdif\"\n"
+    "  device \"hw:0,4\"\n"
+    "  mixer_type \"none\"\n"
+    "  auto_resample \"no\"\n"
+    "  auto_format \"no\"\n"
+    "  format \"*:32:*\"\n"
+    "}\n";
 /* MPD's output ids: the order above */
-enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_N };
+enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_SPDIF, OUT_N };
 
 /* The Bluetooth pipe's command: the device's aplay with the BlueALSA plugin, to the headphones in ENG_BT_DEV, through
  * "plug" so that a link at another rate or sample format still opens. $1 = the stream rate. aplay's messages go to
@@ -200,25 +213,27 @@ static int cmd(const char *c){
     return x == 0 ? 0 : -1;
 }
 
+void eng_set_spdif(int on){ g_spdif = on ? 1 : 0; }
 int eng_output(int aux, int bt, unsigned rate){
     g_out_aux = aux; g_out_bt = bt; g_out_rate = rate;
     if(!eng_ready()) return -1;
     int bt_out = rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
+    int aux_out = g_spdif ? OUT_SPDIF : OUT_DAC;
     char line[32], r[256];
     int fail = 0;
     /* off first, so a Bluetooth output that is switched (another rate) or reopened (a new codec) is closed before */
     for(int i = 0; i < OUT_N; i++){
-        if((i == OUT_DAC && aux) || (i == bt_out && bt)) continue;
+        if((i == aux_out && aux) || (i == bt_out && bt)) continue;
         snprintf(line, sizeof line, "disableoutput %d", i);
         xcmd(line, r, sizeof r);
     }
     for(int i = 0; i < OUT_N; i++){
-        if(!((i == OUT_DAC && aux) || (i == bt_out && bt))) continue;
+        if(!((i == aux_out && aux) || (i == bt_out && bt))) continue;
         snprintf(line, sizeof line, "enableoutput %d", i);
         int x = xcmd(line, r, sizeof r);
         if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); fail = 1; }
     }
-    g_log("engine: outputs%s%s%s", aux ? " dac" : "", bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
+    g_log("engine: outputs%s%s%s", aux ? (g_spdif ? " spdif" : " dac") : "", bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
           aux || bt ? "" : " none");
     return fail ? -1 : 0;
 }

@@ -376,9 +376,7 @@ static void apply_replay_gain(int v){ ui_set_replay_gain(v); }
 static void apply_gain(int v){ ui_set_gain(v); }
 static void apply_dac_filter(int v){ ui_set_dac_filter(v); }
 static void apply_gapless(int v){ ui_set_gapless(v); }
-#ifdef DISKOS_TEST_OUTPUTS
 static void apply_spdif(int v){ ui_set_output(v); }   /* SPDIF: stock toggle form: pause -> silent -> 0666 -> 0657 8 -> resume (modes.c); the toggle then mirrors the real route */
-#endif
 static void apply_memory(int v){ ui_set_memory(v); }
 static void apply_maxvol(int v){ ui_set_maxvol(v); }
 static void apply_balance(int v){ ui_set_balance(v); }
@@ -1132,10 +1130,9 @@ static const setting_t TABLE[] = {
       "The volume keys move both volumes by the same step, whether the output is on or not.", NULL },
     { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
-#ifdef DISKOS_TEST_OUTPUTS   /* device-unverified: test builds only */
-    { "Audio",    "SPDIF Output", ST_TOGGLE, "spdif",   0,1,1, NULL,0, NULL, apply_spdif, 0,
-      "Use digital SPDIF instead of the internal DAC. Switching briefly pauses playback.", NULL },
-#endif
+    /* the own player only (the Outputs page); the stock player's S/PDIF switch stays untested (modes.c) */
+    { "Outputs",  "Optical (S/PDIF)", ST_TOGGLE, "spdif", 0,1,1, NULL,0, NULL, apply_spdif, 0,
+      "AUX plays digital S/PDIF on the 3.5 mm jack (a mini-TOSLINK plug) instead of the DAC. The level is fixed: the external DAC sets the volume. Off again after a restart.", NULL },
     {"Music screen","Text",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musictext,0,"Track font and alignment",NULL},
     {"Music screen","Information",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicinfo,0,"Clock, album and track details",NULL},
     {"Music screen","Progress",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicprogress,0,"Progress colour and shape",NULL},

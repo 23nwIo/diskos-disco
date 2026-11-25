@@ -258,7 +258,14 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
     }
     case 0x0666:
         if(v < 0){ c->bad_frames++; logf_(c, "output route: bad frame"); return -1; }
-        if(v != PL_ROUTE_DAC && v != PL_ROUTE_BT){ logf_(c, "output route %d: not supported by the own player yet, ignored", v); return 0; }
+        if(v != PL_ROUTE_DAC && v != PL_ROUTE_BT && v != PL_ROUTE_SPDIF){ logf_(c, "output route %d: not supported by the own player yet, ignored", v); return 0; }
+        if(v == PL_ROUTE_SPDIF){   /* AUX goes digital; Bluetooth and the route stay as they are (the UI sends this only
+                                    * without Bluetooth: ui/main.c ui_output_blocked) */
+            if(!c->spdif) logf_(c, "output route = 4 (S/PDIF: AUX plays on the optical out)");
+            c->spdif = 1; c->route_seq++;
+            return 0;
+        }
+        if(v == PL_ROUTE_DAC) c->spdif = 0;
         c->route = v; c->route_seq++;
         logf_(c, "output route = %d (%s)", v, v == PL_ROUTE_BT ? "Bluetooth" : "DAC");
         if(v == PL_ROUTE_BT){ c->bt_auto = 1; return 0; }

@@ -15,6 +15,11 @@ typedef void (*mix_log_fn)(const char *fmt, ...);
 
 /* Set an enumerated mixer control by name (iface MIXER). 0, or -errno. Logs only a change or a failure. */
 int mix_set_enum(const char *dev, const char *name, unsigned value, mix_log_fn log);
+/* S/PDIF: the stock player plays it on hw:0,4 and sets LO2_MUX = 13 (mq_player set_out_device, out mode 4; read from
+ * the binary 2026-11-25, not measured): DMA4 -> the S/PDIF transmitter, as DMA3 = 12 -> the DAC. */
+#define MIX_SPDIF_MUX "LO2_MUX"
+#define MIX_SPDIF_DMA4 13
+static inline int mix_route_spdif(mix_log_fn log){ return mix_set_enum(MIX_CTL_DEV, MIX_SPDIF_MUX, MIX_SPDIF_DMA4, log); }
 /* The route for local playback on hw:0,3 (DMA3 -> DAC). */
 static inline int mix_route_dac(mix_log_fn log){ return mix_set_enum(MIX_CTL_DEV, MIX_DMA3_MUX, MIX_DMA3_DAC, log); }
 #endif

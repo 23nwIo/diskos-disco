@@ -107,7 +107,10 @@ static void test_core(void){
     CHECK(send1(&c, "0657000C0008") == 0 && c.work_mode == 8 && nsent == 1 && !strcmp(sent[0], "a607000C0008"));
     CHECK(send1(&c, "0657000C0008") == 0 && nsent == 1);
     CHECK(send1(&c, "0657000C0006") == 0 && c.work_mode == 8 && nsent == 1);
-    CHECK(send1(&c, "0666000C0004") == 0 && c.route == -1);          /* S/PDIF: not yet */
+    unsigned rs0 = c.route_seq;
+    CHECK(send1(&c, "0666000C0004") == 0 && c.route == -1 && c.spdif == 1 && c.route_seq == rs0 + 1);   /* S/PDIF: AUX digital */
+    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && c.spdif == 0);                              /* back to the DAC */
+    c.route = -1;
     unsigned rs = c.route_seq;
     CHECK(send1(&c, "0666000C0002") == 0 && c.route == 2 && c.route_seq == rs + 1);
     /* 06b3: codec + the headphones' MAC (ui/bt.c bt_codec_frame_value) */
