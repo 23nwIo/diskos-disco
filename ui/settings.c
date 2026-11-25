@@ -180,7 +180,7 @@ static int own_player_cached(void){
 static opl_outputs_t g_out;
 static uint32_t g_out_t;
 /* what was just asked: shown until the player's file says so (it applies it within a quarter second) or 2 s pass */
-static int g_outp_aux = -1, g_outp_bt = -1, g_outp_va = -1, g_outp_vb = -1;
+static int g_outp_aux = -1, g_outp_bt = -1, g_outp_dig = -1, g_outp_va = -1, g_outp_vb = -1, g_outp_vd = -1;
 static uint32_t g_outp_t;
 static const opl_outputs_t *outputs_now(void){
     static opl_outputs_t v;
@@ -193,9 +193,11 @@ static const opl_outputs_t *outputs_now(void){
     if(now - g_outp_t < 2000){
         if(g_outp_aux >= 0) v.aux = g_outp_aux;
         if(g_outp_bt >= 0) v.bt = g_outp_bt;
+        if(g_outp_dig >= 0) v.dig = g_outp_dig;
         if(g_outp_va >= 0) v.vol_aux = g_outp_va;
         if(g_outp_vb >= 0) v.vol_bt = g_outp_vb;
-    } else g_outp_aux = g_outp_bt = g_outp_va = g_outp_vb = -1;
+        if(g_outp_vd >= 0) v.vol_dig = g_outp_vd;
+    } else g_outp_aux = g_outp_bt = g_outp_dig = g_outp_va = g_outp_vb = g_outp_vd = -1;
     return &v;
 }
 /* main.c, every second: with Auto Outputs off the player leaves the outputs alone when a plug goes in or headphones
@@ -209,6 +211,7 @@ void settings_outputs_notice_tick(void){
     seen = o->notice_seq;
     if(o->notice == 1) ui_toast(tr("AUX connected, but not enabled. See Audio > Outputs"));
     else if(o->notice == 2) ui_toast(tr("Bluetooth connected, but not enabled. See Audio > Outputs"));
+    else if(o->notice == 3) ui_toast(tr("No output is on. See Audio > Outputs"));
 }
 /* main.c: the player's volume report (a714) follows a change made here (an output switched, an output's volume): no
  * volume overlay for it, the page shows the value itself */
@@ -216,34 +219,37 @@ int settings_outputs_recent(void){ return g_outp_t && lv_tick_get() - g_outp_t <
 static int out_send(const char *tag, int v){ char f[16]; snprintf(f, sizeof f, "%s000C%04X", tag, (unsigned)v); return ipc_send_cmd(f); }
 /* NULL when sent, else why not (the page toasts it, Remote Control answers it); OUT_NOT_TAKEN: ipc already told the user */
 static const char OUT_NOT_TAKEN[] = "The player didn't take it";
-static const char *out_set_why(int aux, int bt){
-    if(!aux && !bt) return "One output stays on";
-    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0)) < 0) return OUT_NOT_TAKEN;
-    g_outp_aux = aux; g_outp_bt = bt; g_outp_t = lv_tick_get();
+/* the outputs on: AUX analog, Bluetooth, AUX digital, any of them or none (the player then waits, paused) */
+static const char *out_set_why(int aux, int bt, int dig){
+    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0) | (dig ? 4 : 0)) < 0) return OUT_NOT_TAKEN;
+    g_outp_aux = aux; g_outp_bt = bt; g_outp_dig = dig; g_outp_t = lv_tick_get();
     return NULL;
 }
 static const char *out_bt_why(int v){
-    if(v && !outputs_now()->bt_ready) return "Connect Bluetooth headphones first";
-    return out_set_why(outputs_now()->aux, v);
+    const opl_outputs_t *o = outputs_now();
+    if(v && !o->bt && !o->bt_ready) return "Connect Bluetooth headphones first";
+    return out_set_why(o->aux, v, o->dig);
 }
-static void out_set(int aux, int bt){ const char *w = out_set_why(aux, bt); if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w)); }
-static void apply_out_aux(int v){ out_set(v, outputs_now()->bt); }
-static void apply_out_bt(int v){ const char *w = out_bt_why(v); if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w)); }
+static void out_toast(const char *w){ if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w)); }
+static void apply_out_aux(int v){ const opl_outputs_t *o = outputs_now(); out_toast(out_set_why(v, o->bt, o->dig)); }
+static void apply_out_bt(int v){ out_toast(out_bt_why(v)); }
+static void apply_out_dig(int v){ const opl_outputs_t *o = outputs_now(); out_toast(out_set_why(o->aux, o->bt, v)); }
 /* the sliders send while they are dragged, at most every 80 ms; the last value always goes out (a short timer) */
-static int g_outv_want[2] = { -1, -1 }, g_outv_sent[2] = { -1, -1 };
+static int g_outv_want[3] = { -1, -1, -1 }, g_outv_sent[3] = { -1, -1, -1 };   /* AUX analog, Bluetooth, AUX digital */
 static uint32_t g_outv_t;
 static lv_timer_t *g_outv_tm;
 static void outv_flush(void){
-    for(int i = 0; i < 2; i++){
+    static const char *const TAG[3] = { "0d02", "0d03", "0d07" };
+    for(int i = 0; i < 3; i++){
         if(g_outv_want[i] < 0 || g_outv_want[i] == g_outv_sent[i]) continue;
-        if(out_send(i ? "0d03" : "0d02", g_outv_want[i]) == 0) g_outv_sent[i] = g_outv_want[i];
+        if(out_send(TAG[i], g_outv_want[i]) == 0) g_outv_sent[i] = g_outv_want[i];
     }
     g_outv_t = lv_tick_get();
 }
 static void outv_tm_cb(lv_timer_t *t){ (void)t; g_outv_tm = NULL; outv_flush(); }
 static void out_volume(int which, int v){
     g_outv_want[which] = v;
-    if(which) g_outp_vb = v; else g_outp_va = v;
+    if(which == 2) g_outp_vd = v; else if(which) g_outp_vb = v; else g_outp_va = v;
     g_outp_t = lv_tick_get();
     if(lv_tick_get() - g_outv_t >= 80){ outv_flush(); return; }
     if(!g_outv_tm){ g_outv_tm = lv_timer_create(outv_tm_cb, 100, NULL); lv_timer_set_repeat_count(g_outv_tm, 1); }
@@ -257,9 +263,9 @@ static void apply_hp_vol(int v){ if(own_player_cached()) out_send("0d06", v); }
 static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d11 + the station (0d12) */
 /* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
  * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
- * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX, 2 Bluetooth (v 0/1), 3 AUX volume, 4 Bluetooth volume
- * (0..120), 5 Auto Outputs (0..2), 6 this connection's codec (0..4: SBC, AAC, LDAC, aptX, aptX HD), as rmt_out_t
- * numbers them; 0, or -1 with *why. */
+ * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX analog, 2 Bluetooth, 7 AUX digital (v 0/1), 3 AUX analog
+ * volume, 4 Bluetooth volume, 8 AUX digital volume (0..120), 5 Auto Outputs (0..2), 6 this connection's codec (0..4:
+ * SBC, AAC, LDAC, aptX, aptX HD), as rmt_out_t numbers them; 0, or -1 with *why. */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out){
     if(!own_player_cached()) return -1;
     *o = *outputs_now();
@@ -272,9 +278,10 @@ int settings_outputs_cmd(int what, int v, const char **why){
     const char *w = NULL;
     if(!own_player_cached()) w = "Outputs need the own player (Settings > About > Player)";
     else switch(what){
-    case 1: w = out_set_why(v, outputs_now()->bt); break;
+    case 1: w = out_set_why(v, outputs_now()->bt, outputs_now()->dig); break;
     case 2: w = out_bt_why(v); break;
-    case 3: case 4: if(v < 0 || v > 120){ w = "Volume 0-120"; break; } out_volume(what == 4, v); break;
+    case 7: w = out_set_why(outputs_now()->aux, outputs_now()->bt, v); break;
+    case 3: case 4: case 8: if(v < 0 || v > 120){ w = "Volume 0-120"; break; } out_volume(what == 4 ? 1 : what == 8 ? 2 : 0, v); break;
     case 6: { int sent; w = out_codec_why(v, &sent); break; }
     case 5:
         if(v < 0 || v > 2){ w = "Unknown choice"; break; }
@@ -288,6 +295,7 @@ int settings_outputs_cmd(int what, int v, const char **why){
 }
 static void apply_out_vol_aux(int v){ out_volume(0, v); }
 static void apply_out_vol_bt(int v){ out_volume(1, v); }
+static void apply_out_vol_dig(int v){ out_volume(2, v); }
 static const char *const OUT_CODEC_OPTS[] = { "SBC", "AAC", "LDAC", "aptX", "aptX HD" };
 static const int OUT_CODEC_VAL[] = { 0, 1, 2, 5, 6 };                     /* ui/bt.c numbering, as 0d04 takes it */
 static const char *const OUT_CODEC_WORD[] = { "SBC", "AAC", "LDAC", "APTX", "APTX-HD" };   /* as BlueALSA spells them */
@@ -349,13 +357,15 @@ int settings_outputs_codecs(int *cur){
 }
 static void apply_grp_outputs(int v);
 static int outputs_row(const setting_t *s){
-    return s->apply == apply_grp_outputs || s->apply == apply_out_aux || s->apply == apply_out_bt || s->apply == apply_out_vol_aux
-        || s->apply == apply_out_vol_bt || s->apply == apply_out_codec;
+    return s->apply == apply_grp_outputs || s->apply == apply_out_aux || s->apply == apply_out_bt || s->apply == apply_out_dig
+        || s->apply == apply_out_vol_aux || s->apply == apply_out_vol_bt || s->apply == apply_out_vol_dig || s->apply == apply_out_codec;
 }
 static int outputs_get(const setting_t *s){
     const opl_outputs_t *o = outputs_now();
     if(s->apply == apply_out_aux) return o->aux;
     if(s->apply == apply_out_bt) return o->bt;
+    if(s->apply == apply_out_dig) return o->dig;
+    if(s->apply == apply_out_vol_dig) return o->vol_dig;
     if(s->apply == apply_out_vol_aux) return o->vol_aux;
     if(s->apply == apply_out_vol_bt) return o->vol_bt;
     if(s->apply == apply_out_codec) return out_codec_index();
@@ -376,7 +386,6 @@ static void apply_replay_gain(int v){ ui_set_replay_gain(v); }
 static void apply_gain(int v){ ui_set_gain(v); }
 static void apply_dac_filter(int v){ ui_set_dac_filter(v); }
 static void apply_gapless(int v){ ui_set_gapless(v); }
-static void apply_spdif(int v){ ui_set_output(v); }   /* SPDIF: stock toggle form: pause -> silent -> 0666 -> 0657 8 -> resume (modes.c); the toggle then mirrors the real route */
 static void apply_memory(int v){ ui_set_memory(v); }
 static void apply_maxvol(int v){ ui_set_maxvol(v); }
 static void apply_balance(int v){ ui_set_balance(v); }
@@ -1035,7 +1044,7 @@ static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",
                                              "Every connected device plays." };
 static const char *const OPT_HPVOL[] = { "Bluetooth only", "All outputs" };
 static const char *const OPT_HPVOL_D[] = { "Only the Bluetooth volume follows them.",
-                                           "The AUX volume moves by the same step." };
+                                           "The AUX volumes move by the same step." };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
 static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 static const char *const D_ARTCACHE[] = {
@@ -1115,24 +1124,25 @@ static const setting_t TABLE[] = {
     { "Audio",    "Balance",     ST_SLIDER, "balance",      -10,10,1, NULL,0, NULL, apply_balance, 0,
       "Left/right channel balance. 0 = centred; negative = left, positive = right.", NULL },
     { "Audio",    "Outputs",     ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_grp_outputs, 0,
-      "AUX and Bluetooth, each on or off, with its own volume.", NULL },
-    { "Outputs",  "AUX",         ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_aux, 1,
-      "The headphone jacks (3.5 mm and 4.4 mm balanced). Auto Outputs says what plugging in does.", NULL },
+      "Bluetooth, AUX analog and AUX digital, each on or off, with its own volume.", NULL },
     { "Outputs",  "Bluetooth",   ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_bt, 0,
-      "The connected Bluetooth headphones; turn both on to play on both. Bluetooth is a little behind AUX.", NULL },
+      "The connected Bluetooth headphones. Several outputs can play at once; Bluetooth is a little behind AUX.", NULL },
+    { "Outputs",  "AUX analog",  ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_aux, 1,
+      "The headphone jacks (3.5 mm and 4.4 mm balanced). Off powers the DAC down. With every output off, playback waits.", NULL },
+    { "Outputs",  "AUX digital", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_dig, 0,
+      "Coaxial S/PDIF on the 3.5 mm jack, to an external DAC. Needs a 4-pole 3.5 mm to RCA cable (signal on the third contact from the tip); a normal stereo plug shorts it. 44.1 or 48 kHz. Off again after a restart.", NULL },
     { "Outputs",  "Auto Outputs", ST_CHOICE, "out_auto", 0,0,0, OPT_OUTAUTO, 3, NULL, apply_out_auto, 1,
-      "What plugging in or connecting headphones does to the outputs; unplugging or disconnecting turns that one off.", OPT_OUTAUTO_D },
+      "What plugging in or connecting headphones does. A plug brings back the AUX outputs that were on last (analog, digital or both).", OPT_OUTAUTO_D },
     { "Outputs",  "Headphone Volume", ST_CHOICE, "hp_vol_all", 0,0,0, OPT_HPVOL, 2, NULL, apply_hp_vol, 0,
       "What the Bluetooth headphones' own volume buttons change, for headphones that send their volume.", OPT_HPVOL_D },
-    { "Outputs",  "AUX Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
-      "The volume keys move both volumes by the same step, whether the output is on or not.", NULL },
     { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,
-      "The volume keys move both volumes by the same step, whether the output is on or not.", NULL },
+      "The volume keys move every volume by the same step, whether the output is on or not.", NULL },
+    { "Outputs",  "Analog Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
+      "The volume keys move every volume by the same step, whether the output is on or not.", NULL },
+    { "Outputs",  "Digital Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_dig, 20,
+      "Set in the player, for external DACs without a volume of their own. The volume keys move it too.", NULL },
     { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
-    /* the own player only (the Outputs page); the stock player's S/PDIF switch stays untested (modes.c) */
-    { "Outputs",  "Coaxial (S/PDIF)", ST_TOGGLE, "spdif", 0,1,1, NULL,0, NULL, apply_spdif, 0,
-      "AUX plays digital S/PDIF (coaxial) on the 3.5 mm jack instead of the DAC. Needs a 4-pole 3.5 mm to RCA cable (signal on the third contact from the tip); a normal stereo cable shorts it. AUX Volume sets its level. Off again after a restart.", NULL },
     {"Music screen","Text",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musictext,0,"Track font and alignment",NULL},
     {"Music screen","Information",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicinfo,0,"Clock, album and track details",NULL},
     {"Music screen","Progress",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicprogress,0,"Progress colour and shape",NULL},

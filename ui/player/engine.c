@@ -18,8 +18,9 @@
 #define ENG_TIMEOUT_MS   3000
 
 static pid_t g_pid = -1;
-static int g_out_aux = 1, g_out_bt;        /* the outputs in use: the DAC, Bluetooth at g_out_rate */
-static unsigned g_spdif;                   /* AUX plays on S/PDIF instead of the DAC: 44100 or 48000, 0 off (eng_set_spdif) */
+static int g_out_dac = 1, g_out_dig, g_out_bt;   /* the outputs in use: the DAC, S/PDIF, Bluetooth at g_out_rate */
+static unsigned g_spdif = 44100;           /* the S/PDIF output's rate: 44100 or 48000 (eng_set_spdif) */
+static unsigned g_blocked;                 /* bumps when a start was held back: no output is on (eng_output) */
 static int g_spdif_pct = -1;               /* its software volume in percent; -1 not set yet (MPD starts at 100) */
 static unsigned g_out_rate;
 static int g_cmd = -1, g_idle = -1, g_dry, g_restarts;
@@ -151,7 +152,7 @@ static int spawn(void){
     char r[256];
     xcmd("consume 0", r, sizeof r);
     xcmd("single 0", r, sizeof r);
-    eng_output(g_out_aux, g_out_bt, g_out_rate);   /* the outputs in use, also after a restart of MPD */
+    eng_output(g_out_dac, g_out_dig, g_out_bt, g_out_rate);   /* the outputs in use, also after a restart of MPD */
     if(g_spdif_pct >= 0){ char l[24]; snprintf(l, sizeof l, "setvol %d", g_spdif_pct); xcmd(l, r, sizeof r); }   /* MPD starts at 100 */
     g_log("engine: connected");
     return 0;
@@ -214,7 +215,7 @@ static int cmd(const char *c){
     return x == 0 ? 0 : -1;
 }
 
-void eng_set_spdif(unsigned rate){ g_spdif = !rate ? 0 : rate % 11025 == 0 ? 44100 : 48000; }   /* 88.2 kHz -> 44.1 */
+void eng_set_spdif(unsigned rate){ g_spdif = !rate || rate % 11025 == 0 ? 44100 : 48000; }   /* 88.2 kHz -> 44.1 */
 int eng_spdif_volume(unsigned pct){
     if(pct > 100) pct = 100;
     g_spdif_pct = (int)pct;
@@ -222,27 +223,40 @@ int eng_spdif_volume(unsigned pct){
     char line[24]; snprintf(line, sizeof line, "setvol %u", pct);
     return cmd(line);                              /* a software mixer takes it even while its output is off */
 }
-int eng_output(int aux, int bt, unsigned rate){
-    g_out_aux = aux; g_out_bt = bt; g_out_rate = rate;
+static int muted(void){ return !g_out_dac && !g_out_dig && !g_out_bt; }
+unsigned eng_blocked_seq(void){ return g_blocked; }
+int eng_output(int dac, int dig, int bt, unsigned rate){
+    int was_muted = muted();
+    g_out_dac = dac; g_out_dig = dig; g_out_bt = bt; g_out_rate = rate;
     if(!eng_ready()) return -1;
     int bt_out = rate == 48000 ? OUT_BT48 : rate == 96000 ? OUT_BT96 : OUT_BT44;
-    int aux_out = g_spdif == 44100 ? OUT_SPDIF44 : g_spdif ? OUT_SPDIF48 : OUT_DAC;
+    int dig_out = g_spdif == 48000 ? OUT_SPDIF48 : OUT_SPDIF44;
     char line[32], r[256];
     int fail = 0;
+    if(muted() && !was_muted && !g_armed){
+        /* nothing to play to: MPD stops (it can't play without an output) and the song waits as a paused start at
+         * its place, so playback sees a pause and a later play goes through start_cur, which holds it back while
+         * no output is on */
+        eng_status_t s;
+        if(g_cur >= 0 && eng_status(&s) == 0 && s.state != ENG_STOP){
+            g_armed = 1; g_armed_ms = s.elapsed_ms;
+            xcmd("stop", r, sizeof r);
+        }
+    }
     /* off first, so a Bluetooth output that is switched (another rate) or reopened (a new codec) is closed before */
     for(int i = 0; i < OUT_N; i++){
-        if((i == aux_out && aux) || (i == bt_out && bt)) continue;
+        if((i == OUT_DAC && dac) || (i == dig_out && dig) || (i == bt_out && bt)) continue;
         snprintf(line, sizeof line, "disableoutput %d", i);
         xcmd(line, r, sizeof r);
     }
     for(int i = 0; i < OUT_N; i++){
-        if(!((i == aux_out && aux) || (i == bt_out && bt))) continue;
+        if(!((i == OUT_DAC && dac) || (i == dig_out && dig) || (i == bt_out && bt))) continue;
         snprintf(line, sizeof line, "enableoutput %d", i);
         int x = xcmd(line, r, sizeof r);
         if(x != 0){ g_log("engine: \"%s\": %s", line, x > 0 ? r : "no answer"); fail = 1; }
     }
-    g_log("engine: outputs%s%s%s", aux ? (g_spdif == 44100 ? " spdif44" : g_spdif ? " spdif48" : " dac") : "", bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "",
-          aux || bt ? "" : " none");
+    g_log("engine: outputs%s%s%s%s", dac ? " dac" : "", dig ? (dig_out == OUT_SPDIF48 ? " spdif48" : " spdif44") : "",
+          bt ? (bt_out == OUT_BT48 ? " bt48" : bt_out == OUT_BT96 ? " bt96" : " bt44") : "", dac || dig || bt ? "" : " none");
     return fail ? -1 : 0;
 }
 
@@ -293,6 +307,11 @@ static unsigned song_rate(int id){
 }
 
 static int start_cur(long ms){
+    if(muted()){                                   /* no output is on: the song waits, paused, at its place */
+        g_armed = 1; g_armed_ms = ms > 0 ? ms : 0; g_blocked++;
+        g_log("engine: no output is on - play held back");
+        return 0;
+    }
     /* The DAC has to be set up for the stream before MPD opens hw:0,3: without the start sequence the driver refuses
      * hw_params with EINVAL (device log 2026-11-15) */
     if(g_prepare){
@@ -352,10 +371,12 @@ int eng_toggle(void){
     eng_status_t s;
     if(eng_status(&s) != 0) return -1;
     if(s.state == ENG_STOP) return g_cur >= 0 ? start_cur(0) : -1;
+    if(s.state == ENG_PAUSE && muted()){ g_blocked++; g_log("engine: no output is on - play held back"); return 0; }
     return cmd(s.state == ENG_PLAY ? "pause 1" : "pause 0");
 }
 int eng_pause(int on){
     if(g_armed) return on ? 0 : eng_toggle();
+    if(!on && muted()){ g_blocked++; g_log("engine: no output is on - play held back"); return 0; }
     return cmd(on ? "pause 1" : "pause 0");
 }
 int eng_seek_ms(long ms){

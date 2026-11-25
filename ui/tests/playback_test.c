@@ -76,8 +76,8 @@ int eng_cmd(const char *c, char *out, unsigned cap){            /* "stop" and "c
     if(!strcmp(c, "clear")){ e_cur[0] = e_next[0] = 0; e_cur_id = e_next_id = -1; }
     return 0;
 }
-static int e_out_bt = 0, e_out_aux = 1, e_outputs_calls; static unsigned e_out_rate;
-int eng_output(int aux, int bt, unsigned rate){ e_out_aux = aux; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
+static int e_out_bt = 0, e_out_aux = 1, e_out_dig = 0, e_outputs_calls; static unsigned e_out_rate;
+int eng_output(int aux, int dig, int bt, unsigned rate){ e_out_aux = aux; e_out_dig = dig; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
 static int e_spdif;
 void eng_set_spdif(unsigned rate){ e_spdif = (int)rate; }
 static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8], bt_sel[16] = "SBC";
@@ -436,16 +436,30 @@ static void test_playback(void){
     CHECK(bt_codec_started == -1);                            /* already AAC: nothing to do */
     c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
     CHECK(!pb_bluetooth() && e_out_bt == 0 && e_out_aux == 1);
-    /* S/PDIF (0666 4): AUX plays on hw:0,4 with LO2_MUX = 13, the DAC is not started */
-    CHECK(pl_core_handle(&c, "0666000C0004", 12) == 0 && c.spdif == 1);
+    /* AUX digital (0d01 4): S/PDIF on hw:0,4 with LO2_MUX = 13; AUX analog off powers the DAC down */
+    CHECK(pl_core_handle(&c, "0d01000C0004", 12) == 0 && c.out_dig == 1 && c.out_aux == 0);
     starts = d_starts; int downs = d_downs; pb_route();
-    CHECK(e_spdif > 0 && e_out_aux == 1 && d_starts == starts && d_downs == downs + 1 && d_rate == 0);   /* the DAC off */
+    CHECK(pb_digital() && !pb_aux() && e_out_dig == 1 && e_out_aux == 0 && d_downs == downs + 1 && d_rate == 0);
     CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && d_starts == starts && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 13);
     CHECK(e_spdif == 44100);                                   /* the song's rate picks the output */
     CHECK(pb_play_list(QD_ALBUM, 1, "Mixed") == 0 && e_spdif == 96000 && d_starts == starts);   /* engine.c maps it to 48 kHz */
-    CHECK(pl_core_handle(&c, "0666000C0006", 12) == 0 && c.spdif == 0);
-    c.route = PL_ROUTE_DAC; c.out_bt = 0; pb_route();
-    CHECK(e_spdif == 0 && e_out_aux == 1);
+    /* analog and digital at once: the DAC joins the running stream */
+    e_state = ENG_PLAY; pb_engine_event();
+    CHECK(pl_core_handle(&c, "0d01000C0005", 12) == 0);
+    pb_route();
+    CHECK(pb_aux() && pb_digital() && e_out_aux == 1 && e_out_dig == 1 && d_rate == 96000 && d_starts == starts + 1);
+    /* digital off: closed first, then its mixer route goes */
+    CHECK(pl_core_handle(&c, "0d01000C0001", 12) == 0);
+    pb_route();
+    CHECK(pb_aux() && !pb_digital() && e_out_dig == 0 && !strcmp(mix_last, "LO2_MUX") && mix_last_v == 0);
+    /* nothing on: no output in MPD, the DAC powered down */
+    downs = d_downs;
+    CHECK(pl_core_handle(&c, "0d01000C0000", 12) == 0);
+    pb_route();
+    CHECK(!pb_aux() && !pb_digital() && !pb_bluetooth() && e_out_aux == 0 && e_out_dig == 0 && e_out_bt == 0 && d_downs == downs + 1);
+    CHECK(pl_core_handle(&c, "0d01000C0001", 12) == 0);
+    pb_route();
+    CHECK(e_out_aux == 1);
     CHECK(pb_play_list(QD_ALBUM, 1, "Alpha") == 0 && !strcmp(mix_last, "LO3_MUX") && mix_last_v == 12 && d_rate == 44100);   /* started again */
     /* headphones pulled */
     e_state = ENG_PLAY; pb_engine_event();

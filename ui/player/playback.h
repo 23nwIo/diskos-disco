@@ -46,13 +46,16 @@ void pb_tick(double now);
  * flag_path: created while a resumed song has not played 10 s yet, removed then and by pb_shutdown; found at the
  * next start, it means the last resume crashed or hung the player, and that resume is skipped (NULL: no check). */
 void pb_resume_begin(int (*mounted)(void), const char *flag_path);
-/* The outputs changed (core out_aux / out_bt / route / bt_mac / bt_codec): MPD plays to the DAC, the Bluetooth
- * headphones or both (engine.c eng_output, btout.c). pb_bluetooth / pb_aux: 1 while playing to Bluetooth / the DAC;
+/* The outputs changed (core out_aux / out_dig / out_bt / route / bt_mac / bt_codec): MPD plays to any of the DAC
+ * (AUX analog; powered down while off), S/PDIF (AUX digital) and the Bluetooth headphones, or to none (playback then
+ * waits, paused: engine.c eng_output; btout.c). pb_bluetooth / pb_aux / pb_digital: 1 while playing to Bluetooth /
+ * the DAC / S/PDIF;
  * pb_bt_mac: the headphones' MAC; pb_bt_codec / pb_bt_codecs: the link's codec and the ones the headphones offer
  * ("LDAC", "SBC AAC LDAC"; "" when not on Bluetooth). */
 void pb_route(void);
 int pb_bluetooth(void);
 int pb_aux(void);
+int pb_digital(void);
 const char *pb_bt_mac(void);
 const char *pb_bt_codec(void);
 const char *pb_bt_codecs(void);

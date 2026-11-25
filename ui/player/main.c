@@ -187,21 +187,22 @@ static void vol_key(pl_core_t *c, int which, int dir, double t){
 static void load_volumes(pl_core_t *c){
     FILE *f = fopen(OPL_VOLUMES, "re");
     if(!f){ if(errno != ENOENT) logmsg("outputs: open %s: %s", OPL_VOLUMES, strerror(errno)); return; }
-    int va = c->vol_aux, vb = c->vol_bt;
+    int va = c->vol_aux, vb = c->vol_bt, vd = -1;
     char l[64];
     while(fgets(l, sizeof l, f)){
         if(!strncmp(l, "vol_aux=", 8)) va = atoi(l + 8);
         else if(!strncmp(l, "vol_bt=", 7)) vb = atoi(l + 7);
+        else if(!strncmp(l, "vol_dig=", 8)) vd = atoi(l + 8);
     }
     fclose(f);
-    pl_core_load_volumes(c, va, vb);
-    logmsg("outputs: volumes AUX %d, Bluetooth %d (%s)", c->vol_aux, c->vol_bt, OPL_VOLUMES);
+    pl_core_load_volumes(c, va, vb, vd >= 0 ? vd : va);          /* a file from before AUX digital: as AUX */
+    logmsg("outputs: volumes AUX %d, digital %d, Bluetooth %d (%s)", c->vol_aux, c->vol_dig, c->vol_bt, OPL_VOLUMES);
 }
 static void save_volumes(const pl_core_t *c){
     char tmp[sizeof OPL_VOLUMES + 8];
     snprintf(tmp, sizeof tmp, "%s.tmp", OPL_VOLUMES);
     FILE *f = fopen(tmp, "we");
-    if(!f || fprintf(f, "vol_aux=%d\nvol_bt=%d\n", c->vol_aux, c->vol_bt) < 0 || fflush(f) != 0 || fsync(fileno(f)) != 0){
+    if(!f || fprintf(f, "vol_aux=%d\nvol_bt=%d\nvol_dig=%d\n", c->vol_aux, c->vol_bt, c->vol_dig) < 0 || fflush(f) != 0 || fsync(fileno(f)) != 0){
         logmsg("outputs: write %s: %s", tmp, strerror(errno));
         if(f) fclose(f);
         return;
@@ -212,9 +213,9 @@ static void save_volumes(const pl_core_t *c){
 static void write_outputs(const pl_core_t *c, const char *path){
     static char last[512];
     char b[512];
-    snprintf(b, sizeof b, "aux=%d\nbt=%d\nvol_aux=%d\nvol_bt=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\ncodecs=%s\nswitching=%d\n"
-             "auto=%d\nnotice=%u %d\n",
-             pb_aux(), pb_bluetooth(), c->vol_aux, c->vol_bt, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
+    snprintf(b, sizeof b, "aux=%d\nbt=%d\ndig=%d\nvol_aux=%d\nvol_bt=%d\nvol_dig=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\n"
+             "codecs=%s\nswitching=%d\nauto=%d\nnotice=%u %d\n",
+             pb_aux(), pb_bluetooth(), pb_digital(), c->vol_aux, c->vol_bt, c->vol_dig, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
              pb_switching(), c->auto_out, c->notice_seq, c->notice);
     if(!strcmp(b, last)) return;
     char tmp[300];
@@ -228,15 +229,15 @@ static void write_outputs(const pl_core_t *c, const char *path){
 /* "Volume: Main 42, AUX 23, BT 5" on every change, for `tail -f` (Jo 2026-11-16); RAM only (tmpfs), so no flash
  * writes. Main is the volume the UI shows (the lead output's). The UI's log upkeep keeps it small (ui/main.c). */
 static void volume_log(const pl_core_t *c){
-    static int last[3] = { -1, -1, -1 };
-    if(c->volume == last[0] && c->vol_aux == last[1] && c->vol_bt == last[2]) return;
-    last[0] = c->volume; last[1] = c->vol_aux; last[2] = c->vol_bt;
+    static int last[4] = { -1, -1, -1, -1 };
+    if(c->volume == last[0] && c->vol_aux == last[1] && c->vol_bt == last[2] && c->vol_dig == last[3]) return;
+    last[0] = c->volume; last[1] = c->vol_aux; last[2] = c->vol_bt; last[3] = c->vol_dig;
     FILE *f = fopen(OPL_VOLUME_LOG, "ae");
     if(!f){ logmsg("volume log: open %s: %s", OPL_VOLUME_LOG, strerror(errno)); return; }
     time_t now = time(NULL); struct tm tm; char ts[32] = "";
     if(localtime_r(&now, &tm)) strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S ", &tm);
-    fprintf(f, "%sVolume: Main %d, AUX %d%s, BT %d%s\n", ts, c->volume, c->vol_aux, pb_aux() ? "" : " (off)",
-            c->vol_bt, pb_bluetooth() ? "" : " (off)");
+    fprintf(f, "%sVolume: Main %d, AUX %d%s, Digital %d%s, BT %d%s\n", ts, c->volume, c->vol_aux, pb_aux() ? "" : " (off)",
+            c->vol_dig, pb_digital() ? "" : " (off)", c->vol_bt, pb_bluetooth() ? "" : " (off)");
     fclose(f);
 }
 
@@ -344,7 +345,8 @@ int main(int argc, char **argv){
     if(use_wd || getenv("DISKOS_PLAYER_BUS"))                /* host runs (-n) only on a bus they name */
         btav_init(&hp, getenv("DISKOS_PLAYER_BUS"));        /* NULL: the system bus */
     unsigned route_seq = core.route_seq, codec_seq = core.codec_seq;
-    int saved_aux = core.vol_aux, saved_bt = core.vol_bt;
+    int saved_aux = core.vol_aux, saved_bt = core.vol_bt, saved_dig = core.vol_dig;
+    unsigned blocked_seq = eng_blocked_seq();
     double vol_changed = 0;
 
     /* The keys. The stock player grabs them, so the UI never sees them (ui/main.c reads the Power level from the GPIO
@@ -508,12 +510,16 @@ int main(int argc, char **argv){
             dac_set_attenuation(a, l, logmsg);
             att_vol = core.vol_aux; att_gain = gain; att_bal = core.balance; att_curve = curve;
         }
-        if(core.vol_aux != spdif_vol && eng_spdif_volume((unsigned)(core.vol_aux * 100 / PL_VOL_MAX)) == 0)
-            spdif_vol = core.vol_aux;                     /* S/PDIF: the AUX volume as MPD's software volume (engine.c) */
-        if(core.vol_aux != saved_aux || core.vol_bt != saved_bt){
+        if(core.vol_dig != spdif_vol && eng_spdif_volume((unsigned)(core.vol_dig * 100 / PL_VOL_MAX)) == 0)
+            spdif_vol = core.vol_dig;                     /* S/PDIF: the digital volume as MPD's software volume (engine.c) */
+        if(eng_blocked_seq() != blocked_seq){             /* a play was held back: no output is on */
+            blocked_seq = eng_blocked_seq();
+            pl_core_notice(&core, PL_NOTICE_NONE);
+        }
+        if(core.vol_aux != saved_aux || core.vol_bt != saved_bt || core.vol_dig != saved_dig){
             if(!vol_changed) vol_changed = t;
             if(t - vol_changed >= VOL_SAVE_DELAY_S){
-                saved_aux = core.vol_aux; saved_bt = core.vol_bt; vol_changed = 0;
+                saved_aux = core.vol_aux; saved_bt = core.vol_bt; saved_dig = core.vol_dig; vol_changed = 0;
                 if(use_wd) save_volumes(&core);
             }
         }
@@ -556,7 +562,7 @@ int main(int argc, char **argv){
             sleep_at = 0;
             logmsg("power off (sleep timer or held Power key)%s", use_wd ? "" : " (dry run, -n)");
             pb_shutdown();
-            if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt)) save_volumes(&core);
+            if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt || core.vol_dig != saved_dig)) save_volumes(&core);
             hw_power_off(wd, !use_wd, logmsg);
             if(use_wd) logmsg("power off did not happen");
         }
@@ -574,7 +580,7 @@ int main(int argc, char **argv){
     pb_shutdown();
     hw_charge_release(&chg, !use_wd, logmsg);
     btav_close();
-    if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt)) save_volumes(&core);
+    if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt || core.vol_dig != saved_dig)) save_volumes(&core);
     eng_stop();
     pb_close();
     dac_close();

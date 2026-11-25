@@ -21,7 +21,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}input[type=checkbox]{accent
 .tr button.pp{background:var(--acc);color:#fff}
 select,input[type=search],input[type=number],input:not([type]){width:100%;padding:.6em;border-radius:10px;font-size:1em;background:var(--card);color:var(--fg);border:1px solid var(--line)}
 #msg{position:fixed;left:50%;bottom:1em;transform:translateX(-50%);max-width:90%;background:var(--card);border:1px solid var(--line);padding:.5em 1em;border-radius:99px;font-size:.9em;box-shadow:0 2px 12px #0004}#msg:empty{display:none}#msg.err{color:#e66}label{font-size:.85em;color:var(--mut)}
-.hd{display:flex;align-items:center;gap:.5em;margin:.8em 0 .4em}.hd b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hd{display:flex;align-items:center;gap:.5em;margin:.8em 0 .4em}.hd label,.hd b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hd button,.more{border:0;border-radius:10px;padding:.5em .8em;background:var(--card);color:var(--fg);font-size:.95em}
 .hd .pa{background:var(--acc);color:#fff}.hd button:disabled{opacity:.35}
 #list{background:var(--card);border-radius:14px;overflow:hidden}

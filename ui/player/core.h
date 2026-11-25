@@ -12,7 +12,8 @@
                                     * the own player takes the station with 0d10 */
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
 #define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
-#define PL_ROUTE_SPDIF 4           /* 0666: S/PDIF (coaxial, 3.5 mm jack): AUX plays there instead of the DAC */
+#define PL_ROUTE_SPDIF 4           /* 0666: S/PDIF (coaxial, 3.5 mm jack): AUX digital on, AUX analog off (the stock
+                                    * form; the UI uses 0d01) */
 #define PL_VOL_MAX    120
 /* 0d05: what connecting and disconnecting does to the outputs (Settings > Audio > Outputs > Auto Outputs) */
 #define PL_AUTO_OFF    0           /* nothing: the choice stays as it is; a device that is not on gets a notice */
@@ -25,6 +26,11 @@
 #define PL_END_STATION 2           /* the station of 0d12, until something else is played */
 #define PL_NOTICE_AUX  1           /* notice: a plug went in, AUX is off (auto off) */
 #define PL_NOTICE_BT   2           /* notice: headphones connected, Bluetooth is off (auto off) */
+#define PL_NOTICE_NONE 3           /* notice: play was asked, but no output is on (engine.c eng_blocked_seq) */
+/* 0d01 bits: the outputs that are on */
+#define PL_OUT_AUX     1           /* AUX analog: the DAC on the 3.5 mm and 4.4 mm jacks */
+#define PL_OUT_BT      2           /* Bluetooth headphones */
+#define PL_OUT_DIG     4           /* AUX digital: S/PDIF, coaxial on the 3.5 mm jack's ring 2 */
 
 typedef void (*pl_send_fn)(void *ctx, const char *frame, int len);
 typedef void (*pl_log_fn)(void *ctx, const char *msg);
@@ -74,13 +80,17 @@ typedef struct {
     unsigned sleep_seq;            /* bumps on every 0806, so the main loop (re)starts or cancels the timer */
     int jack;                      /* 3.5 mm plug: 1 in, 0 out, -1 not known */
     int bal;                       /* 4.4 mm balanced plug: 1 in, 0 out, -1 not known */
-    /* Outputs (diskOS, own player only; docs/PLAYER_PROTOCOL.md "Outputs"): MPD plays to every output that is on. A
-     * plug going in turns AUX on and Bluetooth off; headphones routed by the UI (0666 2 + 06b3) turn Bluetooth on and
-     * AUX off; 0d01 sets both by hand. Each has its own volume; core.volume (what the UI shows) is the lead output's:
-     * Bluetooth when it is on, else AUX. The volume keys and 0715 move both volumes by the same step, on or off. */
-    int out_aux, out_bt;
-    int spdif;                     /* 0666 4: AUX is the S/PDIF out (until 0666 6) */
-    int vol_aux, vol_bt;           /* 0..max_volume */
+    /* Outputs (diskOS, own player only; docs/PLAYER_PROTOCOL.md "Outputs"): MPD plays to every output that is on:
+     * AUX analog (out_aux, the DAC), AUX digital (out_dig, S/PDIF) and Bluetooth, any of them or none (playback then
+     * waits). A plug going in turns the last AUX choice on (mem_aux / mem_dig) and Bluetooth off; headphones routed by the UI (0666 2 + 06b3) turn
+     * Bluetooth on and AUX off; 0d01 sets them by hand. The Disc can't tell a coaxial cable from headphones, so AUX digital comes
+     * back with a plug only when it was on before. Each has
+     * its own volume; core.volume (what the UI shows) is the lead output's: Bluetooth when it plays, else AUX analog,
+     * else AUX digital. The volume keys and 0715 move all three volumes by the same step, on or off. */
+    int out_aux, out_bt, out_dig;
+    int mem_aux, mem_dig;          /* the last AUX choice with something on (analog, digital or both): a plug going in
+                                    * brings it back (Jo 2026-11-25); 1/0 until one is made */
+    int vol_aux, vol_bt, vol_dig;  /* 0..max_volume */
     int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3); 0666 6 (the UI routed
                                     * away, or the headphones' link is gone) clears it. out_bt may stay 1 without it: the
                                     * choice waits for the headphones and the DAC plays meanwhile (playback.c pb_route) */
@@ -135,8 +145,10 @@ void pl_core_set_volume(pl_core_t *c, int v);
  * 0..max_volume); the UI hears it (a714) when Bluetooth is the lead output. AUX is left alone, unless hp_vol_all (0d06)
  * is set: then AUX moves by the same step. */
 void pl_core_set_bt_volume(pl_core_t *c, int v);
-/* Set both volumes as stored (at start); the UI is told the lead one. */
-void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt);
+/* Set the volumes as stored (at start); the UI is told the lead one. */
+void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt, int vol_dig);
+/* Tell the UI something about the outputs (PL_NOTICE_*): notice/notice_seq, which the main loop writes to OPL_OUTPUTS. */
+void pl_core_notice(pl_core_t *c, int what);
 
 /* Send the current state as an a2 frame (what 0202 answers). */
 void pl_core_send_state(pl_core_t *c);

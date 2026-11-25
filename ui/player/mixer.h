@@ -20,6 +20,7 @@ int mix_set_enum(const char *dev, const char *name, unsigned value, mix_log_fn l
 #define MIX_SPDIF_MUX "LO2_MUX"
 #define MIX_SPDIF_DMA4 13
 static inline int mix_route_spdif(mix_log_fn log){ return mix_set_enum(MIX_CTL_DEV, MIX_SPDIF_MUX, MIX_SPDIF_DMA4, log); }
+static inline int mix_unroute_spdif(mix_log_fn log){ return mix_set_enum(MIX_CTL_DEV, MIX_SPDIF_MUX, 0, log); }   /* "UNUSED" */
 /* The route for local playback on hw:0,3 (DMA3 -> DAC). */
 static inline int mix_route_dac(mix_log_fn log){ return mix_set_enum(MIX_CTL_DEV, MIX_DMA3_MUX, MIX_DMA3_DAC, log); }
 #endif

@@ -151,8 +151,8 @@ static inline int opl_running(void){
 /* The outputs state the own player writes to OPL_OUTPUTS (player/main.c write_outputs). opl_outputs_parse: 0, or -1
  * when the text has no aux= / bt= lines; opl_outputs_read: the same from the file (-1 also when it can't be read). */
 typedef struct {
-    int aux, bt;                   /* 1 = playing to it */
-    int vol_aux, vol_bt;           /* 0..120 */
+    int aux, bt, dig;              /* 1 = playing to it: AUX analog (the DAC), Bluetooth, AUX digital (S/PDIF) */
+    int vol_aux, vol_bt, vol_dig;  /* 0..120 */
     int bt_ready;                  /* headphones connected and routed */
     int jack, bal;                 /* 3.5 mm / 4.4 mm plug: 1 in, 0 out, -1 unknown */
     int switching;                 /* a codec switch is running */
@@ -160,7 +160,7 @@ typedef struct {
     char codecs[64];               /* the codecs the headphones offer ("SBC AAC LDAC") */
     int auto_out;                  /* 0d05 as the player has it: 0 off, 1 newest, 2 all (player/core.h PL_AUTO_*) */
     unsigned notice_seq;           /* bumps when a device connected that is not on (auto off) */
-    int notice;                    /* what: 1 AUX, 2 Bluetooth */
+    int notice;                    /* what: 1 AUX, 2 Bluetooth, 3 play asked but no output is on (player/core.h) */
 } opl_outputs_t;
 static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
     memset(o, 0, sizeof *o);
@@ -179,6 +179,8 @@ static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
             else if(!strcmp(line, "bt")){ o->bt = atoi(v); seen |= 2; }
             else if(!strcmp(line, "vol_aux")) o->vol_aux = atoi(v);
             else if(!strcmp(line, "vol_bt")) o->vol_bt = atoi(v);
+            else if(!strcmp(line, "dig")) o->dig = atoi(v);
+            else if(!strcmp(line, "vol_dig")) o->vol_dig = atoi(v);
             else if(!strcmp(line, "bt_ready")) o->bt_ready = atoi(v);
             else if(!strcmp(line, "jack")) o->jack = atoi(v);
             else if(!strcmp(line, "bal")) o->bal = atoi(v);

@@ -108,9 +108,9 @@ static void test_core(void){
     CHECK(send1(&c, "0657000C0008") == 0 && nsent == 1);
     CHECK(send1(&c, "0657000C0006") == 0 && c.work_mode == 8 && nsent == 1);
     unsigned rs0 = c.route_seq;
-    CHECK(send1(&c, "0666000C0004") == 0 && c.route == -1 && c.spdif == 1 && c.route_seq == rs0 + 1);   /* S/PDIF: AUX digital */
-    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && c.spdif == 0);                              /* back to the DAC */
-    c.route = -1;
+    CHECK(send1(&c, "0666000C0004") == 0 && c.route == -1 && c.out_dig == 1 && c.out_aux == 0 && c.route_seq == rs0 + 1);   /* stock form: AUX digital instead of analog */
+    CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && c.out_dig == 1);                            /* 0666 6 leaves AUX digital alone */
+    c.route = -1; c.out_aux = 1; c.out_dig = 0; c.mem_aux = 1; c.mem_dig = 0;
     unsigned rs = c.route_seq;
     CHECK(send1(&c, "0666000C0002") == 0 && c.route == 2 && c.route_seq == rs + 1);
     /* 06b3: codec + the headphones' MAC (ui/bt.c bt_codec_frame_value) */
@@ -162,7 +162,9 @@ static void test_core(void){
     pl_core_bal(&c, 1); CHECK(c.out_aux == 1 && c.out_bt == 0 && pl_core_plugged(&c));   /* the 4.4 mm plug counts too */
     CHECK(send1(&c, "0d01000C0002") == 0 && c.out_aux == 0 && c.out_bt == 1);
     npause = 0; pl_core_bal(&c, 0); CHECK(npause == 0 && c.out_bt == 1 && c.out_aux == 0);   /* Bluetooth plays on */
-    CHECK(send1(&c, "0d01000C0000") == -1 && c.out_bt == 1);         /* one output stays on */
+    CHECK(send1(&c, "0d01000C0000") == 0 && !c.out_bt && !c.out_aux && !c.out_dig);   /* none at all: playback waits */
+    CHECK(send1(&c, "0d01000C0008") == -1);                           /* bit 8: no such output */
+    CHECK(send1(&c, "0d01000C0002") == 0 && c.out_bt == 1);
     CHECK(send1(&c, "0d04000C0001") == 0 && c.codec_want == 1);
     CHECK(send1(&c, "0d04000C0003") == -1 && send1(&c, "0d04000C0007") == -1);   /* only SBC/AAC/LDAC 2/aptX/aptX HD */
     CHECK(send1(&c, "0711000C0005") == 0 && c.vol_aux == 5 && c.vol_bt == 5);    /* max volume: both */
@@ -171,7 +173,9 @@ static void test_core(void){
     /* the headphones gone while they were the only output and no plug is in: Bluetooth waits for them, the DAC plays */
     CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && !c.bt_ready && c.out_aux == 0 && c.out_bt == 1);
     CHECK(c.volume == c.vol_aux);                                    /* the DAC leads now */
-    CHECK(send1(&c, "0d01000C0002") == -1 && c.out_bt == 1);         /* no headphones: refused */
+    CHECK(send1(&c, "0d01000C0002") == 0 && c.out_bt == 1);          /* Bluetooth stays chosen, waiting */
+    CHECK(send1(&c, "0d01000C0001") == 0 && c.out_bt == 0);
+    CHECK(send1(&c, "0d01000C0002") == -1 && c.out_bt == 0 && c.out_aux == 1);   /* turning it on without headphones: refused */
     CHECK(send1(&c, "0d04000C0001") == -1);
     c.jack = -1; c.bal = -1;
 
@@ -182,7 +186,7 @@ static void test_core(void){
         CHECK(send1(&h, "0d06000C0002") == -1 && h.hp_vol_all == 0);
         CHECK(send1(&h, "0666000C0002") == 0 && send1(&h, "06b3001D0000AA:BB:CC:01:02:03") == 0);
         CHECK(send1(&h, "0d01000C0003") == 0 && h.out_aux == 1 && h.out_bt == 1);
-        pl_core_load_volumes(&h, 40, 50);
+        pl_core_load_volumes(&h, 40, 50, 45);
         pl_core_set_bt_volume(&h, 60);
         CHECK(h.vol_bt == 60 && h.vol_aux == 40 && h.volume == 60);
         CHECK(send1(&h, "0d06000C0001") == 0 && h.hp_vol_all == 1);
@@ -193,6 +197,29 @@ static void test_core(void){
         CHECK(send1(&h, "0d01000C0002") == 0 && h.out_aux == 0);
         pl_core_set_bt_volume(&h, 20);
         CHECK(h.vol_bt == 20 && h.vol_aux == 20);                     /* AUX off: moves too */
+    }
+
+    /* AUX digital (0d01 bit 4, 0d07): its own volume, the volume keys move it too; a plug brings back the last AUX
+     * choice (Jo 2026-11-25); none at all is fine; a notice when a play was held back */
+    {
+        pl_core_t d; pl_core_init(&d, cap_send, NULL, NULL);
+        d.transport = count_pause; npause = 0; d.jack = 0;
+        CHECK(d.out_aux == 1 && d.out_dig == 0 && d.mem_aux == 1 && d.mem_dig == 0);
+        CHECK(send1(&d, "0d01000C0004") == 0 && !d.out_aux && d.out_dig && !d.mem_aux && d.mem_dig);   /* digital only */
+        nsent = 0; CHECK(send1(&d, "0d07000C0030") == 0 && d.vol_dig == 48 && d.volume == 48 && nsent == 1);   /* it leads */
+        CHECK(send1(&d, "0d07000C0079") == -1 && d.vol_dig == 48);
+        pl_core_volume_step(&d, 1); CHECK(d.vol_dig == 49 && d.vol_aux == 21 && d.vol_bt == 21);
+        pl_core_jack(&d, 1); CHECK(!d.out_aux && d.out_dig && !d.out_bt);   /* digital only comes back */
+        pl_core_jack(&d, 0); CHECK(npause == 1 && d.out_dig);               /* the jack's output: pause, kept */
+        CHECK(send1(&d, "0d01000C0000") == 0 && !d.out_dig && !d.mem_aux && d.mem_dig);   /* none: the memory stays */
+        pl_core_jack(&d, 1); CHECK(!d.out_aux && d.out_dig);
+        CHECK(send1(&d, "0d01000C0005") == 0 && d.out_aux && d.out_dig && d.volume == d.vol_aux);   /* both, analog leads */
+        npause = 0; pl_core_jack(&d, 0); CHECK(npause == 1);
+        CHECK(send1(&d, "0666000C0002") == 0 && send1(&d, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(d.out_bt && !d.out_aux && !d.out_dig && d.mem_aux && d.mem_dig);   /* newest: Bluetooth alone */
+        pl_core_jack(&d, 1); CHECK(d.out_aux && d.out_dig && !d.out_bt);    /* both come back */
+        unsigned ns = d.notice_seq;
+        pl_core_notice(&d, PL_NOTICE_NONE); CHECK(d.notice_seq == ns + 1 && d.notice == PL_NOTICE_NONE);
     }
 
     /* Auto Outputs (0d05): newest (the default), all connected, off */

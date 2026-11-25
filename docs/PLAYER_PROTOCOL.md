@@ -44,14 +44,15 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0653 | `0653000C000v` | DAC filter 0..5 | main.c `ui_set_dac_filter` | do |
 | 0657 | `0657000C000v` | Work mode: 8 local playback; 1 USB DAC, 6 BT sink, 7 BT streaming, 10 AirPlay, 12 DLNA | main.c, modes.c | do 8 and 12 (12: the Radio app's mode; the station comes with 0d10), ack others |
 | 0664 | `0664000C<s 4h>` | Idle power off after s seconds (0 off) | power.c | do |
-| 0666 | `0666000C000v` | Output route: 6 internal DAC, 4 S/PDIF, 3 USB audio, 2 Bluetooth | main.c, modes.c | do 6, 4 (own player: AUX on S/PDIF, Bluetooth untouched) and 2, ack others |
+| 0666 | `0666000C000v` | Output route: 6 internal DAC, 4 S/PDIF, 3 USB audio, 2 Bluetooth | main.c, modes.c | do 6, 4 (own player: AUX digital on and AUX analog off, Bluetooth untouched; the stock player's own S/PDIF value is 1, any other value is the DAC) and 2, ack others |
 | 0684 | `0684000C000v` | Resume memory mode 0..2 | main.c | keep |
 | 0687 | `0687000C000v` | Play through folders on/off | main.c | keep |
 | 0689 | `0689000C<p 4h>` | EQ preset 0..10, custom PEQ slots 11..20 | main.c `ui_apply_eq` | do |
 | 06b3 | `06b3001D<codec 4h><MAC>` | Bluetooth codec (0 SBC, 1 AAC, 2..4 LDAC) for the headphones `<MAC>` (17 chars) | bt.c, main.c | do (own player: MAC for the Bluetooth output, codec via bluealsa-cli) |
-| 0d01 | `0d01000C000v` | diskOS, own player only: outputs on, bit 0 AUX, bit 1 Bluetooth (0 refused; Bluetooth only with headphones routed) | settings.c (Outputs) | do |
-| 0d02 | `0d02000C<vol 4h>` | diskOS, own player only: AUX volume 0..120 | settings.c (Outputs) | do |
+| 0d01 | `0d01000C000v` | diskOS, own player only: outputs on, bit 0 AUX analog (the DAC), bit 1 Bluetooth, bit 2 AUX digital (S/PDIF); 0 = none, playback waits paused and a play is held back (notice 3); Bluetooth can only be turned on with headphones routed | settings.c (Outputs) | do |
+| 0d02 | `0d02000C<vol 4h>` | diskOS, own player only: AUX analog volume 0..120 | settings.c (Outputs) | do |
 | 0d03 | `0d03000C<vol 4h>` | diskOS, own player only: Bluetooth volume 0..120 | settings.c (Outputs) | do |
+| 0d07 | `0d07000C<vol 4h>` | diskOS, own player only: AUX digital volume 0..120 (MPD's software volume on S/PDIF) | settings.c (Outputs) | do |
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
 | 0d05 | `0d05000C000v` | diskOS, own player only: Auto Outputs, what connecting does: 0 off (nothing, a notice), 1 newest (the new device alone), 2 all connected | main.c (re-sent on start), settings.c (Outputs) | do |
 | 0d06 | `0d06000C000v` | diskOS, own player only: Headphone Volume, what the Bluetooth headphones' own volume (AVRCP absolute volume) moves: 0 the Bluetooth volume only (default), 1 AUX too when it is on (same step) | main.c (re-sent on start), settings.c (Outputs) | do |

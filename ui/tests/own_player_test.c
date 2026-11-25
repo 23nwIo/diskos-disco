@@ -53,6 +53,8 @@ int main(void){
     EXPECT(o.aux == 1 && o.bt == 1 && o.vol_aux == 30 && o.vol_bt == 52 && o.bt_ready == 1 && o.jack == 1 && o.bal == 0);
     EXPECT(!strcmp(o.codec, "LDAC") && !strcmp(o.codecs, "SBC AAC LDAC") && o.switching == 0);
     EXPECT(o.auto_out == 2 && o.notice_seq == 7 && o.notice == 1);
+    EXPECT(o.dig == 0 && o.vol_dig == 0);                                /* a file from before AUX digital */
+    EXPECT(opl_outputs_parse("aux=0\nbt=0\ndig=1\nvol_dig=77\nnotice=8 3\n", &o) == 0 && o.dig == 1 && o.vol_dig == 77 && o.notice == 3);
     EXPECT(opl_outputs_parse("vol_aux=3\n", &o) == -1 && o.jack == -1);
     {   char u[32], a[16], t[16];
         EXPECT(opl_stream_parse("uri=http://x/y\nartist=A\ntitle=A very long title that is cut\n", u, sizeof u, a, sizeof a, t, sizeof t) == 0

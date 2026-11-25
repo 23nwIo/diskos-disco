@@ -50,13 +50,17 @@ int eng_ready(void);
  *           queued only when its sample rate is that one. 0 queued, 1 not queued (another rate), -1 not added.
  * eng_advanced: after an event, 1 when MPD has moved on to that next song (it is now the current one; the caller then
  *           sets a new next), else 0. */
-/* The outputs MPD plays to, any or both: the DAC (aux), the Bluetooth headphones whose MAC is in ENG_BT_DEV through
- * the pipe output for the link's rate (44100, 48000 or 96000; anything else uses 44100). Outputs that are off are
- * closed first, so calling it again with bt on reopens nothing that stays, but a Bluetooth output that was off is
- * opened anew. Kept over a restart of MPD. 0 or -1. */
-int eng_output(int aux, int bt, unsigned rate);
-/* AUX plays on S/PDIF (hw:0,4) instead of the DAC, at 44.1 kHz for a song rate of that family, else 48 kHz (the
- * driver takes no more); 0 = the DAC. Takes effect with the next eng_output. */
+/* The outputs MPD plays to, any of them: the DAC (dac, AUX analog), S/PDIF on hw:0,4 (dig, AUX digital, at the rate
+ * eng_set_spdif chose), the Bluetooth headphones whose MAC is in ENG_BT_DEV through the pipe output for the link's
+ * rate (44100, 48000 or 96000; anything else uses 44100). Outputs that are off are closed first, so calling it again
+ * with bt on reopens nothing that stays, but a Bluetooth output that was off is opened anew. None at all: MPD stops
+ * and the song waits as a paused start at its place; until an output is on again every start is held back (it stays
+ * paused) and eng_blocked_seq bumps. Kept over a restart of MPD. 0 or -1. */
+int eng_output(int dac, int dig, int bt, unsigned rate);
+/* bumps each time a play was held back because no output is on */
+unsigned eng_blocked_seq(void);
+/* The S/PDIF output's rate for a song of this rate: 44.1 kHz for that family, else 48 kHz (the driver takes no
+ * more; 0 = 44.1 kHz). Takes effect with the next eng_output. */
 void eng_set_spdif(unsigned rate);
 /* The S/PDIF output's software volume, 0..100 % (MPD's curve); kept and set again after a restart of MPD. 0 or -1. */
 int eng_spdif_volume(unsigned pct);

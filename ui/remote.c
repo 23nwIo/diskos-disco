@@ -233,6 +233,7 @@ static void snapshot(rmt_state_t *s){
     { opl_outputs_t o; int au;                           /* Settings > Audio > Outputs (own player only) */
       if(settings_outputs_state(&o, &au) == 0){
           s->out_own = 1; s->out_aux = o.aux; s->out_bt = o.bt; s->out_vol_aux = o.vol_aux; s->out_vol_bt = o.vol_bt;
+          s->out_dig = o.dig; s->out_vol_dig = o.vol_dig;
           s->out_bt_ready = o.bt_ready; s->out_auto = au; s->out_jack = o.jack; s->out_bal = o.bal;
           s->out_codecs = settings_outputs_codecs(&s->out_codec); s->out_switching = o.switching;
       } }

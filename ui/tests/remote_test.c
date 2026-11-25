@@ -303,6 +303,9 @@ static void test_core(void){
     r = req("POST", p("/api/outputs"), "aux=0"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_AUX && r.cmd.arg == 0);
     CHECK(req("POST", p("/api/outputs"), "aux=2").kind == RMT_R_BAD_PARAM && req("POST", p("/api/outputs"), "vol_bt=121").kind == RMT_R_BAD_PARAM);
     CHECK(req("POST", p("/api/outputs"), "aux=1&bt=1").kind == RMT_R_BAD_PARAM && req("POST", p("/api/outputs"), "").kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/outputs"), "dig=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_DIG && r.cmd.arg == 1);
+    r = req("POST", p("/api/outputs"), "vol_dig=120"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_VOL_DIG && r.cmd.arg == 120);
+    r = req("POST", p("/api/outputs"), "dig=2"); CHECK(r.kind == RMT_R_BAD_PARAM);
     r = req("POST", p("/api/outputs"), "codec=4"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_CODEC && r.cmd.arg == 4);
     CHECK(req("POST", p("/api/outputs"), "codec=5").kind == RMT_R_BAD_PARAM);
     r = req("GET", p("/api/queue"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_QUEUE && r.cmd.sub == RMT_Q_LIST && r.cmd.limit == 100);
@@ -492,7 +495,8 @@ static void test_core(void){
     CHECK(strstr(js, "\"title\":\"Song \\\"1\\\"\"") != NULL);
     CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"balance\":0,") && strstr(js, "\"outputs\":null,\"list_end\":null}") && strstr(js, "\"source\":\"local\""));
     s.out_own = 1; s.out_codec = -1; s.out_codecs = 1 | 4 | 16; s.out_aux = 1; s.out_vol_aux = 30; s.out_vol_bt = 12; s.out_auto = 2; s.out_jack = 1; s.out_bal = 0;
-    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"vol_aux\":30,\"vol_bt\":12,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false},\"list_end\":null}"));
+    s.out_dig = 1; s.out_vol_dig = 77;
+    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"dig\":true,\"vol_aux\":30,\"vol_bt\":12,\"vol_dig\":77,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false},\"list_end\":null}"));
     s.out_own = 0;
     s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Radio <%s>", "X");
     snprintf(s.station_url, sizeof s.station_url, "https://radio.example/stream?a=1&b=\"2\"");
@@ -707,15 +711,15 @@ static void *emu(void *a){
                     }
                     rsrv_done_blob((char *)b, n, "image/bmp");
                 }
-                else if(c.kind == RMT_CMD_OUTPUTS){                     /* stand-in Outputs page: AUX + headphones */
-                    int a = s.out_aux, b = s.out_bt;
-                    if(c.sub == RMT_OUT_AUX) a = (int)c.arg; else if(c.sub == RMT_OUT_BT) b = (int)c.arg;
+                else if(c.kind == RMT_CMD_OUTPUTS){                     /* stand-in Outputs page: AUX analog/digital + headphones */
                     if(c.sub == RMT_OUT_CODEC){ if(!(s.out_codecs & (1 << c.arg))) rsrv_done(0, "These headphones don't offer it"); else { s.out_codec = (int)c.arg; rsrv_done(1, NULL); } }
-                    else if(!a && !b) rsrv_done(0, "One output stays on");
                     else {
-                        s.out_aux = a; s.out_bt = b;
+                        if(c.sub == RMT_OUT_AUX) s.out_aux = (int)c.arg;
+                        if(c.sub == RMT_OUT_BT) s.out_bt = (int)c.arg;
+                        if(c.sub == RMT_OUT_DIG) s.out_dig = (int)c.arg;
                         if(c.sub == RMT_OUT_VOL_AUX) s.out_vol_aux = (int)c.arg;
                         if(c.sub == RMT_OUT_VOL_BT) s.out_vol_bt = (int)c.arg;
+                        if(c.sub == RMT_OUT_VOL_DIG) s.out_vol_dig = (int)c.arg;
                         if(c.sub == RMT_OUT_AUTO) s.out_auto = (int)c.arg;
                         rsrv_done(1, NULL);
                     }
