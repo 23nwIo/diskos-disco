@@ -54,8 +54,9 @@ static const char CONF[] =
     "audio_output {\n  type \"pipe\"\n  name \"bt96\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 96000\"\n"
     "  format \"96000:16:2\"\n}\n"
     /* S/PDIF (the optical out in the 3.5 mm jack): the stock player plays it on DMA4 = hw:0,4 with LO2_MUX = 13
-     * (mq_player set_out_device, out mode 4 SPDIF_TX; playback.c prepare). Same sample format as the DAC; the level
-     * is fixed (the external DAC sets the volume). */
+     * (mq_player set_out_device, out mode 4 SPDIF_TX; playback.c prepare). The S/PDIF driver refuses S32_LE
+     * (ingenic_spdif_params_check, -22) and takes S24_LE and S16_LE (Jo's aplay runs, 2026-11-25), so 24 bits; the
+     * level is fixed (the external DAC sets the volume). */
     "audio_output {\n"
     "  type \"alsa\"\n"
     "  name \"spdif\"\n"
@@ -63,7 +64,7 @@ static const char CONF[] =
     "  mixer_type \"none\"\n"
     "  auto_resample \"no\"\n"
     "  auto_format \"no\"\n"
-    "  format \"*:32:*\"\n"
+    "  format \"*:24:*\"\n"
     "}\n";
 /* MPD's output ids: the order above */
 enum { OUT_DAC = 0, OUT_BT44, OUT_BT48, OUT_BT96, OUT_SPDIF, OUT_N };
