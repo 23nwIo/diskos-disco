@@ -55,6 +55,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d07 | `0d07000C<vol 4h>` | diskOS, own player only: AUX digital volume 0..120 (MPD's software volume on S/PDIF), stored as its offset | settings.c (Outputs) | do |
 | 0d08 | `0d08000C<vol 4h>` | diskOS, own player only: USB sound card volume 0..120 (its own volume control, else MPD's software volume), stored per card as its offset | settings.c (Outputs) | do |
 | 0d09 | `0d09000C<oo cc>` | diskOS, own player only: the volume limit of output oo (0 AUX analog, 1 Bluetooth, 2 AUX digital, 3 USB) = cc (0..120), stored per device | settings.c (Limits and Fade In) | do |
+| 0d0c | `0d0c000C000v` | diskOS, own player only: On Disconnect: 0 (default) the outputs left play on, pause only when none is left; 1 pause whenever an output that plays is disconnected (plug out, headphones gone, USB card gone) | main.c (re-sent on start), settings.c (Outputs) | do |
 | 0d0b | `0d0b000C<oo xx>` | diskOS, own player only: the offset of output oo to the main volume itself, xx = offset + 120 (0..240, so -120..+120); kept also where main + offset is below 0 or above 120 | settings.c (Outputs, Device Sliders = Offset) | do |
 | 0d0a | `0d0a000C<oo 0f>` | diskOS, own player only: fade in of output oo on (f 1) or off (0), stored per device | settings.c (Limits and Fade In) | do |
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |

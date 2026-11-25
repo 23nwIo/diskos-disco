@@ -619,7 +619,8 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
             { "cap_dig", RMT_OUT_CAP_DIG, 0, 120 }, { "cap_usb", RMT_OUT_CAP_USB, 0, 120 }, { "fade_aux", RMT_OUT_FADE_AUX, 0, 1 },
             { "fade_bt", RMT_OUT_FADE_BT, 0, 1 }, { "fade_dig", RMT_OUT_FADE_DIG, 0, 1 }, { "fade_usb", RMT_OUT_FADE_USB, 0, 1 },
             { "off_aux", RMT_OUT_OFF_AUX, -120, 120 }, { "off_bt", RMT_OUT_OFF_BT, -120, 120 },
-            { "off_dig", RMT_OUT_OFF_DIG, -120, 120 }, { "off_usb", RMT_OUT_OFF_USB, -120, 120 }, { "view", RMT_OUT_VIEW, 0, 1 } };
+            { "off_dig", RMT_OUT_OFF_DIG, -120, 120 }, { "off_usb", RMT_OUT_OFF_USB, -120, 120 }, { "view", RMT_OUT_VIEW, 0, 1 },
+            { "disc_pause", RMT_OUT_DISC_PAUSE, 0, 1 } };
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         int found = 0; long v = 0;
         for(size_t k = 0; k < sizeof O / sizeof O[0]; k++){
@@ -1008,12 +1009,12 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
     for(int i = 0; i < 5; i++) if(s->out_codecs & (1 << i)) snprintf(cl + strlen(cl), sizeof cl - strlen(cl), "%s%d", cl[0] ? "," : "", i);
     if(s->out_own && rmt_json_escape(un, sizeof un, s->out_usb_name) >= 0)
         snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"dig\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"vol_dig\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d,\"codec\":%d,\"codecs\":[%s],\"switching\":%s,"
-                 "\"usb\":%s,\"vol_usb\":%d,\"usb_ready\":%s,\"usb_name\":\"%s\",\"main\":%d,\"cap\":[%d,%d,%d,%d],\"fade\":[%d,%d,%d,%d],\"off\":[%d,%d,%d,%d],\"vol_view\":%d}",
+                 "\"usb\":%s,\"vol_usb\":%d,\"usb_ready\":%s,\"usb_name\":\"%s\",\"main\":%d,\"cap\":[%d,%d,%d,%d],\"fade\":[%d,%d,%d,%d],\"off\":[%d,%d,%d,%d],\"vol_view\":%d,\"disc_pause\":%d}",
                  s->out_aux ? "true" : "false", s->out_bt ? "true" : "false", s->out_dig ? "true" : "false", s->out_vol_aux, s->out_vol_bt, s->out_vol_dig, s->out_bt_ready ? "true" : "false",
                  s->out_auto, s->out_jack, s->out_bal, s->out_codec, cl, s->out_switching ? "true" : "false",
                  s->out_usb ? "true" : "false", s->out_vol_usb, s->out_usb_ready ? "true" : "false", un, s->out_main,
                  s->out_cap[0], s->out_cap[1], s->out_cap[2], s->out_cap[3], s->out_fade[0], s->out_fade[1], s->out_fade[2], s->out_fade[3],
-                 s->out_off[0], s->out_off[1], s->out_off[2], s->out_off[3], s->out_vol_view);
+                 s->out_off[0], s->out_off[1], s->out_off[2], s->out_off[3], s->out_vol_view, s->out_disc_pause);
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"queue_ver\":%u,\"play_mode\":%d,\"work_mode\":%d,"

@@ -235,6 +235,13 @@ void pl_core_notice(pl_core_t *c, int what){ notice(c, what); }
 static void pause_(pl_core_t *c){ if(c->transport) c->transport(c->ctx, PL_T_PAUSE, 0); }
 static const char *const AUTO_NAME[] = { "off", "newest", "all" };
 
+/* On Disconnect (0d0c) = pause: an output that played was disconnected; the handlers' own pause then is not repeated */
+static int disc_pause_now(pl_core_t *c, const char *what){
+    if(!c->disc_pause) return 0;
+    logf_(c, "outputs: %s disconnected - pause (On Disconnect: pause)", what);
+    pause_(c);
+    return 1;
+}
 static void plug_changed(pl_core_t *c, int was_plugged, const char *which, int plugged){
     int now = pl_core_plugged(c), bt_live = c->out_bt && c->bt_ready, jack_out = c->out_aux || c->out_dig;
     if(plugged){
@@ -247,6 +254,7 @@ static void plug_changed(pl_core_t *c, int was_plugged, const char *which, int p
         return;
     }
     if(now){ logf_(c, "jack: %s out, the other plug is still in", which); return; }
+    int paused = jack_out && disc_pause_now(c, "AUX");
     if(c->out_usb && c->usb_ready){                    /* a USB sound card plays: it goes on, AUX goes off unless auto off */
         if(jack_out && c->auto_out != PL_AUTO_OFF) set_outputs(c, 0, c->out_bt, 0, "plug out, USB audio plays on");
         else logf_(c, "jack: %s out, USB audio plays on", which);
@@ -255,7 +263,7 @@ static void plug_changed(pl_core_t *c, int was_plugged, const char *which, int p
     /* both AUX outputs are on the jack: analog and digital are treated alike */
     if(c->bt_ready && c->auto_out != PL_AUTO_OFF){     /* AUX off; the connected headphones are what is left */
         if(bt_live) logf_(c, "jack: %s out (Bluetooth plays on)", which);
-        else { logf_(c, "jack: %s out - pause, Bluetooth takes over", which); pause_(c); }
+        else { logf_(c, "jack: %s out - pause, Bluetooth takes over", which); if(!paused) pause_(c); }
         set_outputs(c, 0, 1, 0, "plug out");
         return;
     }
@@ -264,7 +272,7 @@ static void plug_changed(pl_core_t *c, int was_plugged, const char *which, int p
     if(!jack_out && !c->out_bt){ logf_(c, "jack: %s out, no output is on", which); return; }
     /* AUX plays (analog, digital, or the DAC standing in while Bluetooth waits for the headphones) */
     logf_(c, "jack: %s out - pause", which);
-    pause_(c);
+    if(!paused) pause_(c);
 }
 
 /* the headphones are gone: the UI routed away from them or their link went (0666 6) */
@@ -272,13 +280,14 @@ static void bt_gone(pl_core_t *c, const char *why){
     int was = c->bt_ready;
     c->bt_ready = 0; c->bt_auto = 0;
     if(!c->out_bt){ if(was) logf_(c, "bluetooth: headphones gone (%s), Bluetooth was off", why); return; }
+    int paused = was && disc_pause_now(c, "Bluetooth");
     int aux_on = c->out_aux || c->out_dig || (c->out_usb && c->usb_ready);
     if(aux_on && c->auto_out != PL_AUTO_OFF){ set_outputs(c, c->out_aux, 0, c->out_dig, why); return; }   /* AUX / USB play on */
     if(aux_on){ logf_(c, "bluetooth: headphones gone (%s), AUX plays on (auto outputs off: Bluetooth stays on)", why); return; }
     /* Bluetooth was the only output: pause (no sudden sound elsewhere). A plug is in: AUX takes over (auto on). Else
      * the choice waits for the headphones and the DAC plays meanwhile, so the UI's play goes on (playback.c pb_route). */
     logf_(c, "bluetooth: headphones gone (%s) - pause", why);
-    pause_(c);
+    if(!paused) pause_(c);
     if(c->auto_out != PL_AUTO_OFF && pl_core_plugged(c)) set_outputs(c, c->mem_aux, 0, c->mem_dig, "headphones gone, a plug is in");
     else logf_(c, "outputs: Bluetooth waits for the headphones, the DAC plays meanwhile");
 }
@@ -315,10 +324,11 @@ void pl_core_usb(pl_core_t *c, int present, const char *key, int stored, const c
     logf_(c, "usb audio: %s gone", c->usb_name);
     c->usb_ready = 0; c->usb_stored = 0; c->route_seq++;
     if(!c->out_usb) return;
+    int paused = disc_pause_now(c, "USB audio");
     int other = c->out_aux || c->out_dig || (c->out_bt && c->bt_ready);
     if(other){ set_outputs4(c, c->out_aux, c->out_bt, c->out_dig, 0, "USB sound card gone, the others play on"); return; }
     logf_(c, "usb audio: it was the only output - pause");
-    pause_(c);
+    if(!paused) pause_(c);
     if(c->auto_out != PL_AUTO_OFF && pl_core_plugged(c)) set_outputs4(c, c->mem_aux, 0, c->mem_dig, 0, "USB sound card gone, a plug is in");
     else if(c->auto_out != PL_AUTO_OFF && c->bt_ready) set_outputs4(c, 0, 1, 0, 0, "USB sound card gone, headphones are connected");
     else set_outputs4(c, c->out_aux, c->out_bt, c->out_dig, 0, "USB sound card gone");
@@ -565,6 +575,11 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         if(v < PL_END_STOP || v > PL_END_STATION){ c->bad_frames++; logf_(c, "list end: bad value %d", v); return -1; }
         if(v != c->end_mode) logf_(c, "list end = %s", v == PL_END_STOP ? "stop" : v == PL_END_UI ? "the UI picks" : "station");
         c->end_mode = v;
+        return 0;
+    case 0x0d0c:
+        if(v != 0 && v != 1){ c->bad_frames++; logf_(c, "on disconnect: bad value %d", v); return -1; }
+        if(v != c->disc_pause) logf_(c, "on disconnect = %s", v ? "pause" : "play on");
+        c->disc_pause = v;
         return 0;
     case 0x0d06:
         if(v != 0 && v != 1){ c->bad_frames++; logf_(c, "headphone volume: bad value %d", v); return -1; }

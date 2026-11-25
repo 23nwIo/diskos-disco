@@ -310,6 +310,26 @@ static void test_core(void){
         CHECK(send1(&u, "0642000C0005") == 0 && u.usb_gadget == 0);   /* USB host: the player does it by itself */
     }
 
+    /* On Disconnect (0d0c): 0 (default) pause only when no output is left, 1 pause on every disconnect of one that plays */
+    {
+        pl_core_t q; pl_core_init(&q, cap_send, NULL, NULL);
+        q.transport = count_pause; npause = 0; q.jack = 0; q.bal = 0;
+        CHECK(q.disc_pause == 0 && send1(&q, "0d0c000C0002") == -1);
+        CHECK(send1(&q, "0d05000C0002") == 0);                                         /* all connected */
+        CHECK(send1(&q, "0666000C0002") == 0 && send1(&q, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        pl_core_jack(&q, 1); CHECK(q.out_aux && q.out_bt);
+        pl_core_jack(&q, 0); CHECK(npause == 0 && q.out_bt);                           /* play on: Bluetooth is left */
+        CHECK(send1(&q, "0d0c000C0001") == 0 && q.disc_pause == 1);
+        pl_core_jack(&q, 1); CHECK(q.out_aux && q.out_bt);
+        pl_core_jack(&q, 0); CHECK(npause == 1 && q.out_bt && !q.out_aux);             /* pause, though Bluetooth is left */
+        pl_core_jack(&q, 1); npause = 0;
+        CHECK(send1(&q, "0666000C0006") == 0 && npause == 1 && q.out_aux && !q.out_bt);   /* headphones gone: pause */
+        npause = 0; pl_core_usb(&q, 1, "usb:1234:5678:S", 1, "Card");
+        CHECK(send1(&q, "0d01000C0009") == 0 && q.out_usb && q.out_aux);
+        pl_core_usb(&q, 0, NULL, 0, NULL); CHECK(npause == 1 && q.out_aux);             /* USB card gone: pause */
+        npause = 0; pl_core_jack(&q, 0); CHECK(npause == 1);                            /* the last one: one pause, not two */
+    }
+
     /* Auto Outputs (0d05): newest (the default), all connected, off */
     {
         pl_core_t a; pl_core_init(&a, cap_send, NULL, NULL);

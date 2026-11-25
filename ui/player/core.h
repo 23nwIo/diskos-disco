@@ -125,6 +125,9 @@ typedef struct {
     int bt_auto;                   /* 0666 2 seen: the next 06b3 turns Bluetooth on and AUX off */
     int codec_want;                /* 0d04: the codec asked for this connection (ui/bt.c numbering), -1 none */
     int auto_out;                  /* 0d05: PL_AUTO_*; PL_AUTO_NEWEST until the UI says */
+    int disc_pause;                /* 0d0c: 1 = an output that plays and is disconnected (plug out, headphones gone, USB
+                                    * card gone) pauses playback, also when other outputs play on; 0 (default) = pause
+                                    * only when it was the last one playing */
     int hp_vol_all;                /* 0d06: 1 = the headphones' own volume also moves AUX when it plays too; 0 (default)
                                     * = only the Bluetooth volume */
     int end_mode;                  /* 0d11: PL_END_*; PL_END_STOP until the UI says */

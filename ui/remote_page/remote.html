@@ -20,7 +20,8 @@
 <div class=hd><label><input type=checkbox id=od> AUX digital <span id=odv></span></label></div><input id=ovd type=range min=0 max=120 value=0 aria-label='Digital volume'>
 <div class=hd><label><input type=checkbox id=ou> USB <span id=ouv></span></label></div><input id=ovu type=range min=0 max=120 value=0 aria-label='USB volume'>
 <div id=ocw class=hide><label for=oc>Bluetooth codec (now; the music pauses) <span id=ocs></span></label><select id=oc></select></div>
-<label for=oau>Auto Outputs (on connecting)</label><select id=oau><option value=0>Off<option value=1>Newest<option value=2>All connected</select></div>
+<label for=oau>Auto Outputs (on connecting)</label><select id=oau><option value=0>Off<option value=1>Newest<option value=2>All connected</select>
+<label for=odp>On disconnect</label><select id=odp><option value=0>Play on with the others<option value=1>Pause</select></div>
 <label for=eqs>EQ</label><select id=eqs></select>
 <div id=pmw><label for=pm>Play mode</label><select id=pm><option value=0>Sequential<option value=1>Shuffle<option value=2>Repeat one
 <option value=3>Repeat all<option value=4>Single</select></div>
@@ -51,7 +52,7 @@ if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=Math.max(0,s.volume)}$('v
 if(!drag.bal){$('bal').value=s.balance}$('bv').textContent=bl($('bal').value);
 var o=s.outputs;$('ow').classList.toggle('hide',!o);if(o){$('oa').checked=o.aux;$('ob').checked=o.bt;$('ob').disabled=!o.bt&&!o.bt_ready;
 $('od').checked=o.dig;$('ou').checked=o.usb;$('ou').disabled=!o.usb&&!o.usb_ready;$('ovb').disabled=!o.bt_ready;$('ovu').disabled=!o.usb_ready;
-var V=o.vol_view,T={};if(document.activeElement!==$('ovw'))$('ovw').value=V;
+var V=o.vol_view,T={};if(document.activeElement!==$('ovw'))$('ovw').value=V;if(document.activeElement!==$('odp'))$('odp').value=o.disc_pause;
 [['ova','aux',0],['ovb','bt',1],['ovd','dig',2],['ovu','usb',3]].forEach(function(k){var e=$(k[0]),l=o['vol_'+k[1]];e.min=V?0:-120;SL[k[0]][1]=(V?'vol_':'off_')+k[1]+'=';
 if(!drag[k[0]])e.value=V?l:o.off[k[2]];T[k[0]]=V?e.value:(e.value>0?'+':'')+e.value+' ('+l+')'});
 $('odv').textContent=T.ovd;$('ouv').textContent=T.ovu+(o.usb_ready?' · '+o.usb_name:' · no sound card');
@@ -71,7 +72,7 @@ var SL={pos:['seek','position_ms='],vol:['volume','value='],bal:['balance','valu
 Object.keys(SL).forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value;if(i==='bal')$('bv').textContent=bl(e.value);if(i[0]==='o')$('o'+i[2]+'v').textContent=e.value};
 e.onchange=function(){drag[i]=0;cmd(SL[i][0],SL[i][1]+e.value)}});
 [['oa','aux'],['ob','bt'],['od','dig'],['ou','usb']].forEach(function(p){$(p[0]).onchange=function(){cmd('outputs',p[1]+'='+(this.checked?1:0))}});
-$('oau').onchange=function(){cmd('outputs','auto='+this.value)};$('ovw').onchange=function(){cmd('outputs','view='+this.value);this.blur()};
+$('oau').onchange=function(){cmd('outputs','auto='+this.value)};$('ovw').onchange=function(){cmd('outputs','view='+this.value);this.blur()};$('odp').onchange=function(){cmd('outputs','disc_pause='+this.value);this.blur()};
 var CN=['SBC','AAC','LDAC','aptX','aptX HD'];$('oc').onchange=function(){var e=this;cmd('outputs','codec='+e.value).then(function(ok){if(ok)say('Switching codec…',1)});e.blur()};
 $('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};
 /* no picture (a station): the box goes, and a cover still loading from before must not bring it back */

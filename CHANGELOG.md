@@ -13,7 +13,9 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   that connect. **Device Sliders** under Outputs (and on the Remote Control page): Offset (default, like a mixing desk:
   each device's slider is its step from the main volume and stays put when the main volume moves) or Level. A USB card
   without a volume control of its own gets one from diskOS, so no device shares its volume with another. Fade length:
-  `fade_s=` in `/usr/data/diskos-own/audio.conf`. See [docs/USB_AUDIO.md](docs/USB_AUDIO.md).
+  `fade_s=` in `/usr/data/diskos-own/audio.conf`. **On Disconnect** under Outputs: Play on (default: the outputs left
+  play on, playback pauses only when none is left) or Pause (every disconnect of an output that plays pauses), the same
+  for a plug, Bluetooth headphones and a USB sound card. See [docs/USB_AUDIO.md](docs/USB_AUDIO.md).
   Not yet tested on a Disc.
 
 - Charger on a locked screen: plugging in a charger while the screen is off shows a charging screen (battery level) for

@@ -279,6 +279,7 @@ static const char *out_off_why(int o, int v){
  * each device plays at, which moves with the main volume. Either way the player keeps main + offset. */
 static int out_level_view(void){ return simple_cfg_get_int("out_vol_view", 0) == 1; }
 int settings_outputs_level_view(void){ return out_level_view(); }   /* Remote Control: the same view */
+int settings_outputs_disc_pause(void){ return simple_cfg_get_int("out_disc_pause", 0) == 1; }
 int settings_outputs_set_view(int v){ return v < 0 || v > 1 ? -1 : simple_cfg_set_int("out_vol_view", v) < 0 ? -1 : 0; }
 static void apply_off_aux(int v){ out_toast(out_off_why(0, v)); }
 static void apply_off_bt(int v){ out_toast(out_off_why(1, v)); }
@@ -320,6 +321,9 @@ static void apply_out_auto(int v){ if(own_player_cached()) out_send("0d05", v); 
 /* Headphone Volume (cfg hp_vol_all, 0d06): what the headphones' own volume buttons move (player/core.h hp_vol_all);
  * sent again whenever the player (re)starts, like Auto Outputs. */
 static void apply_hp_vol(int v){ if(own_player_cached()) out_send("0d06", v); }
+/* On Disconnect (cfg out_disc_pause, 0d0c): 0 play on with the outputs left (pause only when none is left), 1 pause
+ * whenever an output that plays is disconnected; sent again whenever the player (re)starts, like Auto Outputs. */
+static void apply_disc_pause(int v){ if(own_player_cached()) out_send("0d0c", v); }
 static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d11 + the station (0d12) */
 /* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
  * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
@@ -327,7 +331,7 @@ static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d
  * 3 AUX analog volume, 4 Bluetooth volume, 8 AUX digital volume, 10 USB volume (0..120), 5 Auto Outputs (0..2), 6 this
  * connection's codec (0..4: SBC, AAC, LDAC, aptX, aptX HD), 11..14 the limit of AUX analog, Bluetooth, AUX digital,
  * USB (0..120), 15..18 their fade in (0/1), 19..22 their offset to the main volume (-120..120), 23 Device Sliders
- * (0 offset, 1 level), as rmt_out_t numbers them; 0, or -1 with *why. */
+ * (0 offset, 1 level), 24 On Disconnect (0 play on, 1 pause), as rmt_out_t numbers them; 0, or -1 with *why. */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out){
     if(!own_player_cached()) return -1;
     *o = *outputs_now();
@@ -351,6 +355,11 @@ int settings_outputs_cmd(int what, int v, const char **why){
     case 15: case 16: case 17: case 18: w = out_fade_why(what - 15, v); break;
     case 19: case 20: case 21: case 22: w = out_off_why(what - 19, v); break;
     case 23: if(settings_outputs_set_view(v) != 0) w = "Couldn't save settings"; break;
+    case 24:
+        if(v < 0 || v > 1){ w = "Unknown choice"; break; }
+        if(simple_cfg_set_int("out_disc_pause", v) < 0){ w = "Couldn't save settings"; break; }
+        if(out_send("0d0c", v) < 0) w = "Saved, but the player didn't take it";
+        break;
     case 6: { int sent; w = out_codec_why(v, &sent); break; }
     case 5:
         if(v < 0 || v > 2){ w = "Unknown choice"; break; }
@@ -1139,6 +1148,9 @@ static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",
 static const char *const OPT_HPVOL[] = { "Bluetooth only", "All outputs" };
 static const char *const OPT_HPVOL_D[] = { "Only the Bluetooth volume follows them.",
                                            "The main volume follows them: every output moves by the same step." };
+static const char *const OPT_DISCPAUSE[] = { "Play on", "Pause" };
+static const char *const OPT_DISCPAUSE_D[] = { "The outputs that are left play on; playback pauses only when none is left.",
+                                               "Playback pauses whenever an output that plays is disconnected, also when others are left." };
 static const char *const OPT_VOLVIEW[] = { "Offset", "Level" };
 static const char *const OPT_VOLVIEW_D[] = { "Each device's step up or down from the main volume, like a mixing desk: the sliders stay put when the main volume moves.",
                                              "The level each device plays at: the sliders move with the main volume." };
@@ -1234,6 +1246,8 @@ static const setting_t TABLE[] = {
       "What plugging in or connecting headphones does. A plug brings back the AUX outputs that were on last (analog, digital or both).", OPT_OUTAUTO_D },
     { "Outputs",  "Headphone Volume", ST_CHOICE, "hp_vol_all", 0,0,0, OPT_HPVOL, 2, NULL, apply_hp_vol, 0,
       "What the Bluetooth headphones' own volume buttons change, for headphones that send their volume.", OPT_HPVOL_D },
+    { "Outputs",  "On Disconnect", ST_CHOICE, "out_disc_pause", 0,0,0, OPT_DISCPAUSE, 2, NULL, apply_disc_pause, 0,
+      "What pulling a plug, losing the Bluetooth headphones or unplugging a USB sound card does while it plays.", OPT_DISCPAUSE_D },
     { "Outputs",  "Device Sliders", ST_CHOICE, "out_vol_view", 0,0,0, OPT_VOLVIEW, 2, NULL, NULL, 0,
       "What the device volume sliders below (and on the Remote Control page) show and set. The player always keeps one main volume plus a step per device.", OPT_VOLVIEW_D },
     { "Outputs",  "Bluetooth Offset", ST_SLIDER, NULL, -120,120,1, NULL,0, NULL, apply_off_bt, 0,

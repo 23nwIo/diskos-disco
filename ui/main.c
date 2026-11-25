@@ -1115,6 +1115,8 @@ static void reapply_sends(void){
             char f[16]; snprintf(f, sizeof f, "0d05000C%04X", (unsigned)ao); ipc_send_cmd(f); }
         int hv = simple_cfg_get_int("hp_vol_all", 0);  if(opl_running() && (hv == 0 || hv == 1)){   /* Headphone Volume (own player only) */
             char f[16]; snprintf(f, sizeof f, "0d06000C%04X", (unsigned)hv); ipc_send_cmd(f); }
+        int dp = simple_cfg_get_int("out_disc_pause", 0); if(opl_running() && (dp == 0 || dp == 1)){   /* On Disconnect (own player only) */
+            char f[16]; snprintf(f, sizeof f, "0d0c000C%04X", (unsigned)dp); ipc_send_cmd(f); }
         radio_end_sync();                                                  /* After the List Ends (own player only) */
         queue_sync();                                                      /* the queue, in the own player's RAM */
     }
