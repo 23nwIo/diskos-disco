@@ -13,6 +13,8 @@
 #define ENG_CONF      ENG_RUN_DIR "/mpd.conf"
 #define ENG_BT_SCRIPT ENG_RUN_DIR "/bt-out.sh"   /* MPD's Bluetooth pipe command (engine.c) */
 #define ENG_BT_DEV    ENG_RUN_DIR "/bt-dev"      /* the headphones' MAC for it, one line */
+#define ENG_USB_CONF  ENG_RUN_DIR "/asound.conf"   /* defines "diskos_usb", MPD's USB output (usbaudio.c) */
+#define ENG_ALSA_CONF "/usr/share/alsa/alsa.conf"  /* alsa-lib's own file, read first (mpd/build.sh configdir) */
 #define ENG_CA_OWN    OPL_DIR "/cacert.pem"      /* a CA bundle for https streams, used before the system's (engine.c) */
 
 typedef void (*eng_log_fn)(const char *fmt, ...);
@@ -57,6 +59,10 @@ int eng_ready(void);
  * and the song waits as a paused start at its place; until an output is on again every start is held back (it stays
  * paused) and eng_blocked_seq bumps. Kept over a restart of MPD. 0 or -1. */
 int eng_output(int dac, int dig, int bt, unsigned rate);
+/* The USB sound card's output (on: playing to it; soft: it has no volume control, MPD's software volume does it;
+ * gen: changes when another card took its place, so the output is opened again). Takes effect with the next
+ * eng_output; kept over a restart of MPD. */
+void eng_usb(int on, int soft, unsigned gen);
 /* 1: S/PDIF closes in MPD for a moment though it stays on (no pause, no "no output"); 0: it opens again. A running
  * S/PDIF stream stalls when the DAC is powered or started, so playback.c closes it around that, as the stock player
  * reopens its PCM after dac_power_down. 0 or -1. */
@@ -73,6 +79,9 @@ int eng_set_next(const char *path, long off_ms, long len_ms, unsigned must_rate)
 /* Called with the stream's sample rate right before MPD starts a song (opens the PCM): the player starts the DAC. */
 typedef void (*eng_prepare_fn)(unsigned rate);
 void eng_set_prepare(eng_prepare_fn fn);
+/* Called right before MPD starts or resumes playing (a fresh start, or play after pause): the player's fade in. */
+typedef void (*eng_before_play_fn)(void);
+void eng_set_before_play(eng_before_play_fn fn);
 int eng_advanced(const eng_status_t *s);
 int eng_toggle(void);                  /* play <-> pause; from stop or a paused load: play */
 int eng_pause(int on);

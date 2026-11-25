@@ -614,7 +614,10 @@ static rmt_route_t route_rest(const rmt_req_t *r, const char *slash){
         static const struct { const char *k; int sub; long max; } O[] = {
             { "aux", RMT_OUT_AUX, 1 }, { "bt", RMT_OUT_BT, 1 }, { "vol_aux", RMT_OUT_VOL_AUX, 120 },
             { "vol_bt", RMT_OUT_VOL_BT, 120 }, { "auto", RMT_OUT_AUTO, 2 }, { "codec", RMT_OUT_CODEC, 4 },
-            { "dig", RMT_OUT_DIG, 1 }, { "vol_dig", RMT_OUT_VOL_DIG, 120 } };
+            { "dig", RMT_OUT_DIG, 1 }, { "vol_dig", RMT_OUT_VOL_DIG, 120 }, { "usb", RMT_OUT_USB, 1 },
+            { "vol_usb", RMT_OUT_VOL_USB, 120 }, { "cap_aux", RMT_OUT_CAP_AUX, 120 }, { "cap_bt", RMT_OUT_CAP_BT, 120 },
+            { "cap_dig", RMT_OUT_CAP_DIG, 120 }, { "cap_usb", RMT_OUT_CAP_USB, 120 }, { "fade_aux", RMT_OUT_FADE_AUX, 1 },
+            { "fade_bt", RMT_OUT_FADE_BT, 1 }, { "fade_dig", RMT_OUT_FADE_DIG, 1 }, { "fade_usb", RMT_OUT_FADE_USB, 1 } };
         if(!post){ rt.kind = RMT_R_BAD_METHOD; return rt; }
         int found = 0; long v = 0;
         for(size_t k = 0; k < sizeof O / sizeof O[0]; k++){
@@ -996,15 +999,18 @@ int rmt_state_json(char *dst, size_t cap, const rmt_state_t *s){
        rmt_json_escape(al, sizeof al, s->album) < 0 || rmt_json_escape(st, sizeof st, s->station) < 0 || rmt_json_escape(su, sizeof su, s->station_url) < 0 || rmt_json_escape(bc, sizeof bc, s->bt_codec) < 0 || rmt_json_escape(bd, sizeof bd, s->bt_device) < 0 || rmt_json_escape(sti, sizeof sti, s->stream_title) < 0 ||
        rmt_json_escape(re, sizeof re, s->radio_error) < 0 || rmt_json_escape(fm, sizeof fm, s->format) < 0 ||
        rmt_json_escape(ar, sizeof ar, s->art) < 0 || rmt_json_escape(eqn, sizeof eqn, s->eq_name) < 0){ if(cap) dst[0] = 0; return -1; }
-    char ou[360] = "null", cl[32] = "";
+    char ou[1200] = "null", cl[32] = "", un[sizeof s->out_usb_name * 6];
     char le[sizeof s->end_station * 12 + 96] = "null", les[sizeof s->end_station * 6], lep[sizeof s->end_playlist * 6];
     if(s->end_mode >= 0 && rmt_json_escape(les, sizeof les, s->end_station) >= 0 && rmt_json_escape(lep, sizeof lep, s->end_playlist) >= 0)
         snprintf(le, sizeof le, "{\"mode\":%d,\"station\":\"%s\",\"playlist\":\"%s\",\"pl_id\":%ld,\"pl_flags\":%d}", s->end_mode, les, lep, s->end_pl_id, s->end_pl_flags);
     for(int i = 0; i < 5; i++) if(s->out_codecs & (1 << i)) snprintf(cl + strlen(cl), sizeof cl - strlen(cl), "%s%d", cl[0] ? "," : "", i);
-    if(s->out_own)
-        snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"dig\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"vol_dig\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d,\"codec\":%d,\"codecs\":[%s],\"switching\":%s}",
+    if(s->out_own && rmt_json_escape(un, sizeof un, s->out_usb_name) >= 0)
+        snprintf(ou, sizeof ou, "{\"aux\":%s,\"bt\":%s,\"dig\":%s,\"vol_aux\":%d,\"vol_bt\":%d,\"vol_dig\":%d,\"bt_ready\":%s,\"auto\":%d,\"jack\":%d,\"bal\":%d,\"codec\":%d,\"codecs\":[%s],\"switching\":%s,"
+                 "\"usb\":%s,\"vol_usb\":%d,\"usb_ready\":%s,\"usb_name\":\"%s\",\"main\":%d,\"cap\":[%d,%d,%d,%d],\"fade\":[%d,%d,%d,%d]}",
                  s->out_aux ? "true" : "false", s->out_bt ? "true" : "false", s->out_dig ? "true" : "false", s->out_vol_aux, s->out_vol_bt, s->out_vol_dig, s->out_bt_ready ? "true" : "false",
-                 s->out_auto, s->out_jack, s->out_bal, s->out_codec, cl, s->out_switching ? "true" : "false");
+                 s->out_auto, s->out_jack, s->out_bal, s->out_codec, cl, s->out_switching ? "true" : "false",
+                 s->out_usb ? "true" : "false", s->out_vol_usb, s->out_usb_ready ? "true" : "false", un, s->out_main,
+                 s->out_cap[0], s->out_cap[1], s->out_cap[2], s->out_cap[3], s->out_fade[0], s->out_fade[1], s->out_fade[2], s->out_fade[3]);
     int n = snprintf(dst, cap,
         "{\"ok\":true,\"has_track\":%s,\"playing\":%s,\"title\":\"%s\",\"artist\":\"%s\",\"album\":\"%s\","
         "\"position_ms\":%ld,\"duration_ms\":%ld,\"volume\":%d,\"volume_max\":%d,\"balance\":%d,\"queue_ver\":%u,\"play_mode\":%d,\"work_mode\":%d,"

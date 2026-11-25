@@ -80,6 +80,7 @@ static int e_out_bt = 0, e_out_aux = 1, e_out_dig = 0, e_outputs_calls; static u
 int eng_output(int aux, int dig, int bt, unsigned rate){ e_out_aux = aux; e_out_dig = dig; e_out_bt = bt; e_out_rate = rate; e_outputs_calls++; return 0; }
 static int e_spdif;
 void eng_set_spdif(unsigned rate){ e_spdif = (int)rate; }
+void eng_usb(int on, int soft, unsigned gen){ (void)on; (void)soft; (void)gen; }
 static unsigned bt_link_rate = 48000; static int bt_vol_set = -1; static char bt_codec_asked[8], bt_sel[16] = "SBC";
 static int bt_codec_started = -1;
 int bto_info(const char *mac, unsigned *rate, char *sel, size_t selcap, char *avail, size_t availcap, bto_log_fn log){
@@ -416,7 +417,7 @@ static void test_playback(void){
     mkdir(ENG_RUN_DIR, 0755);
     c.route = PL_ROUTE_BT; c.out_bt = 1; c.out_aux = 0; c.bt_mac[0] = 0; pb_route();
     CHECK(!pb_bluetooth() && e_out_bt == 0 && e_out_aux == 1);
-    snprintf(c.bt_mac, sizeof c.bt_mac, "AA:BB:CC:01:02:03"); c.bt_codec = 1; c.vol_bt = 60; pb_route();
+    snprintf(c.bt_mac, sizeof c.bt_mac, "AA:BB:CC:01:02:03"); c.bt_codec = 1; c.vol_bt = c.app_bt = 60; pb_route();
     CHECK(pb_bluetooth() && !pb_aux() && e_out_bt == 1 && e_out_aux == 0 && e_out_rate == 48000 && bt_vol_set == 60
           && !strcmp(bt_codec_asked, "1") && !strcmp(pb_bt_codecs(), "SBC AAC LDAC"));
     FILE *bf = fopen(ENG_BT_DEV, "r"); char bl[32] = ""; if(bf){ if(!fgets(bl, sizeof bl, bf)) bl[0] = 0; fclose(bf); }

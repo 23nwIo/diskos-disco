@@ -4,6 +4,15 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 ## Unreleased
 
+- Own player: **USB sound cards** as an output (Settings > Audio > Outputs > USB audio), also behind a USB-C hub or dock;
+  the Disc switches to USB host by itself when a device is plugged in. One card at a time (the newest). A card never
+  seen before, or one without a serial number, comes **off and silent**. Volumes are now one **main volume plus a step
+  per device** (AUX, digital, each pair of Bluetooth headphones, each USB card), with a **volume limit** and a **fade
+  in** (4 s, from silence, when an output comes on or playback starts after a pause) per device under Outputs >
+  Limits and Fade In. New Bluetooth headphones start silent too; the old Bluetooth volume goes to the first headphones
+  that connect. Fade length: `fade_s=` in `/usr/data/diskos-own/audio.conf`. See [docs/USB_AUDIO.md](docs/USB_AUDIO.md).
+  Not yet tested on a Disc.
+
 - Charger on a locked screen: plugging in a charger while the screen is off shows a charging screen (battery level) for
   about a second, then the screen goes dark again. It stays locked: touch does nothing, the power button wakes it as
   always. Not yet tested on a Disc. A USB device without its own power (a sound card) no longer counts as a charger: the Disc powers it, and the USB-C

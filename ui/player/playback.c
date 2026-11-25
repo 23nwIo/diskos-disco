@@ -42,6 +42,9 @@ static struct { unsigned seq; int id; } g_up_gone[32];
 static int g_up_ngone;
 static eng_status_t g_es;
 static int g_bt;                   /* playing to Bluetooth (pb_route) */
+static int g_usb;                   /* playing to the USB sound card (pb_route) */
+static int g_usb_card, g_usb_soft;  /* a USB sound card is there (main.c, usbaudio.c); it has no volume control */
+static unsigned g_usb_gen;          /* bumps with every card that comes, so MPD opens its output anew */
 static int g_aux = 1;              /* playing to the DAC, AUX analog (pb_route); off: the DAC is powered down */
 static int g_dig;                  /* playing to S/PDIF, AUX digital (pb_route) */
 static int g_bt_codec = -1;        /* the last codec asked of BlueALSA for g_bt_mac */
@@ -110,7 +113,7 @@ static double now_s(void){
 }
 void pb_attenuation(unsigned char *a, unsigned char *l){
     /* the stock player: the high gain curve only with a plug in, the balanced curve with the 4.4 mm plug */
-    dac_attenuation(C->vol_aux, C->gain && pl_core_plugged(C), C->bal == 1, C->balance, a, l);
+    dac_attenuation(C->app_aux, C->gain && pl_core_plugged(C), C->bal == 1, C->balance, a, l);
 }
 static void send_(const char *f, int n){ if(C && C->send && n > 0) C->send(C->ctx, f, n); }
 static void send_lit(const char *f){ send_(f, (int)strlen(f)); }
@@ -622,7 +625,9 @@ void pb_route(void){
         bt_read();
     }
     int dig = C->out_dig;
-    int aux = C->out_aux || (C->out_bt && !bt && !dig);   /* the DAC stands in while Bluetooth waits for the headphones */
+    int usb = C->out_usb && C->usb_ready && g_usb_card;
+    /* the DAC stands in while Bluetooth waits for the headphones (and nothing else plays) */
+    int aux = C->out_aux || (C->out_bt && !bt && !dig && !usb);
     int running = g_es_valid && g_es.state != ENG_STOP && g_es.rate;
     int dig_off = g_dig && !dig, dac_off = g_aux && !aux;
     /* an output that comes on is set up before MPD opens it; one that goes off is torn down after MPD closed it */
@@ -632,14 +637,15 @@ void pb_route(void){
     }
     int held = dig && g_dig && running && aux != g_aux ? dig_hold() : 0;   /* the DAC changes under running S/PDIF */
     if(aux && !g_aux && running){ g_aux = 1; prepare_dac(g_es.rate); }   /* the DAC joins a running stream: its start first */
-    g_aux = aux; g_dig = dig; g_bt = bt;
-    if(!aux && !dig && !bt) L("route: no output is on - playback waits");
-    else L("route:%s%s%s%s, link at %u Hz", aux ? " DAC" : "", dig ? " S/PDIF" : "", bt ? " " : "", bt ? g_bt_mac : "", bt ? g_bt_rate : 0);
+    g_aux = aux; g_dig = dig; g_bt = bt; g_usb = usb;
+    if(!aux && !dig && !bt && !usb) L("route: no output is on - playback waits");
+    else L("route:%s%s%s%s%s, link at %u Hz", aux ? " DAC" : "", dig ? " S/PDIF" : "", usb ? " USB" : "", bt ? " " : "", bt ? g_bt_mac : "", bt ? g_bt_rate : 0);
+    if(bt) bto_volume(g_bt_mac, C->app_bt, PL_VOL_MAX, L);   /* the headphones' level before their output opens */
+    eng_usb(usb, g_usb_soft, g_usb_gen);
     if(g_cs_pid < 0) eng_output(aux, dig, bt, g_bt_rate);   /* during a codec switch pb_tick sets the outputs once it is done */
     if(dig_off){ mix_unroute_spdif(L); g_sp_rate = 0; }
     if(dac_off) dac_power_down(L);                      /* AUX analog off: no DAC power (dac_start powers it up again) */
     dig_release(held);
-    if(bt) bto_volume(g_bt_mac, C->vol_bt, PL_VOL_MAX, L);
 }
 
 void pb_codec(int value){
@@ -669,13 +675,18 @@ static void codec_tick(double t){
     bt_read();
     L("codec: now %s, link at %u Hz", g_bt_sel[0] ? g_bt_sel : "?", g_bt_rate);
     eng_output(g_aux, g_dig, 1, g_bt_rate);
-    bto_volume(g_bt_mac, C->vol_bt, PL_VOL_MAX, L);
+    bto_volume(g_bt_mac, C->app_bt, PL_VOL_MAX, L);
     if(g_cs_play) eng_pause(0);
 }
 
 int pb_switching(void){ return g_cs_pid >= 0; }
 int pb_aux(void){ return g_aux; }
 int pb_digital(void){ return g_dig; }
+int pb_usb(void){ return g_usb; }
+void pb_usb_card(int present, int soft){
+    if(present && !g_usb_card) g_usb_gen++;      /* a card came (another one: main.c calls 0 first) */
+    g_usb_card = present; g_usb_soft = soft;
+}
 const char *pb_bt_codec(void){ return g_bt ? g_bt_sel : ""; }
 const char *pb_bt_codecs(void){ return g_bt ? g_bt_avail : ""; }
 int pb_bluetooth(void){ return g_bt; }

@@ -1,7 +1,7 @@
 # USB audio output (own player) - assessment and agreed design
 
-Status (2026-11-25): **assessment done, design agreed with Jo, not implemented.** Own player (MPD core) only; the stock
-mq_player route in `ui/modes.c` (0666 3 + 0642 5) is not used by it.
+Status (2026-11-25): **implemented for one USB sound card (the newest plugged), host-tested, not yet tested on a
+Disc.** Own player (MPD core) only; the stock mq_player route in `ui/modes.c` (0666 3 + 0642 5) is not used by it.
 
 ## Device facts (verified on a Disc, 2026-11-25)
 
@@ -32,9 +32,11 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
 - **Outputs list**: every plugged USB card is its own switch under Outputs (next to Bluetooth / AUX analog /
   AUX digital). First version may support one active USB card (the newest plugged); several cards follow soon after.
 - **New / unknown devices start OFF**, also with Auto Outputs = Newest. Known devices (with serial) follow Auto Outputs.
-- **MPD**: a new card is listed without touching MPD. MPD's config is rewritten and MPD restarted only when a card is
-  switched on that the running config does not have (short gap on the other outputs, then resume). Unplug never
-  restarts MPD. No fixed format: MPD negotiates with the card and converts only what the card refuses. DoP later.
+- **MPD**: never restarted for a card (better than agreed): MPD's USB output plays to the ALSA name `diskos_usb`,
+  defined in `/tmp/diskos-mpd/asound.conf`, which MPD's alsa-lib reads besides its own `alsa.conf`
+  (`ALSA_CONFIG_PATH`). alsa-lib reads its files again when one is replaced, so another card only needs the file
+  rewritten and the output opened again (checked with alsa-lib 1.2.11/1.2.12 on a PC). No fixed format: MPD negotiates
+  with the card and converts only what the card refuses. DoP later.
 - **Host port**: shared by USB audio and USB drive (later Ethernet); released only when no user needs it. USB storage
   mode (Disc as gadget) excludes host mode.
 
@@ -43,8 +45,9 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
 - One **main volume** plus a stored **offset per device**; effective = clamp(main + offset, 0, cap). Only main and
   offsets are stored, never the effective value. Offsets are on the common 0..100 scale; each device maps it with its
   own curve. Volume keys and headphone (AVRCP) volume buttons move the main volume.
-- **New devices: offset -100 and off** (silent at any main volume until raised on purpose). Reason (Jo): use on
-  concert-size PA systems - a loud surprise can injure people.
+- **New devices: offset -120 and off** (silent at any main volume until raised on purpose; Jo asked for -20 or -100,
+  -120 is the bottom of the 0..120 scale). Reason (Jo): use on concert-size PA systems - a loud surprise can injure
+  people. New Bluetooth headphones also start at -120 (they are switched on by Auto Outputs as before, but silent).
 - **Max volume cap per device** (adjustable).
 - **Fade-in per device**: default ON, default 4 s (duration adjustable in the config file for now, no UI), from 0 to the target volume when the output is switched on and when
   playback starts after a pause; not on normal volume changes.
@@ -53,7 +56,23 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
   opens. Cards without a hardware mixer get MPD's software volume set before the output is enabled.
 - Mixer choice: the first `Playback Volume` control of the card (Speaker, PCM, Headphone, Master, ...); none ->
   MPD software volume.
-- Stored on the SD card, written only on change (debounced) or on switch-off, never periodically.
+- Stored in `/usr/data/diskos-own/volumes` (as the volumes were before), written only 3 s after a change and at
+  power off, never periodically. At most 48 devices; the least recently used one goes.
+
+## Implementation (2026-11-25)
+
+- `ui/player/usbaudio.c`: the host role (`ua_role_tick`, every 2 s: data role DFP -> `host`; after we set it and the
+  data role is no longer DFP -> `none`; left alone in USB storage mode), the card scan (`/proc/asound/cardN/usbid` +
+  `pcmNp`, serial and product from sysfs), the volume control (control ioctls, no alsa-lib) and the ALSA file.
+- `ui/player/main.c`: `usb_tick` once a second (newest card; a new card's control is set before anything can play),
+  fade in (`before_play` hook from engine.c, outputs coming on in the route change), `apply_volumes`.
+- `ui/player/core.c`: main + offset per device, limits, fade flags, `pl_core_usb`, 0d08/0d09/0d0a, 0642 5.
+- `ui/player/engine.c`: outputs `usb_hw` (no mixer) and `usb_sw` (software mixer; shares MPD's `setvol` with S/PDIF,
+  so when both play the lower volume wins - a known limit), `eng_usb`.
+- UI: Settings > Audio > Outputs (USB audio, USB Volume, Limits and Fade In), Remote Control `api/outputs`.
+- Fade length: `fade_s=N` in `/usr/data/diskos-own/audio.conf` (0..30, default 4), read at player start.
+- Known: the C-Media test card has no serial number and disconnects whenever its headphones are pulled, so it comes
+  back off and silent every time (as agreed for cards without a serial).
 
 ## Out of scope for now
 

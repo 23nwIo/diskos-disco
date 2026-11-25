@@ -50,7 +50,8 @@
 /* Web radio: the song the station names, as MPD has it (ICY StreamTitle, Ogg comments), for ui/radio.c instead of a
  * second connection to the station. "uri=", "artist=", "title=" lines; only while the own player plays a station. */
 #define OPL_STREAM "/tmp/diskos-player-stream"   /* one line per volume change (player/main.c volume_log) */
-#define OPL_VOLUMES OPL_DIR "/volumes"          /* the two output volumes, kept by the player: "vol_aux=N\nvol_bt=N" */
+#define OPL_VOLUMES OPL_DIR "/volumes"          /* kept by the player: "main=N" and "dev KEY off=N cap=N fade=N" per device
+                                                 * (aux, dig, bt:MAC, usb:VID:PID:SERIAL; player/core.c pl_core_vol_format) */
 /* A stream list (Bandcamp, ui/bandcamp.c): the UI writes the tracks here and sends 0d14 with the track to start at;
  * the player plays them one after another in the radio work mode (playback.c pb_slist_*). tmpfs. One track per line:
  * "<duration ms>\t<stream url>\t<title>\t<artist>\t<album>" (no tabs or newlines in the texts); instead of the URL an
@@ -160,11 +161,19 @@ typedef struct {
     char codecs[64];               /* the codecs the headphones offer ("SBC AAC LDAC") */
     int auto_out;                  /* 0d05 as the player has it: 0 off, 1 newest, 2 all (player/core.h PL_AUTO_*) */
     unsigned notice_seq;           /* bumps when a device connected that is not on (auto off) */
-    int notice;                    /* what: 1 AUX, 2 Bluetooth, 3 play asked but no output is on (player/core.h) */
+    int notice;                    /* what: 1 AUX, 2 Bluetooth, 3 play asked but no output is on, 4 a USB sound card
+                                    * connected that is off (player/core.h) */
+    int usb, vol_usb;              /* playing to the USB sound card; its volume 0..120 */
+    int usb_ready;                 /* a USB sound card is there */
+    int usb_soft;                  /* it has no volume control: MPD's software volume (shared with AUX digital) */
+    char usb_name[80];             /* its product name */
+    int main_vol;                  /* the main volume (each output: main + its offset, within its cap); -1 unknown */
+    int cap[4], fade[4];           /* per output (0 AUX, 1 Bluetooth, 2 digital, 3 USB: player/core.h PL_O_*) */
 } opl_outputs_t;
 static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
     memset(o, 0, sizeof *o);
-    o->jack = o->bal = -1;
+    o->jack = o->bal = -1; o->main_vol = -1;
+    for(int i = 0; i < 4; i++){ o->cap[i] = 120; o->fade[i] = 1; }
     int seen = 0;
     for(const char *l = t; l && *l; ){
         const char *e = strchr(l, '\n');
@@ -189,6 +198,16 @@ static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
             else if(!strcmp(line, "codecs")) snprintf(o->codecs, sizeof o->codecs, "%s", v);
             else if(!strcmp(line, "auto")) o->auto_out = atoi(v);
             else if(!strcmp(line, "notice")){ char *e; o->notice_seq = (unsigned)strtoul(v, &e, 10); o->notice = atoi(e); }
+            else if(!strcmp(line, "usb")) o->usb = atoi(v);
+            else if(!strcmp(line, "vol_usb")) o->vol_usb = atoi(v);
+            else if(!strcmp(line, "usb_ready")) o->usb_ready = atoi(v);
+            else if(!strcmp(line, "usb_soft")) o->usb_soft = atoi(v);
+            else if(!strcmp(line, "usb_name")) snprintf(o->usb_name, sizeof o->usb_name, "%s", v);
+            else if(!strcmp(line, "main")) o->main_vol = atoi(v);
+            else if(!strcmp(line, "cap") || !strcmp(line, "fade")){
+                int *dst = line[0] == 'c' ? o->cap : o->fade;
+                if(sscanf(v, "%d %d %d %d", &dst[0], &dst[1], &dst[2], &dst[3]) != 4) for(int i = 0; i < 4; i++) dst[i] = line[0] == 'c' ? 120 : 1;
+            }
         }
         l = e ? e + 1 : NULL;
     }

@@ -23,7 +23,10 @@ void pl_core_init(pl_core_t *c, pl_send_fn send, pl_log_fn log, void *ctx){
      * starts low on purpose: a player that has not been told the volume yet must not be loud. */
     c->volume = 20; c->max_volume = PL_VOL_MAX;
     c->gain = 0; c->dre = 0; c->work_mode = -1; c->route = -1; c->jack = -1; c->bal = -1; c->artist_grouping = -1;
-    c->out_aux = 1; c->mem_aux = 1; c->vol_aux = c->vol_bt = c->vol_dig = c->volume; c->codec_want = -1; c->auto_out = PL_AUTO_NEWEST;
+    c->out_aux = 1; c->mem_aux = 1; c->codec_want = -1; c->auto_out = PL_AUTO_NEWEST;
+    for(int o = 0; o < PL_O_N; o++){ c->off[o] = o == PL_O_AUX || o == PL_O_DIG ? 0 : -PL_VOL_MAX; c->cap[o] = PL_VOL_MAX; c->fade[o] = 1; }
+    pl_core_recalc(c);
+    c->app_aux = c->vol_aux; c->app_bt = c->vol_bt; c->app_dig = c->vol_dig; c->app_usb = c->vol_usb;
 }
 
 void pl_core_send_state(pl_core_t *c){
@@ -39,50 +42,167 @@ void pl_core_send_state(pl_core_t *c){
 static void send_volume(pl_core_t *c){ char f[16]; send_(c, f, pp_fmt_a714(f, sizeof f, c->volume)); }
 
 static int clampv(const pl_core_t *c, int v){ return v < 0 ? 0 : v > c->max_volume ? c->max_volume : v; }
-/* what plays: Bluetooth when it is on and the headphones are there; the DAC when AUX analog is on or stands in for
- * Bluetooth that waits for the headphones (and AUX digital is off); S/PDIF when AUX digital is on (playback.c pb_route) */
-static int bt_eff(const pl_core_t *c){ return c->out_bt && c->bt_ready; }
-static int lead_vol(const pl_core_t *c){
-    return bt_eff(c) ? c->vol_bt : c->out_aux ? c->vol_aux : c->out_dig ? c->vol_dig : c->vol_aux;
+static int clampo(int v){ return v < -PL_VOL_MAX ? -PL_VOL_MAX : v > PL_VOL_MAX ? PL_VOL_MAX : v; }
+static int clampc(int v){ return v < 0 ? 0 : v > PL_VOL_MAX ? PL_VOL_MAX : v; }
+static const char *const ONAME[PL_O_N] = { "AUX", "Bluetooth", "digital", "USB" };
+
+/* ---- the device table (core.h PL_DEV_MAX) ---- */
+static pl_dev_t *dev_find(pl_core_t *c, const char *key){
+    for(int i = 0; i < PL_DEV_MAX; i++) if(c->devs[i].key[0] && !strcmp(c->devs[i].key, key)) return &c->devs[i];
+    return NULL;
 }
-/* the lead output's volume becomes the one shown; the UI hears a change */
-static void lead_volume(pl_core_t *c, int tell){
-    int v = lead_vol(c);
-    if(v == c->volume) return;
-    c->volume = v;
-    if(tell) send_volume(c);
+/* the entry for key, made when missing (a new device: silent, fade on); the oldest goes when the table is full */
+static pl_dev_t *dev_get(pl_core_t *c, const char *key){
+    pl_dev_t *d = dev_find(c, key);
+    if(!d){
+        int k = 0;
+        for(int i = 0; i < PL_DEV_MAX; i++){
+            if(!c->devs[i].key[0]){ k = i; break; }
+            if(c->devs[i].used < c->devs[k].used) k = i;
+        }
+        d = &c->devs[k];
+        if(d->key[0]) logf_(c, "volumes: device table full, %s forgotten", d->key);
+        memset(d, 0, sizeof *d);
+        snprintf(d->key, sizeof d->key, "%s", key);
+        /* AUX analog and digital are the Disc's own: they start at the main volume; anything else starts silent */
+        d->off = !strcmp(key, "aux") || !strcmp(key, "dig") ? 0 : -PL_VOL_MAX; d->cap = PL_VOL_MAX; d->fade = 1;
+        c->vol_seq++;
+    }
+    d->used = ++c->dev_clock;
+    return d;
+}
+/* the stored entry behind output o; NULL for Bluetooth without headphones and for a USB card without a serial number
+ * (its values live in c->off[] etc. only, until it is pulled) */
+static pl_dev_t *out_dev(pl_core_t *c, int o){
+    char k[120];
+    switch(o){
+    case PL_O_AUX: return dev_get(c, "aux");
+    case PL_O_DIG: return dev_get(c, "dig");
+    case PL_O_BT: if(!c->bt_mac[0]) return NULL; snprintf(k, sizeof k, "bt:%s", c->bt_mac); return dev_get(c, k);
+    default: return c->usb_ready && c->usb_stored ? dev_get(c, c->usb_key) : NULL;
+    }
+}
+/* output o takes its device's offset, cap and fade */
+static void out_load(pl_core_t *c, int o){
+    pl_dev_t *d = out_dev(c, o);
+    if(d){ c->off[o] = d->off; c->cap[o] = d->cap; c->fade[o] = d->fade; }
+}
+/* Bluetooth: the headphones in bt_mac take their own values; the first ones after a volumes file from before
+ * offsets take its Bluetooth volume (bt_legacy), any other new ones start silent */
+static void bt_load(pl_core_t *c){
+    char k[120];
+    if(!c->bt_mac[0]) return;
+    snprintf(k, sizeof k, "bt:%s", c->bt_mac);
+    if(!dev_find(c, k) && c->bt_legacy > 0){
+        pl_dev_t *d = dev_get(c, k);
+        d->off = clampo(c->bt_legacy - PL_VOL_MAX - 1);
+        c->bt_legacy = 0; c->vol_seq++;
+        logf_(c, "volumes: %s takes the Bluetooth volume from before (offset %+d)", k, d->off);
+    }
+    out_load(c, PL_O_BT);
+    logf_(c, "volumes: %s: offset %+d, cap %d", k, c->off[PL_O_BT], c->cap[PL_O_BT]);
+}
+/* output o's offset, cap and fade go back to its device */
+static void out_store(pl_core_t *c, int o){
+    pl_dev_t *d = out_dev(c, o);
+    if(d && (d->off != c->off[o] || d->cap != c->cap[o] || d->fade != c->fade[o])){
+        d->off = c->off[o]; d->cap = c->cap[o]; d->fade = c->fade[o]; c->vol_seq++;
+    }
+}
+
+static int eff(const pl_core_t *c, int o){
+    int lim = c->cap[o] < c->max_volume ? c->cap[o] : c->max_volume;
+    int v = c->volume + c->off[o];
+    return v < 0 ? 0 : v > lim ? lim : v;
+}
+void pl_core_recalc(pl_core_t *c){
+    c->vol_aux = eff(c, PL_O_AUX); c->vol_bt = eff(c, PL_O_BT); c->vol_dig = eff(c, PL_O_DIG); c->vol_usb = eff(c, PL_O_USB);
 }
 
 void pl_core_set_volume(pl_core_t *c, int v){
     v = clampv(c, v);
-    int d = v - c->volume;
-    /* Both volumes move, whether their output is on or connected or not (Jo 2026-11-24: an AUX volume left far below
-     * the Bluetooth one while only Bluetooth played surprised; the main volume should move both). */
-    c->vol_aux = clampv(c, c->vol_aux + d);
-    c->vol_bt = clampv(c, c->vol_bt + d);
-    c->vol_dig = clampv(c, c->vol_dig + d);
-    c->volume = lead_vol(c);
-    logf_(c, "volume = %d (AUX %d%s, digital %d%s, Bluetooth %d%s)", c->volume, c->vol_aux, c->out_aux ? "" : " off",
-          c->vol_dig, c->out_dig ? "" : " off", c->vol_bt, c->out_bt ? "" : " off");
+    if(v != c->volume) c->vol_seq++;
+    c->volume = v;
+    pl_core_recalc(c);
+    logf_(c, "volume = %d (AUX %d%s, digital %d%s, Bluetooth %d%s, USB %d%s)", c->volume, c->vol_aux, c->out_aux ? "" : " off",
+          c->vol_dig, c->out_dig ? "" : " off", c->vol_bt, c->out_bt ? "" : " off", c->vol_usb, c->out_usb ? "" : " off");
     send_volume(c);
+}
+
+/* output o plays at v from now on (within its cap): its offset to the main volume becomes v - main */
+static void set_out_volume(pl_core_t *c, int o, int v){
+    c->off[o] = clampo(clampv(c, v) - c->volume);
+    out_store(c, o);
+    pl_core_recalc(c);
 }
 
 void pl_core_set_bt_volume(pl_core_t *c, int v){
     v = clampv(c, v);
     if(v == c->vol_bt) return;
-    int d = v - c->vol_bt;
-    c->vol_bt = v;
-    if(c->hp_vol_all){                                       /* 0d06 1: AUX moves by the same step, on or off */
-        c->vol_aux = clampv(c, c->vol_aux + d);
-        c->vol_dig = clampv(c, c->vol_dig + d);
-        logf_(c, "volume: Bluetooth %d, AUX %d, digital %d (from the headphones)", v, c->vol_aux, c->vol_dig);
-    } else logf_(c, "volume: Bluetooth %d (from the headphones)", v);
-    lead_volume(c, 1);
+    if(c->hp_vol_all){                                       /* 0d06 1: the main volume moves, every output follows */
+        int m = v - c->off[PL_O_BT];
+        /* main can't follow below 0 or above max: there Bluetooth's offset takes the rest, so the headphones get v */
+        if(m < 0 || m > c->max_volume){ m = m < 0 ? 0 : c->max_volume; c->off[PL_O_BT] = clampo(v - m); out_store(c, PL_O_BT); }
+        pl_core_set_volume(c, m);
+        logf_(c, "volume: from the headphones: main %d, Bluetooth %d (offset %+d)", c->volume, c->vol_bt, c->off[PL_O_BT]);
+        return;
+    }
+    set_out_volume(c, PL_O_BT, v);
+    logf_(c, "volume: Bluetooth %d (from the headphones; offset %+d)", c->vol_bt, c->off[PL_O_BT]);
 }
 
-void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt, int vol_dig){
-    c->vol_aux = clampv(c, vol_aux); c->vol_bt = clampv(c, vol_bt); c->vol_dig = clampv(c, vol_dig);
-    lead_volume(c, 1);
+/* the volumes file: "main=N" and "dev KEY off=N cap=N fade=N"; from before offsets "vol_aux=N vol_bt=N vol_dig=N" */
+int pl_core_vol_parse(pl_core_t *c, const char *t){
+    int main_v = -1, va = -1, vb = -1, vd = -1, seen = 0;
+    for(const char *l = t; l && *l; ){
+        const char *e = strchr(l, '\n');
+        size_t n = e ? (size_t)(e - l) : strlen(l);
+        char line[200];
+        if(n >= sizeof line) n = sizeof line - 1;
+        memcpy(line, l, n); line[n] = 0;
+        l = e ? e + 1 : NULL;
+        if(!strncmp(line, "main=", 5)){ main_v = atoi(line + 5); seen = 1; }
+        else if(!strncmp(line, "vol_aux=", 8)){ va = atoi(line + 8); seen = 1; }
+        else if(!strncmp(line, "vol_bt=", 7)) vb = atoi(line + 7);
+        else if(!strncmp(line, "vol_dig=", 8)) vd = atoi(line + 8);
+        else if(!strncmp(line, "bt_legacy=", 10)) c->bt_legacy = atoi(line + 10);
+        else if(!strncmp(line, "dev ", 4)){
+            char key[100]; int off = -PL_VOL_MAX, cap = PL_VOL_MAX, fade = 1;
+            char *p = line + 4, *sp = strchr(p, ' ');
+            if(!sp || sp == p || (size_t)(sp - p) >= sizeof key) continue;
+            memcpy(key, p, (size_t)(sp - p)); key[sp - p] = 0;
+            for(char *q = sp; q && *q; q = strchr(q + 1, ' ')){
+                if(!strncmp(q, " off=", 5)) off = atoi(q + 5);
+                else if(!strncmp(q, " cap=", 5)) cap = atoi(q + 5);
+                else if(!strncmp(q, " fade=", 6)) fade = atoi(q + 6) ? 1 : 0;
+            }
+            pl_dev_t *d = dev_get(c, key);
+            d->off = clampo(off); d->cap = clampc(cap); d->fade = fade;
+            seen = 1;
+        }
+    }
+    if(!seen) return -1;
+    if(main_v < 0 && va >= 0){                               /* from before offsets: AUX's volume is the main one */
+        main_v = va;
+        pl_dev_t *a = dev_get(c, "aux"), *d = dev_get(c, "dig");
+        a->off = 0; d->off = vd >= 0 ? clampo(vd - va) : 0;
+        if(vb >= 0) c->bt_legacy = clampo(vb - va) + PL_VOL_MAX + 1;   /* shifted: > 0 means there is one */
+        logf_(c, "volumes: from the old file: main %d, digital %+d%s", main_v, d->off, vb >= 0 ? ", Bluetooth kept for the first headphones" : "");
+    }
+    if(main_v >= 0) c->volume = clampv(c, main_v);
+    for(int o = 0; o < PL_O_N; o++) out_load(c, o);
+    pl_core_recalc(c);
+    send_volume(c);
+    return 0;
+}
+int pl_core_vol_format(const pl_core_t *c, char *buf, unsigned cap){
+    int n = snprintf(buf, cap, "main=%d\n", c->volume);
+    if(c->bt_legacy > 0 && n >= 0 && (unsigned)n < cap) n += snprintf(buf + n, cap - (unsigned)n, "bt_legacy=%d\n", c->bt_legacy);
+    for(int i = 0; i < PL_DEV_MAX && n >= 0 && (unsigned)n < cap; i++){
+        const pl_dev_t *d = &c->devs[i];
+        if(d->key[0]) n += snprintf(buf + n, cap - (unsigned)n, "dev %s off=%d cap=%d fade=%d\n", d->key, d->off, d->cap, d->fade);
+    }
+    return n >= 0 && (unsigned)n < cap ? 0 : -1;
 }
 
 void pl_core_volume_step(pl_core_t *c, int dir){
@@ -90,15 +210,16 @@ void pl_core_volume_step(pl_core_t *c, int dir){
     if(v < 0 || v > c->max_volume){ logf_(c, "volume key: already at %d", c->volume); return; }
     pl_core_set_volume(c, v);
 }
-
 /* switch the outputs; why: for the log */
-static void set_outputs(pl_core_t *c, int aux, int bt, int dig, const char *why){
-    if(c->out_aux == aux && c->out_bt == bt && c->out_dig == dig) return;
-    c->out_aux = aux; c->out_bt = bt; c->out_dig = dig; c->route_seq++;
+static void set_outputs4(pl_core_t *c, int aux, int bt, int dig, int usb, const char *why){
+    if(c->out_aux == aux && c->out_bt == bt && c->out_dig == dig && c->out_usb == usb) return;
+    c->out_aux = aux; c->out_bt = bt; c->out_dig = dig; c->out_usb = usb; c->route_seq++;
     if(aux || dig){ c->mem_aux = aux; c->mem_dig = dig; }   /* what a plug going in brings back */
-    logf_(c, "outputs: AUX %s, digital %s, Bluetooth %s (%s)", aux ? "on" : "off", dig ? "on" : "off", bt ? "on" : "off", why);
-    lead_volume(c, 1);
+    logf_(c, "outputs: AUX %s, digital %s, Bluetooth %s, USB %s (%s)", aux ? "on" : "off", dig ? "on" : "off", bt ? "on" : "off",
+          usb ? "on" : "off", why);
 }
+/* AUX analog, Bluetooth, AUX digital; USB stays as it is */
+static void set_outputs(pl_core_t *c, int aux, int bt, int dig, const char *why){ set_outputs4(c, aux, bt, dig, c->out_usb, why); }
 
 int pl_core_plugged(const pl_core_t *c){ return c->jack == 1 || c->bal == 1; }
 /* a plug state is known for at least one jack */
@@ -106,6 +227,7 @@ static int plug_known(const pl_core_t *c){ return c->jack >= 0 || c->bal >= 0; }
 static void notice(pl_core_t *c, int what){
     c->notice = what; c->notice_seq++;
     if(what == PL_NOTICE_NONE) logf_(c, "outputs: play asked, but no output is on - notice to the UI");
+    else if(what == PL_NOTICE_USB) logf_(c, "outputs: USB sound card %s connected, USB audio is off - notice to the UI", c->usb_name);
     else logf_(c, "outputs: %s connected, but %s is off (auto outputs off) - notice to the UI",
                what == PL_NOTICE_AUX ? "a plug" : "headphones", what == PL_NOTICE_AUX ? "AUX" : "Bluetooth");
 }
@@ -119,12 +241,17 @@ static void plug_changed(pl_core_t *c, int was_plugged, const char *which, int p
         logf_(c, "jack: %s in%s", which, was_plugged ? "" : " (playback stays as it is)");
         if(was_plugged) return;
         /* the last AUX choice comes back: analog, digital or both (the Disc can't tell what the plug is) */
-        if(c->auto_out == PL_AUTO_NEWEST) set_outputs(c, c->mem_aux, 0, c->mem_dig, "plug in");
+        if(c->auto_out == PL_AUTO_NEWEST) set_outputs4(c, c->mem_aux, 0, c->mem_dig, 0, "plug in");
         else if(c->auto_out == PL_AUTO_ALL) set_outputs(c, c->mem_aux, c->out_bt, c->mem_dig, "plug in");
         else if(!c->out_aux && !c->out_dig) notice(c, PL_NOTICE_AUX);
         return;
     }
     if(now){ logf_(c, "jack: %s out, the other plug is still in", which); return; }
+    if(c->out_usb && c->usb_ready){                    /* a USB sound card plays: it goes on, AUX goes off unless auto off */
+        if(jack_out && c->auto_out != PL_AUTO_OFF) set_outputs(c, 0, c->out_bt, 0, "plug out, USB audio plays on");
+        else logf_(c, "jack: %s out, USB audio plays on", which);
+        return;
+    }
     /* both AUX outputs are on the jack: analog and digital are treated alike */
     if(c->bt_ready && c->auto_out != PL_AUTO_OFF){     /* AUX off; the connected headphones are what is left */
         if(bt_live) logf_(c, "jack: %s out (Bluetooth plays on)", which);
@@ -145,8 +272,8 @@ static void bt_gone(pl_core_t *c, const char *why){
     int was = c->bt_ready;
     c->bt_ready = 0; c->bt_auto = 0;
     if(!c->out_bt){ if(was) logf_(c, "bluetooth: headphones gone (%s), Bluetooth was off", why); return; }
-    int aux_on = c->out_aux || c->out_dig;
-    if(aux_on && c->auto_out != PL_AUTO_OFF){ set_outputs(c, c->out_aux, 0, c->out_dig, why); return; }   /* AUX plays on */
+    int aux_on = c->out_aux || c->out_dig || (c->out_usb && c->usb_ready);
+    if(aux_on && c->auto_out != PL_AUTO_OFF){ set_outputs(c, c->out_aux, 0, c->out_dig, why); return; }   /* AUX / USB play on */
     if(aux_on){ logf_(c, "bluetooth: headphones gone (%s), AUX plays on (auto outputs off: Bluetooth stays on)", why); return; }
     /* Bluetooth was the only output: pause (no sudden sound elsewhere). A plug is in: AUX takes over (auto on). Else
      * the choice waits for the headphones and the DAC plays meanwhile, so the UI's play goes on (playback.c pb_route). */
@@ -154,14 +281,47 @@ static void bt_gone(pl_core_t *c, const char *why){
     pause_(c);
     if(c->auto_out != PL_AUTO_OFF && pl_core_plugged(c)) set_outputs(c, c->mem_aux, 0, c->mem_dig, "headphones gone, a plug is in");
     else logf_(c, "outputs: Bluetooth waits for the headphones, the DAC plays meanwhile");
-    lead_volume(c, 1);
 }
 
 /* 0d05 to all: every connected device on (a plug: AUX, connected headphones: Bluetooth), nothing else */
 static void auto_all_now(pl_core_t *c){
     int in = plug_known(c) ? pl_core_plugged(c) : c->out_aux || c->out_dig, bt = c->bt_ready ? 1 : c->out_bt;
+    /* a USB card stays as it is: one that was never switched on (new) must not come on by itself */
     if(!in && !bt) return;                           /* nothing connected: the choice stays */
     set_outputs(c, in ? c->mem_aux : 0, bt, in ? c->mem_dig : 0, "auto outputs: all connected");
+}
+
+void pl_core_usb(pl_core_t *c, int present, const char *key, int stored, const char *name){
+    if(present){
+        int known = stored && dev_find(c, key) != NULL;
+        if(c->usb_ready && !strcmp(c->usb_key, key)) return;
+        c->usb_ready = 1; c->usb_stored = stored;
+        snprintf(c->usb_key, sizeof c->usb_key, "%s", key);
+        snprintf(c->usb_name, sizeof c->usb_name, "%s", name && *name ? name : key);
+        /* new (or no serial): silent and off; known: its own offset, cap, fade */
+        c->off[PL_O_USB] = -PL_VOL_MAX; c->cap[PL_O_USB] = PL_VOL_MAX; c->fade[PL_O_USB] = 1;
+        if(stored) out_load(c, PL_O_USB);            /* makes the entry for a new one: stored from now on */
+        pl_core_recalc(c);
+        logf_(c, "usb audio: %s (%s) connected, %s: offset %+d, cap %d", c->usb_name, key,
+              known ? "known" : stored ? "new" : "no serial number, treated as new", c->off[PL_O_USB], c->cap[PL_O_USB]);
+        c->route_seq++;
+        if(!known){ if(c->out_usb) set_outputs4(c, c->out_aux, c->out_bt, c->out_dig, 0, "new USB sound card"); notice(c, PL_NOTICE_USB); return; }
+        if(c->auto_out == PL_AUTO_NEWEST) set_outputs4(c, 0, 0, 0, 1, "known USB sound card connected");
+        else if(c->auto_out == PL_AUTO_ALL) set_outputs4(c, c->out_aux, c->out_bt, c->out_dig, 1, "known USB sound card connected");
+        else if(!c->out_usb) notice(c, PL_NOTICE_USB);
+        return;
+    }
+    if(!c->usb_ready) return;
+    logf_(c, "usb audio: %s gone", c->usb_name);
+    c->usb_ready = 0; c->usb_stored = 0; c->route_seq++;
+    if(!c->out_usb) return;
+    int other = c->out_aux || c->out_dig || (c->out_bt && c->bt_ready);
+    if(other){ set_outputs4(c, c->out_aux, c->out_bt, c->out_dig, 0, "USB sound card gone, the others play on"); return; }
+    logf_(c, "usb audio: it was the only output - pause");
+    pause_(c);
+    if(c->auto_out != PL_AUTO_OFF && pl_core_plugged(c)) set_outputs4(c, c->mem_aux, 0, c->mem_dig, 0, "USB sound card gone, a plug is in");
+    else if(c->auto_out != PL_AUTO_OFF && c->bt_ready) set_outputs4(c, 0, 1, 0, 0, "USB sound card gone, headphones are connected");
+    else set_outputs4(c, c->out_aux, c->out_bt, c->out_dig, 0, "USB sound card gone");
 }
 
 static void plug(pl_core_t *c, int *slot, const char *which, int plugged){
@@ -244,8 +404,8 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         return 0;
     case 0x0711:
         if(set_(c, "max volume", &c->max_volume, v, 0, PL_VOL_MAX)) return -1;
-        c->vol_aux = clampv(c, c->vol_aux); c->vol_bt = clampv(c, c->vol_bt); c->vol_dig = clampv(c, c->vol_dig);
-        lead_volume(c, 1);
+        if(c->volume > c->max_volume){ c->volume = c->max_volume; send_volume(c); }
+        pl_core_recalc(c);
         return 0;
     case 0x0713: {
         int n2 = v & 0xff;
@@ -295,38 +455,46 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         int new_mac = strncmp(c->bt_mac, f.data + 4, 17) != 0;
         memcpy(c->bt_mac, f.data + 4, 17); c->bt_mac[17] = 0;
         c->bt_codec = codec; c->route_seq++;
+        if(new_mac){ bt_load(c); pl_core_recalc(c); }
         logf_(c, "bluetooth codec %d for %s", codec, c->bt_mac);
         if(c->route == PL_ROUTE_BT){
             c->bt_ready = 1;
             if(c->bt_auto || new_mac){
                 c->bt_auto = 0;
-                if(c->auto_out == PL_AUTO_NEWEST) set_outputs(c, 0, 1, 0, "headphones connected");
+                if(c->auto_out == PL_AUTO_NEWEST) set_outputs4(c, 0, 1, 0, 0, "headphones connected");
                 else if(c->auto_out == PL_AUTO_ALL)
                     set_outputs(c, plug_known(c) ? pl_core_plugged(c) && c->mem_aux : c->out_aux, 1,
                                 plug_known(c) ? pl_core_plugged(c) && c->mem_dig : c->out_dig, "headphones connected");
                 else if(!c->out_bt) notice(c, PL_NOTICE_BT);
                 else logf_(c, "outputs: headphones connected, Bluetooth plays (auto outputs off)");
             }
-            lead_volume(c, 1);
         }
         return 0;
     }
 
     /* Outputs (diskOS; only the own player gets these, the UI sends them only when it runs) */
     case 0x0d01: {
-        int aux = v >= 0 && (v & PL_OUT_AUX), bt = v >= 0 && (v & PL_OUT_BT), dig = v >= 0 && (v & PL_OUT_DIG);
-        if(v < 0 || v > 7){ c->bad_frames++; logf_(c, "outputs: bad value %d", v); return -1; }
+        int aux = v >= 0 && (v & PL_OUT_AUX), bt = v >= 0 && (v & PL_OUT_BT), dig = v >= 0 && (v & PL_OUT_DIG), usb = v >= 0 && (v & PL_OUT_USB);
+        if(v < 0 || v > 15){ c->bad_frames++; logf_(c, "outputs: bad value %d", v); return -1; }
         if(bt && !c->out_bt && !c->bt_ready){ logf_(c, "outputs: Bluetooth asked, but no headphones are connected - ignored"); return -1; }
-        set_outputs(c, aux, bt, dig, "by hand");          /* none at all is fine: playback waits (engine.c eng_output) */
+        if(usb && !c->out_usb && !c->usb_ready){ logf_(c, "outputs: USB audio asked, but no USB sound card is there - ignored"); return -1; }
+        set_outputs4(c, aux, bt, dig, usb, "by hand");    /* none at all is fine: playback waits (engine.c eng_output) */
         return 0;
     }
-    case 0x0d02: case 0x0d03: case 0x0d07: {
-        int *slot = f.tag == 0x0d02 ? &c->vol_aux : f.tag == 0x0d03 ? &c->vol_bt : &c->vol_dig;
-        const char *name = f.tag == 0x0d02 ? "AUX" : f.tag == 0x0d03 ? "Bluetooth" : "digital";
-        if(v < 0 || v > PL_VOL_MAX){ logf_(c, "%s volume: value %d out of range, ignored", name, v); return -1; }
-        *slot = clampv(c, v);
-        logf_(c, "%s volume = %d", name, *slot);
-        lead_volume(c, 1);
+    case 0x0d02: case 0x0d03: case 0x0d07: case 0x0d08: {   /* an output's volume: stored as its offset to main */
+        int o = f.tag == 0x0d02 ? PL_O_AUX : f.tag == 0x0d03 ? PL_O_BT : f.tag == 0x0d07 ? PL_O_DIG : PL_O_USB;
+        if(v < 0 || v > PL_VOL_MAX){ logf_(c, "%s volume: value %d out of range, ignored", ONAME[o], v); return -1; }
+        set_out_volume(c, o, v);
+        logf_(c, "%s volume = %d (offset %+d to main %d, cap %d)", ONAME[o], eff(c, o), c->off[o], c->volume, c->cap[o]);
+        return 0;
+    }
+    case 0x0d09: case 0x0d0a: {   /* an output's cap (0..120) / fade in (0/1): output index (high byte) and value */
+        int o = v >> 8, x = v & 0xff, cap = f.tag == 0x0d09;
+        if(v < 0 || o >= PL_O_N || (cap ? x > PL_VOL_MAX : x > 1)){ c->bad_frames++; logf_(c, "%s: bad value %d", cap ? "cap" : "fade", v); return -1; }
+        if(cap) c->cap[o] = x; else c->fade[o] = x;
+        out_store(c, o);
+        pl_core_recalc(c);
+        logf_(c, "%s %s = %d", ONAME[o], cap ? "cap" : "fade in", x);
         return 0;
     }
     case 0x0d10: {        /* the Radio app's station: name length (4 hex), the name, the URL; nothing after the length = stop */
@@ -428,6 +596,7 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
     /* accepted, belong to later steps */
     case 0x0642:
         if(v < 0){ c->bad_frames++; logf_(c, "usb gadget: bad frame"); return -1; }
+        if(v == 5){ logf_(c, "usb gadget 5 (USB host): the own player switches the host role by itself (usbaudio.c)"); return 0; }
         if(v != 0 && v != 1){ logf_(c, "usb gadget %d: not supported by the own player yet, ignored", v); return 0; }
         c->usb_gadget = v; c->usb_seq++;
         logf_(c, "usb gadget = %d (%s)", v, v ? "USB storage" : "none");

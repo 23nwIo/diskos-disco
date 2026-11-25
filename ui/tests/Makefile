@@ -53,7 +53,7 @@ libdb_test: ../libdb_vfs.c libdb_test.c ../libdb.h ../libdb_migrate.c sqlite3_ho
 libdb_vfs_test: libdb_vfs_test.c ../libdb.h ../libdb_vfs.c sqlite3_host.o
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. libdb_vfs_test.c ../libdb_vfs.c sqlite3_host.o -lpthread -lm -ldl -o $@
 
-PLAYER_SRCS := ../panel.c ../powersrc.c ../player/core.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c ../player/btout.c ../player/btavrcp.c ../dbusmini.c
+PLAYER_SRCS := ../panel.c ../powersrc.c ../player/core.c ../player/usbaudio.c ../player/proto.c ../player/sdcard.c ../player/usbstorage.c ../player/dac.c ../player/mpdcli.c ../player/engine.c ../player/queue.c ../player/queuedb.c ../player/playback.c ../player/mixer.c ../player/btout.c ../player/btavrcp.c ../dbusmini.c
 # SQLite for the player, without sanitizers (instrumenting the amalgamation only slows the tests)
 sqlite3_host.o: ../sqlite3.c
 	$(CC) -O1 -g -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c $< -o $@
@@ -63,6 +63,10 @@ playback_test: playback_test.c ../player/core.c ../player/proto.c ../player/queu
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -DPB_RESUME=1 -DOPL_LIST='"/tmp/pbtest-list"' -I.. playback_test.c ../player/core.c ../player/proto.c ../player/queue.c ../player/queuedb.c ../player/playback.c sqlite3_host.o -lpthread -lm -o $@
 player_test: player_test.c $(PLAYER_SRCS) ../player/hw.c sqlite3_host.o ../player/queue.h ../player/queuedb.h ../player/playback.h ../player/core.h ../player/proto.h ../player/hw.h ../player/sdcard.h ../player/usbstorage.h ../player/dac.h ../player/mpdcli.h ../player/engine.h diskos-player-host
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. player_test.c $(PLAYER_SRCS) ../player/hw.c ../watchdog/watchdog.c sqlite3_host.o -lrt -lpthread -lm -o $@
+
+# USB audio: host role, card scan, volume control mapping, MPD's ALSA file, against a fake /proc + /sys (ua_root)
+usbaudio_test: usbaudio_test.c ../player/usbaudio.c ../player/usbaudio.h
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbaudio_test.c ../player/usbaudio.c -o $@
 
 # the D-Bus client and the headphones' buttons / absolute volume against a real dbus-daemon (skipped without one)
 btavrcp_test: btavrcp_test.c ../dbusmini.c ../dbusmini.h ../player/btavrcp.c ../player/btavrcp.h ../btbatt.c ../btbatt.h
@@ -108,7 +112,7 @@ pytests: mpd_test
 	python3 run_pytests.py
 
 .PHONY: run clean
-run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test scanner_quick_test
+run: usbaudio_test btavrcp_test config_test playstate_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test scanner_quick_test
 	./config_test
 	@echo "--- libdb ---"
 	./libdb_test
@@ -132,6 +136,7 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test ban
 	./wd_override_test
 	./trace_launch_test
 	./own_player_test
+	./usbaudio_test
 	./btavrcp_test
 	@echo "--- own player skeleton ---"
 	./player_test ./diskos-player-host
@@ -150,7 +155,7 @@ run: btavrcp_test config_test playstate_test remote_test mpd_test radio_test ban
 	./hitguess_test
 
 clean:
-	rm -f btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test scanner_quick_test $(EXTRA)
+	rm -f usbaudio_test btavrcp_test config_test playstate_test fileops_test apps_shortcut_test remote_test mpd_test radio_test bandcamp_test bandcamp_app_test wifi_reco_test wifi_script_test wifi_override_test wd_override_test trace_launch_test own_player_test player_test playback_test diskos-player-host sqlite3_host.o usbsync_core_test bookmarks_test playlog_test scanner_date_test hitguess_test libdb_test libdb_vfs_test scanner_srcid_test scanner_quick_test $(EXTRA)
 
 usbsync_core_test: usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c ../usbsync_core.h ../usbdrive_core.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I.. usbsync_core_test.c ../usbsync_core.c ../usbdrive_core.c -o $@

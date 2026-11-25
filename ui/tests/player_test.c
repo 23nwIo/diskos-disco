@@ -149,33 +149,36 @@ static void test_core(void){
     /* outputs: plugs, routes, 0d01..0d04 and the two volumes */
     c.transport = count_pause; npause = 0;
     c.max_volume = 120; c.jack = 0; c.bal = -1;
-    c.vol_aux = 30; c.vol_bt = 50; c.volume = 50;                    /* Bluetooth is the lead now */
-    nsent = 0; CHECK(send1(&c, "0715000C0034") == 0);                /* 52: only Bluetooth is on, AUX moves along */
+    /* main volume + an offset per output (Jo 2026-11-25): AUX -20, Bluetooth 0 */
+    c.off[PL_O_AUX] = -20; c.off[PL_O_BT] = 0; c.volume = 50; pl_core_recalc(&c);
+    nsent = 0; CHECK(send1(&c, "0715000C0034") == 0);                /* main 52: every output moves along */
     CHECK(c.volume == 52 && c.vol_bt == 52 && c.vol_aux == 32 && nsent == 1 && !strcmp(sent[0], "a714000C0034"));
     pl_core_bal(&c, 0); CHECK(c.bal == 0 && c.out_bt == 1);          /* the first level is only recorded */
     pl_core_jack(&c, 1);                                             /* a plug in: AUX on, Bluetooth off, AUX volume shown */
-    CHECK(c.out_aux == 1 && c.out_bt == 0 && c.volume == 32 && npause == 0);
+    CHECK(c.out_aux == 1 && c.out_bt == 0 && c.volume == 52 && c.vol_aux == 32 && npause == 0);   /* main stays */
     pl_core_jack(&c, 0); CHECK(npause == 1);                         /* the last plug out, AUX only: pause */
     CHECK(send1(&c, "0d01000C0003") == 0 && c.out_aux == 1 && c.out_bt == 1 && c.volume == 52);   /* both by hand */
     pl_core_volume_step(&c, -1); CHECK(c.vol_bt == 51 && c.vol_aux == 31 && c.volume == 51);
     CHECK(send1(&c, "0d02000C0014") == 0 && c.vol_aux == 20 && c.volume == 51);
-    CHECK(send1(&c, "0d03000C0010") == 0 && c.vol_bt == 16 && c.volume == 16);
-    pl_core_set_volume(&c, 0); CHECK(c.vol_bt == 0 && c.vol_aux == 4);  /* each within 0..max: the gap stays until a limit */
-    pl_core_set_volume(&c, 10); CHECK(c.vol_bt == 10 && c.vol_aux == 14);
+    CHECK(c.off[PL_O_AUX] == -31);                                   /* stored as the offset to main */
+    CHECK(send1(&c, "0d03000C0010") == 0 && c.vol_bt == 16 && c.volume == 51 && c.off[PL_O_BT] == -35);
+    pl_core_set_volume(&c, 40); CHECK(c.vol_bt == 5 && c.vol_aux == 9);
+    pl_core_set_volume(&c, 0); CHECK(c.vol_bt == 0 && c.vol_aux == 0);   /* within 0..max; the offsets stay */
+    pl_core_set_volume(&c, 45); CHECK(c.vol_bt == 10 && c.vol_aux == 14);
     pl_core_bal(&c, 1); CHECK(c.out_aux == 1 && c.out_bt == 0 && pl_core_plugged(&c));   /* the 4.4 mm plug counts too */
     CHECK(send1(&c, "0d01000C0002") == 0 && c.out_aux == 0 && c.out_bt == 1);
     npause = 0; pl_core_bal(&c, 0); CHECK(npause == 0 && c.out_bt == 1 && c.out_aux == 0);   /* Bluetooth plays on */
     CHECK(send1(&c, "0d01000C0000") == 0 && !c.out_bt && !c.out_aux && !c.out_dig);   /* none at all: playback waits */
-    CHECK(send1(&c, "0d01000C0008") == -1);                           /* bit 8: no such output */
+    CHECK(send1(&c, "0d01000C0008") == -1);                           /* bit 8, USB: no sound card is there */
+    CHECK(send1(&c, "0d01000C0010") == -1);                           /* bit 16: no such output */
     CHECK(send1(&c, "0d01000C0002") == 0 && c.out_bt == 1);
     CHECK(send1(&c, "0d04000C0001") == 0 && c.codec_want == 1);
     CHECK(send1(&c, "0d04000C0003") == -1 && send1(&c, "0d04000C0007") == -1);   /* only SBC/AAC/LDAC 2/aptX/aptX HD */
-    CHECK(send1(&c, "0711000C0005") == 0 && c.vol_aux == 5 && c.vol_bt == 5);    /* max volume: both */
+    CHECK(send1(&c, "0711000C0005") == 0 && c.volume == 5 && c.vol_aux <= 5 && c.vol_bt <= 5);   /* max volume: all */
     c.max_volume = 120;
     c.transport = NULL;
     /* the headphones gone while they were the only output and no plug is in: Bluetooth waits for them, the DAC plays */
     CHECK(send1(&c, "0666000C0006") == 0 && c.route == 6 && !c.bt_ready && c.out_aux == 0 && c.out_bt == 1);
-    CHECK(c.volume == c.vol_aux);                                    /* the DAC leads now */
     CHECK(send1(&c, "0d01000C0002") == 0 && c.out_bt == 1);          /* Bluetooth stays chosen, waiting */
     CHECK(send1(&c, "0d01000C0001") == 0 && c.out_bt == 0);
     CHECK(send1(&c, "0d01000C0002") == -1 && c.out_bt == 0 && c.out_aux == 1);   /* turning it on without headphones: refused */
@@ -189,14 +192,15 @@ static void test_core(void){
         CHECK(send1(&h, "0d06000C0002") == -1 && h.hp_vol_all == 0);
         CHECK(send1(&h, "0666000C0002") == 0 && send1(&h, "06b3001D0000AA:BB:CC:01:02:03") == 0);
         CHECK(send1(&h, "0d01000C0003") == 0 && h.out_aux == 1 && h.out_bt == 1);
-        pl_core_load_volumes(&h, 40, 50, 45);
+        CHECK(h.vol_bt == 0 && h.off[PL_O_BT] == -120);               /* headphones never seen: silent */
+        CHECK(pl_core_vol_parse(&h, "main=40\n") == 0 && h.volume == 40 && h.vol_aux == 40);
         pl_core_set_bt_volume(&h, 60);
-        CHECK(h.vol_bt == 60 && h.vol_aux == 40 && h.volume == 60);
+        CHECK(h.vol_bt == 60 && h.vol_aux == 40 && h.volume == 40 && h.off[PL_O_BT] == 20);   /* only its offset */
         CHECK(send1(&h, "0d06000C0001") == 0 && h.hp_vol_all == 1);
         pl_core_set_bt_volume(&h, 55);
-        CHECK(h.vol_bt == 55 && h.vol_aux == 35 && h.volume == 55);
+        CHECK(h.vol_bt == 55 && h.vol_aux == 35 && h.volume == 35);   /* main moves, the offset stays */
         pl_core_set_bt_volume(&h, 0);
-        CHECK(h.vol_bt == 0 && h.vol_aux == 0);                       /* AUX stops at 0 */
+        CHECK(h.vol_bt == 0 && h.vol_aux == 0 && h.volume == 0 && h.off[PL_O_BT] == 0);   /* below main 0: the offset gives */
         CHECK(send1(&h, "0d01000C0002") == 0 && h.out_aux == 0);
         pl_core_set_bt_volume(&h, 20);
         CHECK(h.vol_bt == 20 && h.vol_aux == 20);                     /* AUX off: moves too */
@@ -209,9 +213,9 @@ static void test_core(void){
         d.transport = count_pause; npause = 0; d.jack = 0;
         CHECK(d.out_aux == 1 && d.out_dig == 0 && d.mem_aux == 1 && d.mem_dig == 0);
         CHECK(send1(&d, "0d01000C0004") == 0 && !d.out_aux && d.out_dig && !d.mem_aux && d.mem_dig);   /* digital only */
-        nsent = 0; CHECK(send1(&d, "0d07000C0030") == 0 && d.vol_dig == 48 && d.volume == 48 && nsent == 1);   /* it leads */
+        nsent = 0; CHECK(send1(&d, "0d07000C0030") == 0 && d.vol_dig == 48 && d.volume == 20 && d.off[PL_O_DIG] == 28 && nsent == 0);
         CHECK(send1(&d, "0d07000C0079") == -1 && d.vol_dig == 48);
-        pl_core_volume_step(&d, 1); CHECK(d.vol_dig == 49 && d.vol_aux == 21 && d.vol_bt == 21);
+        pl_core_volume_step(&d, 1); CHECK(d.vol_dig == 49 && d.vol_aux == 21 && d.vol_bt == 0);
         pl_core_jack(&d, 1); CHECK(!d.out_aux && d.out_dig && !d.out_bt);   /* digital only comes back */
         pl_core_jack(&d, 0); CHECK(npause == 1 && d.out_dig);               /* the jack's output: pause, kept */
         CHECK(send1(&d, "0d01000C0000") == 0 && !d.out_dig && !d.mem_aux && d.mem_dig);   /* none: the memory stays */
@@ -223,6 +227,83 @@ static void test_core(void){
         pl_core_jack(&d, 1); CHECK(d.out_aux && d.out_dig && !d.out_bt);    /* both come back */
         unsigned ns = d.notice_seq;
         pl_core_notice(&d, PL_NOTICE_NONE); CHECK(d.notice_seq == ns + 1 && d.notice == PL_NOTICE_NONE);
+    }
+
+    /* the volumes file, per device (Jo 2026-11-25): main + offset, cap, fade; new devices silent; a file from before */
+    {
+        pl_core_t v; pl_core_init(&v, cap_send, NULL, NULL);
+        char buf[4096];
+        CHECK(pl_core_vol_parse(&v, "") == -1 && pl_core_vol_parse(&v, "junk\n") == -1);
+        CHECK(pl_core_vol_parse(&v, "vol_aux=40\nvol_bt=30\nvol_dig=50\n") == 0);   /* from before offsets */
+        CHECK(v.volume == 40 && v.vol_aux == 40 && v.vol_dig == 50 && v.off[PL_O_DIG] == 10 && v.bt_legacy > 0);
+        CHECK(send1(&v, "0666000C0002") == 0 && send1(&v, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(v.vol_bt == 30 && v.off[PL_O_BT] == -10 && v.bt_legacy == 0);   /* the first headphones take it */
+        CHECK(send1(&v, "0666000C0006") == 0 && send1(&v, "0666000C0002") == 0 && send1(&v, "06b3001D0000AA:BB:CC:09:09:09") == 0);
+        CHECK(v.vol_bt == 0 && v.off[PL_O_BT] == -120);               /* other headphones: new, silent */
+        CHECK(send1(&v, "0d03000C0014") == 0 && v.vol_bt == 20);       /* 20 for these */
+        CHECK(send1(&v, "0666000C0006") == 0 && send1(&v, "0666000C0002") == 0 && send1(&v, "06b3001D0000AA:BB:CC:01:02:03") == 0);
+        CHECK(v.vol_bt == 30);                                        /* the first ones have their own again */
+        CHECK(send1(&v, "0d09000C011E") == 0 && v.cap[PL_O_BT] == 30); /* cap 30 (output 1 = Bluetooth) */
+        pl_core_set_volume(&v, 100); CHECK(v.vol_bt == 30 && v.vol_aux == 100);
+        CHECK(send1(&v, "0d09000C0079") == -1 && send1(&v, "0d09000C0400") == -1);   /* cap 121, output 4: refused */
+        CHECK(send1(&v, "0d0a000C0300") == 0 && v.fade[PL_O_USB] == 0 && send1(&v, "0d0a000C0002") == -1);
+        unsigned seq = v.vol_seq;
+        CHECK(pl_core_vol_format(&v, buf, sizeof buf) == 0);
+        CHECK(strstr(buf, "main=100\n") && strstr(buf, "dev aux off=0 cap=120 fade=1\n") && strstr(buf, "dev dig off=10 cap=120 fade=1\n"));
+        CHECK(strstr(buf, "dev bt:AA:BB:CC:01:02:03 off=-10 cap=30 fade=1\n") && strstr(buf, "dev bt:AA:BB:CC:09:09:09 off=-20 cap=120 fade=1\n"));
+        CHECK(!strstr(buf, "bt_legacy") && pl_core_vol_format(&v, buf, 20) == -1 && v.vol_seq == seq);
+        pl_core_t w; pl_core_init(&w, cap_send, NULL, NULL);          /* read back */
+        CHECK(pl_core_vol_format(&v, buf, sizeof buf) == 0 && pl_core_vol_parse(&w, buf) == 0 && w.volume == 100 && w.vol_dig == 110);
+        CHECK(send1(&w, "0666000C0002") == 0 && send1(&w, "06b3001D0000AA:BB:CC:01:02:03") == 0 && w.vol_bt == 30 && w.cap[PL_O_BT] == 30);
+        CHECK(pl_core_vol_parse(&w, "vol_aux=40\nvol_bt=30\n") == 0 && w.off[PL_O_DIG] == 0);   /* no vol_dig: as AUX */
+        /* the table is bounded: the least recently used device goes */
+        pl_core_t x; pl_core_init(&x, cap_send, NULL, NULL);
+        for(int i = 0; i < PL_DEV_MAX + 5; i++){
+            char f[64]; snprintf(f, sizeof f, "06b3001D0000AA:BB:CC:00:%02X:%02X", i / 256, i % 256);
+            CHECK(send1(&x, "0666000C0002") == 0 && send1(&x, f) == 0);
+        }
+        CHECK(pl_core_vol_format(&x, buf, sizeof buf) == 0 && !strstr(buf, "bt:AA:BB:CC:00:00:00") && strstr(buf, "bt:AA:BB:CC:00:00:34"));
+    }
+
+    /* a USB sound card (docs/USB_AUDIO.md): a new one (or one without a serial number) comes silent and off with a
+     * notice; a known one follows Auto Outputs; it going away pauses when it was the only output */
+    {
+        pl_core_t u; pl_core_init(&u, cap_send, NULL, NULL);
+        u.transport = count_pause; npause = 0; u.jack = 0; u.bal = 0;
+        CHECK(pl_core_vol_parse(&u, "main=50\ndev usb:0d8c:0014:ABC off=-5 cap=60 fade=1\n") == 0);
+        unsigned ns = u.notice_seq;
+        pl_core_usb(&u, 1, "usb:1234:5678:XYZ", 1, "New card");
+        CHECK(u.usb_ready && !u.out_usb && u.vol_usb == 0 && u.off[PL_O_USB] == -120 && u.notice == PL_NOTICE_USB && u.notice_seq == ns + 1);
+        CHECK(send1(&u, "0d01000C0009") == 0 && u.out_usb && u.out_aux);   /* by hand: on, still silent */
+        CHECK(send1(&u, "0d08000C0028") == 0 && u.vol_usb == 40 && u.off[PL_O_USB] == -10);
+        pl_core_usb(&u, 0, NULL, 0, NULL); CHECK(!u.usb_ready && !u.out_usb && u.out_aux && npause == 0);   /* AUX plays on */
+        pl_core_usb(&u, 1, "usb:1234:5678:XYZ", 1, "New card");      /* known now: Newest turns it on, alone */
+        CHECK(u.out_usb && !u.out_aux && u.vol_usb == 40);
+        pl_core_usb(&u, 0, NULL, 0, NULL); CHECK(!u.out_usb && npause == 1);   /* the only output: pause */
+        pl_core_usb(&u, 1, "usb:0d8c:0014:ABC", 1, "C-Media");        /* from the file: offset -5, cap 60 */
+        CHECK(u.out_usb && u.vol_usb == 45);
+        pl_core_set_volume(&u, 100); CHECK(u.vol_usb == 60);
+        pl_core_usb(&u, 0, NULL, 0, NULL);
+        CHECK(send1(&u, "0d01000C0008") == -1);                       /* no card: refused */
+        pl_core_usb(&u, 1, "usb:0d8c:0014", 0, "No serial");          /* no serial: never stored, new every time */
+        CHECK(!u.out_usb && u.vol_usb == 0);
+        CHECK(send1(&u, "0d08000C0032") == 0 && u.vol_usb == 50);
+        char buf[2048]; CHECK(pl_core_vol_format(&u, buf, sizeof buf) == 0 && !strstr(buf, "usb:0d8c:0014 "));
+        pl_core_usb(&u, 0, NULL, 0, NULL); pl_core_usb(&u, 1, "usb:0d8c:0014", 0, "No serial");
+        CHECK(!u.out_usb && u.vol_usb == 0);
+        /* a plug out while USB plays: USB goes on, no pause */
+        CHECK(send1(&u, "0d01000C0009") == 0); npause = 0;
+        pl_core_jack(&u, 1); CHECK(u.out_aux && !u.out_usb);           /* newest: the plug alone */
+        CHECK(send1(&u, "0d01000C0009") == 0);
+        pl_core_jack(&u, 0); CHECK(!u.out_aux && u.out_usb && npause == 0);
+        /* auto all: a known card is added; off: a notice */
+        pl_core_usb(&u, 0, NULL, 0, NULL);
+        CHECK(send1(&u, "0d05000C0002") == 0 && send1(&u, "0d01000C0001") == 0);
+        pl_core_usb(&u, 1, "usb:1234:5678:XYZ", 1, "New card"); CHECK(u.out_usb && u.out_aux);
+        pl_core_usb(&u, 0, NULL, 0, NULL); CHECK(u.out_aux && !u.out_usb);
+        CHECK(send1(&u, "0d05000C0000") == 0); ns = u.notice_seq;
+        pl_core_usb(&u, 1, "usb:1234:5678:XYZ", 1, "New card"); CHECK(!u.out_usb && u.notice_seq == ns + 1);
+        CHECK(send1(&u, "0642000C0005") == 0 && u.usb_gadget == 0);   /* USB host: the player does it by itself */
     }
 
     /* Auto Outputs (0d05): newest (the default), all connected, off */

@@ -43,6 +43,7 @@
 #include "engine.h"
 #include "mpdcli.h"
 #include "playback.h"
+#include "usbaudio.h"
 #include "queuedb.h"
 #include "../own_player.h"
 #include "../watchdog/watchdog.h"
@@ -53,6 +54,7 @@
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <mqueue.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -125,6 +127,132 @@ static int core_radio(void *ctx, const char *name, const char *url){
 /* 0d14: a stream list (Bandcamp); the radio mode may still be on its way, as with 0d10 */
 static int core_slist(void *ctx, int idx){ (void)ctx; pb_stream_mode(1); return pb_slist_play(idx); }
 
+/* ---- Fade in (docs/USB_AUDIO.md, Jo 2026-11-25): an output whose device has fade on goes from 0 to its volume over
+ * g_fade_s when it is switched on and when playback starts after a pause; volume changes are not faded. core vol_*
+ * is the target, app_* what the hardware gets. Duration: "fade_s=N" in OPL_AUDIO_CONF (default PL_FADE_MS). ---- */
+#define OPL_AUDIO_CONF OPL_DIR "/audio.conf"
+#define FADE_BT_STEP_S 0.25        /* Bluetooth: bluealsa-cli per step, so not more often */
+static double g_fade_s = PL_FADE_MS / 1000.0;
+static double g_fade_t0[PL_O_N];          /* when the fade of each output began, 0 none */
+static int fade_busy(int o){ return g_fade_t0[o] > 0; }
+static void load_audio_conf(void){
+    FILE *f = fopen(OPL_AUDIO_CONF, "re");
+    if(!f){ if(errno != ENOENT) logmsg("audio: open %s: %s", OPL_AUDIO_CONF, strerror(errno)); }
+    else {
+        char l[80];
+        while(fgets(l, sizeof l, f)) if(!strncmp(l, "fade_s=", 7)){
+            double v = atof(l + 7);
+            g_fade_s = v < 0 ? 0 : v > 30 ? 30 : v;
+        }
+        fclose(f);
+    }
+    logmsg("audio: fade in %.1f s (%s%s)", g_fade_s, OPL_AUDIO_CONF, f ? "" : ", not there: the default");
+}
+static void fade_start(const pl_core_t *c, int o, double t){
+    if(!c->fade[o] || g_fade_s <= 0) return;
+    g_fade_t0[o] = t;
+}
+/* app_* from vol_* and the fades running at t */
+static void fade_apply(pl_core_t *c, double t){
+    int *app[PL_O_N] = { &c->app_aux, &c->app_bt, &c->app_dig, &c->app_usb };
+    const int vol[PL_O_N] = { c->vol_aux, c->vol_bt, c->vol_dig, c->vol_usb };
+    for(int o = 0; o < PL_O_N; o++){
+        double r = g_fade_t0[o] > 0 && c->fade[o] && g_fade_s > 0 ? (t - g_fade_t0[o]) / g_fade_s : 1;
+        if(r >= 1 || r < 0){ g_fade_t0[o] = 0; *app[o] = vol[o]; }
+        else *app[o] = (int)(vol[o] * r);
+    }
+}
+
+/* ---- the USB sound card (usbaudio.c; docs/USB_AUDIO.md) ---- */
+static ua_card_t g_ua;                     /* the card in use (the newest plugged) */
+static int g_ua_have;
+static ua_mixer_t g_ua_mix;                /* its volume control (ok 0: MPD's software volume) */
+static ua_card_t g_ua_seen[UA_MAX_CARDS];  /* the last scan, to tell which card is new */
+static int g_ua_nseen;
+
+/* ---- the volumes to the hardware: the DAC's attenuation, S/PDIF's and a USB card's software volume (MPD's "setvol",
+ * shared by both: the lower one when both play), the USB card's own control, the headphones (BlueALSA). Only what
+ * changed; force: all again. ---- */
+static int g_att_vol = -1, g_att_gain = -1, g_att_bal = -1, g_att_curve = -1, g_bt_last = -1, g_soft_vol = -1, g_usb_vol = -1;
+static double g_bt_at;
+static void apply_volumes(pl_core_t *c, double t){
+    int gain = c->gain && pl_core_plugged(c), curve = c->bal == 1;
+    if(pb_aux() && dac_current_rate() && (c->app_aux != g_att_vol || gain != g_att_gain || c->balance != g_att_bal || curve != g_att_curve)){
+        unsigned char a, l;
+        pb_attenuation(&a, &l);
+        dac_set_attenuation(a, l, logmsg);
+        g_att_vol = c->app_aux; g_att_gain = gain; g_att_bal = c->balance; g_att_curve = curve;
+    }
+    int usb_soft = g_ua_have && !g_ua_mix.ok && pb_usb();
+    int soft = usb_soft && pb_digital() ? (c->app_usb < c->app_dig ? c->app_usb : c->app_dig) : usb_soft ? c->app_usb : c->app_dig;
+    if(soft != g_soft_vol && eng_spdif_volume((unsigned)(soft * 100 / PL_VOL_MAX)) == 0) g_soft_vol = soft;
+    if(g_ua_have && g_ua_mix.ok && c->app_usb != g_usb_vol){
+        if(ua_mixer_set(g_ua.card, &g_ua_mix, c->app_usb, PL_VOL_MAX, logmsg) == 0) g_usb_vol = c->app_usb;
+        else g_usb_vol = c->app_usb;              /* logged; not again every turn */
+    }
+    if(pb_bluetooth() && !pb_switching() && c->app_bt != g_bt_last && (!fade_busy(PL_O_BT) || c->app_bt == 0 || t - g_bt_at >= FADE_BT_STEP_S)){
+        g_bt_last = c->app_bt; g_bt_at = t;        /* the headphones' own volume (BlueALSA) */
+        bto_volume(pb_bt_mac(), c->app_bt, PL_VOL_MAX, logmsg);
+    }
+}
+/* engine.c, right before MPD starts or resumes: a fade in on every output that plays, unless it plays already */
+static pl_core_t *g_fcore;
+static void before_play(void){
+    const eng_status_t *es = pb_status(NULL);
+    if(!g_fcore || (es && es->state == ENG_PLAY)) return;
+    double t = now_s();
+    const int on[PL_O_N] = { pb_aux(), pb_bluetooth(), pb_digital(), pb_usb() };
+    int any = 0;
+    for(int o = 0; o < PL_O_N; o++) if(on[o] && g_fcore->fade[o] && g_fade_s > 0){ fade_start(g_fcore, o, t); any = 1; }
+    if(!any) return;
+    fade_apply(g_fcore, t);
+    apply_volumes(g_fcore, t);
+}
+
+/* Once a second: the cards there now; the newest one is used. A card that came, went or was replaced goes to core
+ * (pl_core_usb: new ones silent and off), its control is set before anything can play to it, and MPD's "diskos_usb"
+ * points at it. */
+static void usb_tick(pl_core_t *c, double t){
+    ua_card_t now[UA_MAX_CARDS];
+    int n = ua_scan(now, UA_MAX_CARDS), pick = -1, still = 0;
+    for(int i = 0; i < n; i++){
+        int seen = 0;
+        for(int k = 0; k < g_ua_nseen; k++) if(g_ua_seen[k].card == now[i].card && !strcmp(g_ua_seen[k].key, now[i].key)) seen = 1;
+        if(!seen) pick = i;                        /* the last new one */
+        if(g_ua_have && now[i].card == g_ua.card && !strcmp(now[i].key, g_ua.key)) still = 1;
+    }
+    memcpy(g_ua_seen, now, sizeof now[0] * (unsigned)n); g_ua_nseen = n;
+    if(pick < 0 && still) return;                  /* nothing new, the card in use is there */
+    if(pick < 0 && n > 0) pick = n - 1;            /* the card in use went, another one is still there */
+    if(pick < 0 && !g_ua_have) return;
+    if(g_ua_have){
+        logmsg("usb audio: card %d %s %s", g_ua.card, g_ua.key, still ? "replaced by a newer one" : "gone");
+        g_ua_have = 0;
+        pb_usb_card(0, 0);
+        pl_core_usb(c, 0, NULL, 0, NULL);
+    }
+    if(pick < 0){
+        ua_alsa_conf_write(ENG_USB_CONF, -1, 0, logmsg);
+        return;
+    }
+    g_ua = now[pick]; g_ua_have = 1; g_usb_vol = -1;
+    logmsg("usb audio: card %d (%s, \"%s\", id %s) pcm %d%s", g_ua.card, g_ua.key, g_ua.name, g_ua.id, g_ua.pcm,
+           g_ua.serial[0] ? "" : ", no serial number");
+    if(ua_mixer_find(g_ua.card, &g_ua_mix, logmsg) != 0 || !g_ua_mix.ok){
+        memset(&g_ua_mix, 0, sizeof g_ua_mix);
+        logmsg("usb audio: no volume control - MPD's software volume");
+    }
+    pl_core_usb(c, 1, g_ua.key, g_ua.serial[0] != 0, g_ua.name);
+    if(c->out_usb) fade_start(c, PL_O_USB, t);
+    fade_apply(c, t);
+    if(g_ua_mix.ok){                               /* now, before any stream opens (a new card: muted) */
+        ua_mixer_set(g_ua.card, &g_ua_mix, c->app_usb, PL_VOL_MAX, logmsg);
+        g_usb_vol = c->app_usb;
+    }
+    ua_alsa_conf_write(ENG_USB_CONF, g_ua.card, g_ua.pcm, logmsg);
+    pb_usb_card(1, !g_ua_mix.ok);
+}
+
 /* ---- the headphones' buttons and volume (btavrcp.c, AVRCP through BlueZ) ---- */
 static pl_core_t *g_core;
 static int *g_bt_vol;                      /* main's bt_vol: the volume the headphones were last given */
@@ -146,16 +274,18 @@ static void hp_volume(const char *mac, int v, int first){
             return;
         }
         snprintf(g_abs_mac, sizeof g_abs_mac, "%s", mac);
-        if(btav_soft_volume(mac, 0) != 0 || btav_pcm_volume(mac, btav_to127(c->vol_bt, PL_VOL_MAX)) != 0){
+        if(btav_soft_volume(mac, 0) != 0 || btav_pcm_volume(mac, btav_to127(c->app_bt, PL_VOL_MAX)) != 0){
             logmsg("avrcp: could not switch %s to absolute volume", mac);
             g_abs_mac[0] = 0;
             return;
         }
-        if(g_bt_vol) *g_bt_vol = c->vol_bt;
-        logmsg("avrcp: %s: absolute volume, the Bluetooth volume %d now sets the headphones' level", mac, c->vol_bt);
+        if(g_bt_vol) *g_bt_vol = c->app_bt;
+        logmsg("avrcp: %s: absolute volume, the Bluetooth volume %d now sets the headphones' level", mac, c->app_bt);
         return;
     }
     if(btav_to127(c->vol_bt, PL_VOL_MAX) == v) return;     /* our own change coming back */
+    if(g_bt_vol && *g_bt_vol >= 0 && btav_to127(*g_bt_vol, PL_VOL_MAX) == v) return;   /* a fade step coming back */
+    if(fade_busy(PL_O_BT)){ logmsg("avrcp: volume %d from %s during the fade in - left alone", v, mac); return; }
     pl_core_set_bt_volume(c, btav_from127(v, PL_VOL_MAX));
     /* the headphones have it already, so it is not sent back; above the volume limit (0716) the limit goes to them */
     if(g_bt_vol) *g_bt_vol = btav_to127(c->vol_bt, PL_VOL_MAX) == v ? c->vol_bt : -1;
@@ -184,25 +314,24 @@ static void vol_key(pl_core_t *c, int which, int dir, double t){
 /* ---- Outputs (core.h): the two volumes are kept in OPL_VOLUMES (NAND, written a few seconds after the last change),
  * the state goes to OPL_OUTPUTS (tmpfs) for the UI's Settings > Audio > Outputs whenever it changes. ---- */
 #define VOL_SAVE_DELAY_S 3.0
+#define VOL_FILE_MAX 8192          /* PL_DEV_MAX lines of at most ~140 bytes */
 static void load_volumes(pl_core_t *c){
     FILE *f = fopen(OPL_VOLUMES, "re");
     if(!f){ if(errno != ENOENT) logmsg("outputs: open %s: %s", OPL_VOLUMES, strerror(errno)); return; }
-    int va = c->vol_aux, vb = c->vol_bt, vd = -1;
-    char l[64];
-    while(fgets(l, sizeof l, f)){
-        if(!strncmp(l, "vol_aux=", 8)) va = atoi(l + 8);
-        else if(!strncmp(l, "vol_bt=", 7)) vb = atoi(l + 7);
-        else if(!strncmp(l, "vol_dig=", 8)) vd = atoi(l + 8);
-    }
+    static char b[VOL_FILE_MAX];
+    size_t n = fread(b, 1, sizeof b - 1, f);
+    b[n] = 0;
     fclose(f);
-    pl_core_load_volumes(c, va, vb, vd >= 0 ? vd : va);          /* a file from before AUX digital: as AUX */
-    logmsg("outputs: volumes AUX %d, digital %d, Bluetooth %d (%s)", c->vol_aux, c->vol_dig, c->vol_bt, OPL_VOLUMES);
+    if(pl_core_vol_parse(c, b) != 0){ logmsg("outputs: %s has no volumes - the defaults", OPL_VOLUMES); return; }
+    logmsg("outputs: main volume %d; AUX %d, digital %d, Bluetooth %d (%s)", c->volume, c->vol_aux, c->vol_dig, c->vol_bt, OPL_VOLUMES);
 }
 static void save_volumes(const pl_core_t *c){
+    static char b[VOL_FILE_MAX];
+    if(pl_core_vol_format(c, b, sizeof b) != 0){ logmsg("outputs: volumes too long for the file - not stored"); return; }
     char tmp[sizeof OPL_VOLUMES + 8];
     snprintf(tmp, sizeof tmp, "%s.tmp", OPL_VOLUMES);
     FILE *f = fopen(tmp, "we");
-    if(!f || fprintf(f, "vol_aux=%d\nvol_bt=%d\nvol_dig=%d\n", c->vol_aux, c->vol_bt, c->vol_dig) < 0 || fflush(f) != 0 || fsync(fileno(f)) != 0){
+    if(!f || fputs(b, f) < 0 || fflush(f) != 0 || fsync(fileno(f)) != 0){
         logmsg("outputs: write %s: %s", tmp, strerror(errno));
         if(f) fclose(f);
         return;
@@ -211,12 +340,15 @@ static void save_volumes(const pl_core_t *c){
     if(rename(tmp, OPL_VOLUMES) != 0) logmsg("outputs: rename %s: %s", tmp, strerror(errno));
 }
 static void write_outputs(const pl_core_t *c, const char *path){
-    static char last[512];
-    char b[512];
+    static char last[1024];
+    char b[1024];
     snprintf(b, sizeof b, "aux=%d\nbt=%d\ndig=%d\nvol_aux=%d\nvol_bt=%d\nvol_dig=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\n"
-             "codecs=%s\nswitching=%d\nauto=%d\nnotice=%u %d\n",
+             "codecs=%s\nswitching=%d\nauto=%d\nnotice=%u %d\nusb=%d\nvol_usb=%d\nusb_ready=%d\nusb_name=%s\nusb_soft=%d\n"
+             "main=%d\ncap=%d %d %d %d\nfade=%d %d %d %d\n",
              pb_aux(), pb_bluetooth(), pb_digital(), c->vol_aux, c->vol_bt, c->vol_dig, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
-             pb_switching(), c->auto_out, c->notice_seq, c->notice);
+             pb_switching(), c->auto_out, c->notice_seq, c->notice, pb_usb(), c->vol_usb, c->usb_ready, c->usb_ready ? c->usb_name : "",
+             c->usb_ready && g_ua_have && !g_ua_mix.ok, c->volume, c->cap[PL_O_AUX], c->cap[PL_O_BT], c->cap[PL_O_DIG], c->cap[PL_O_USB],
+             c->fade[PL_O_AUX], c->fade[PL_O_BT], c->fade[PL_O_DIG], c->fade[PL_O_USB]);
     if(!strcmp(b, last)) return;
     char tmp[300];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
@@ -229,15 +361,15 @@ static void write_outputs(const pl_core_t *c, const char *path){
 /* "Volume: Main 42, AUX 23, BT 5" on every change, for `tail -f` (Jo 2026-11-16); RAM only (tmpfs), so no flash
  * writes. Main is the volume the UI shows (the lead output's). The UI's log upkeep keeps it small (ui/main.c). */
 static void volume_log(const pl_core_t *c){
-    static int last[4] = { -1, -1, -1, -1 };
-    if(c->volume == last[0] && c->vol_aux == last[1] && c->vol_bt == last[2] && c->vol_dig == last[3]) return;
-    last[0] = c->volume; last[1] = c->vol_aux; last[2] = c->vol_bt; last[3] = c->vol_dig;
+    static int last[5] = { -1, -1, -1, -1, -1 };
+    if(c->volume == last[0] && c->vol_aux == last[1] && c->vol_bt == last[2] && c->vol_dig == last[3] && c->vol_usb == last[4]) return;
+    last[0] = c->volume; last[1] = c->vol_aux; last[2] = c->vol_bt; last[3] = c->vol_dig; last[4] = c->vol_usb;
     FILE *f = fopen(OPL_VOLUME_LOG, "ae");
     if(!f){ logmsg("volume log: open %s: %s", OPL_VOLUME_LOG, strerror(errno)); return; }
     time_t now = time(NULL); struct tm tm; char ts[32] = "";
     if(localtime_r(&now, &tm)) strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S ", &tm);
-    fprintf(f, "%sVolume: Main %d, AUX %d%s, Digital %d%s, BT %d%s\n", ts, c->volume, c->vol_aux, pb_aux() ? "" : " (off)",
-            c->vol_dig, pb_digital() ? "" : " (off)", c->vol_bt, pb_bluetooth() ? "" : " (off)");
+    fprintf(f, "%sVolume: Main %d, AUX %d%s, Digital %d%s, BT %d%s, USB %d%s\n", ts, c->volume, c->vol_aux, pb_aux() ? "" : " (off)",
+            c->vol_dig, pb_digital() ? "" : " (off)", c->vol_bt, pb_bluetooth() ? "" : " (off)", c->vol_usb, pb_usb() ? "" : " (off)");
     fclose(f);
 }
 
@@ -335,17 +467,23 @@ int main(int argc, char **argv){
     logmsg("charge: Charging Limit %s (SYSCONFIG %d)", core.charge ? "on" : "off", cv);
 
     if(use_wd) load_volumes(&core);                            /* host runs (-n) keep the defaults */
+    if(use_wd) load_audio_conf();
+    core.app_aux = core.vol_aux; core.app_bt = core.vol_bt; core.app_dig = core.vol_dig; core.app_usb = core.vol_usb;
+    g_fcore = &core;
+    eng_set_before_play(before_play);
+    if(use_wd && (mkdir(ENG_RUN_DIR, 0755) == 0 || errno == EEXIST))
+        ua_alsa_conf_write(ENG_USB_CONF, -1, 0, logmsg);       /* no card until usb_tick finds one (not one of a run before) */
     if(use_wd && dac_open(0, logmsg) != 0) logmsg("dac: not available - no sound");
     if(use_wd) mix_route_dac(logmsg);                          /* the stock player sets its route at start too */
     if(eng_start(0, logmsg) == 0) pb_engine_event();           /* MPD is not hardware: host runs (-n) use it too when present */
     if(use_wd) pb_resume_begin(sd_is_mounted, RESUME_FLAG);    /* host runs (-n) have no library */
-    int att_vol = -1, att_gain = -1, att_bal = -1, att_curve = -1, bt_vol = -1, spdif_vol = -1;
-    g_core = &core; g_bt_vol = &bt_vol;
+    g_core = &core; g_bt_vol = &g_bt_last;
     btav_cb hp = { logmsg, hp_transport, hp_volume };
     if(use_wd || getenv("DISKOS_PLAYER_BUS"))                /* host runs (-n) only on a bus they name */
         btav_init(&hp, getenv("DISKOS_PLAYER_BUS"));        /* NULL: the system bus */
     unsigned route_seq = core.route_seq, codec_seq = core.codec_seq;
-    int saved_aux = core.vol_aux, saved_bt = core.vol_bt, saved_dig = core.vol_dig;
+    unsigned saved_seq = core.vol_seq;
+    double usb_at = 0, role_at = 0;
     unsigned blocked_seq = eng_blocked_seq();
     double vol_changed = 0;
 
@@ -373,7 +511,8 @@ int main(int argc, char **argv){
         /* an mqd_t is a descriptor on Linux; a negative fd is skipped by poll */
         struct pollfd pf[5] = { { (int)pl, POLLIN, 0 }, { keys, POLLIN, 0 }, { uev, POLLIN, 0 }, { eng_idle_fd(), POLLIN, 0 },
                                 { btav_fd(), POLLIN, 0 } };
-        int pr = poll(pf, 5, 250);
+        int fading = fade_busy(0) || fade_busy(1) || fade_busy(2) || fade_busy(3);
+        int pr = poll(pf, 5, fading ? 50 : 250);      /* a fade in steps every 50 ms */
         if(pr > 0 && pf[4].fd >= 0 && pf[4].revents) btav_io();
         if(pr > 0 && pf[3].fd >= 0 && (pf[3].revents & (POLLIN | POLLHUP | POLLERR))){
             int ev = eng_idle_event();
@@ -477,7 +616,22 @@ int main(int argc, char **argv){
             pb_stream_mode(core.work_mode == PL_WORK_DLNA);
         }
         eng_check();
-        if(core.route_seq != route_seq){ route_seq = core.route_seq; pb_route(); bt_vol = core.vol_bt; }
+        if(use_wd && t - role_at >= 2.0){              /* the host role for USB devices; not while the card is exported */
+            role_at = t;
+            ua_role_tick(us_active(), logmsg);
+        }
+        if(use_wd && t - usb_at >= 1.0){ usb_at = t; usb_tick(&core, t); }
+        if(core.route_seq != route_seq){
+            route_seq = core.route_seq;
+            /* outputs that come on fade in: silent before they open */
+            const int was[PL_O_N] = { pb_aux(), pb_bluetooth(), pb_digital(), pb_usb() };
+            const int will[PL_O_N] = { core.out_aux, core.out_bt, core.out_dig, core.out_usb && core.usb_ready };
+            for(int o = 0; o < PL_O_N; o++) if(will[o] && !was[o]) fade_start(&core, o, t);
+            fade_apply(&core, t);
+            apply_volumes(&core, t);
+            pb_route();
+            g_bt_last = core.app_bt;               /* pb_route gave it to the headphones */
+        }
         if(core.codec_seq != codec_seq){ codec_seq = core.codec_seq; pb_codec(core.codec_want); }
         if(g_abs_mac[0] && (!pb_bluetooth() || strcasecmp(g_abs_mac, pb_bt_mac()))) g_abs_mac[0] = 0;   /* they left */
         /* Soft volume unless the link has absolute volume now. BlueALSA keeps a PCM's SoftVolume across BlueZ's transport
@@ -495,31 +649,20 @@ int main(int argc, char **argv){
             }
             if(!abs && !g_abs_mac[0] && strcasecmp(soft_mac, bm) && btav_soft_volume(bm, 1) == 0){
                 snprintf(soft_mac, sizeof soft_mac, "%s", bm);
-                bt_vol = -1;                                      /* the Bluetooth volume again, now scaled by BlueALSA */
+                g_bt_last = -1;                                   /* the Bluetooth volume again, now scaled by BlueALSA */
             }
         }
         if(!pb_bluetooth() || (soft_mac[0] && strcasecmp(soft_mac, pb_bt_mac()))) soft_mac[0] = 0;
-        if(pb_bluetooth() && !pb_switching() && core.vol_bt != bt_vol){   /* the headphones' own volume (BlueALSA) */
-            bt_vol = core.vol_bt;
-            bto_volume(pb_bt_mac(), core.vol_bt, PL_VOL_MAX, logmsg);
-        }
-        int gain = core.gain && pl_core_plugged(&core), curve = core.bal == 1;
-        if(pb_aux() && dac_current_rate() && (core.vol_aux != att_vol || gain != att_gain || core.balance != att_bal || curve != att_curve)){
-            unsigned char a, l;
-            pb_attenuation(&a, &l);
-            dac_set_attenuation(a, l, logmsg);
-            att_vol = core.vol_aux; att_gain = gain; att_bal = core.balance; att_curve = curve;
-        }
-        if(core.vol_dig != spdif_vol && eng_spdif_volume((unsigned)(core.vol_dig * 100 / PL_VOL_MAX)) == 0)
-            spdif_vol = core.vol_dig;                     /* S/PDIF: the digital volume as MPD's software volume (engine.c) */
+        fade_apply(&core, t);
+        apply_volumes(&core, t);
         if(eng_blocked_seq() != blocked_seq){             /* a play was held back: no output is on */
             blocked_seq = eng_blocked_seq();
             pl_core_notice(&core, PL_NOTICE_NONE);
         }
-        if(core.vol_aux != saved_aux || core.vol_bt != saved_bt || core.vol_dig != saved_dig){
+        if(core.vol_seq != saved_seq){
             if(!vol_changed) vol_changed = t;
             if(t - vol_changed >= VOL_SAVE_DELAY_S){
-                saved_aux = core.vol_aux; saved_bt = core.vol_bt; saved_dig = core.vol_dig; vol_changed = 0;
+                saved_seq = core.vol_seq; vol_changed = 0;
                 if(use_wd) save_volumes(&core);
             }
         }
@@ -562,7 +705,7 @@ int main(int argc, char **argv){
             sleep_at = 0;
             logmsg("power off (sleep timer or held Power key)%s", use_wd ? "" : " (dry run, -n)");
             pb_shutdown();
-            if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt || core.vol_dig != saved_dig)) save_volumes(&core);
+            if(use_wd && core.vol_seq != saved_seq) save_volumes(&core);
             hw_power_off(wd, !use_wd, logmsg);
             if(use_wd) logmsg("power off did not happen");
         }
@@ -580,7 +723,7 @@ int main(int argc, char **argv){
     pb_shutdown();
     hw_charge_release(&chg, !use_wd, logmsg);
     btav_close();
-    if(use_wd && (core.vol_aux != saved_aux || core.vol_bt != saved_bt || core.vol_dig != saved_dig)) save_volumes(&core);
+    if(use_wd && core.vol_seq != saved_seq) save_volumes(&core);
     eng_stop();
     pb_close();
     dac_close();

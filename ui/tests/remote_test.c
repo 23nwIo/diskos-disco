@@ -306,6 +306,12 @@ static void test_core(void){
     r = req("POST", p("/api/outputs"), "dig=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_DIG && r.cmd.arg == 1);
     r = req("POST", p("/api/outputs"), "vol_dig=120"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_VOL_DIG && r.cmd.arg == 120);
     r = req("POST", p("/api/outputs"), "dig=2"); CHECK(r.kind == RMT_R_BAD_PARAM);
+    r = req("POST", p("/api/outputs"), "usb=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_USB && r.cmd.arg == 1);
+    r = req("POST", p("/api/outputs"), "vol_usb=7"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_VOL_USB && r.cmd.arg == 7);
+    r = req("POST", p("/api/outputs"), "cap_usb=60"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_CAP_USB && r.cmd.arg == 60);
+    r = req("POST", p("/api/outputs"), "fade_bt=0"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_FADE_BT && r.cmd.arg == 0);
+    CHECK(req("POST", p("/api/outputs"), "cap_aux=121").kind == RMT_R_BAD_PARAM && req("POST", p("/api/outputs"), "fade_usb=2").kind == RMT_R_BAD_PARAM);
+    CHECK(RMT_OUT_USB == 9 && RMT_OUT_VOL_USB == 10 && RMT_OUT_CAP_AUX == 11 && RMT_OUT_FADE_USB == 18);   /* settings_outputs_cmd numbers */
     r = req("POST", p("/api/outputs"), "codec=4"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_CODEC && r.cmd.arg == 4);
     CHECK(req("POST", p("/api/outputs"), "codec=5").kind == RMT_R_BAD_PARAM);
     r = req("GET", p("/api/queue"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_QUEUE && r.cmd.sub == RMT_Q_LIST && r.cmd.limit == 100);
@@ -496,7 +502,10 @@ static void test_core(void){
     CHECK(strstr(js, "\"playing\":true") && strstr(js, "\"volume\":40") && strstr(js, "\"balance\":0,") && strstr(js, "\"outputs\":null,\"list_end\":null}") && strstr(js, "\"source\":\"local\""));
     s.out_own = 1; s.out_codec = -1; s.out_codecs = 1 | 4 | 16; s.out_aux = 1; s.out_vol_aux = 30; s.out_vol_bt = 12; s.out_auto = 2; s.out_jack = 1; s.out_bal = 0;
     s.out_dig = 1; s.out_vol_dig = 77;
-    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"dig\":true,\"vol_aux\":30,\"vol_bt\":12,\"vol_dig\":77,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false},\"list_end\":null}"));
+    s.out_usb = 1; s.out_vol_usb = 40; s.out_usb_ready = 1; s.out_main = 50; snprintf(s.out_usb_name, sizeof s.out_usb_name, "USB \"DAC\"");
+    for(int i = 0; i < 4; i++){ s.out_cap[i] = 120 - i; s.out_fade[i] = i != 2; }
+    CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"dig\":true,\"vol_aux\":30,\"vol_bt\":12,\"vol_dig\":77,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false,"
+          "\"usb\":true,\"vol_usb\":40,\"usb_ready\":true,\"usb_name\":\"USB \\\"DAC\\\"\",\"main\":50,\"cap\":[120,119,118,117],\"fade\":[1,1,0,1]},\"list_end\":null}"));
     s.out_own = 0;
     s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Radio <%s>", "X");
     snprintf(s.station_url, sizeof s.station_url, "https://radio.example/stream?a=1&b=\"2\"");
@@ -506,7 +515,7 @@ static void test_core(void){
     memset(s.album, 1, sizeof s.album - 1); s.album[sizeof s.album - 1] = 0; memset(s.artist, 1, sizeof s.artist - 1); s.artist[sizeof s.artist - 1] = 0;
     memset(s.station, 1, sizeof s.station - 1); s.station[sizeof s.station - 1] = 0; memset(s.radio_error, 1, sizeof s.radio_error - 1); s.radio_error[sizeof s.radio_error - 1] = 0; memset(s.station_url, 1, sizeof s.station_url - 1); s.station_url[sizeof s.station_url - 1] = 0; memset(s.stream_title, 1, sizeof s.stream_title - 1); s.stream_title[sizeof s.stream_title - 1] = 0; memset(s.bt_codec, 1, sizeof s.bt_codec - 1); s.bt_codec[sizeof s.bt_codec - 1] = 0; memset(s.bt_device, 1, sizeof s.bt_device - 1); s.bt_device[sizeof s.bt_device - 1] = 0;
     CHECK(rmt_state_json(js, sizeof js, &s) > 0);
-    CHECK(strlen(RMT_PAGE_HTML) < 40960 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768 && strlen(RMT_HG_HTML) < 32768 && strlen(RMT_HGADMIN_HTML) < 32768);   /* each page stays light (the main page: 40 KB since the Bandcamp tab) */
+    CHECK(strlen(RMT_PAGE_HTML) < 43008 && strlen(RMT_SYS_HTML) < 32768 && strlen(RMT_PARTY_HTML) < 32768 && strlen(RMT_HG_HTML) < 32768 && strlen(RMT_HGADMIN_HTML) < 32768);   /* each page stays light (the main page: 40 KB since the Bandcamp tab, 42 KB since USB audio) */
 }
 
 /* ---------------------------------------------------------------- server round trip */

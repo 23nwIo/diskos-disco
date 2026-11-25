@@ -35,7 +35,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0201 | `0201000C000v` | Transport: 0 play/pause toggle, 1 next, 2 previous | ui.c, themes, remote.c | do |
 | 0202 | `02020008` | Request current state; the answer is an `a2` frame | main.c, wifi.c | do |
 | 0622 | `0622000C0001` | Rescan (stock: no-op on V2.09; diskOS scans itself, ui/scanner.c) | - | ack |
-| 0642 | `0642000C000v` | USB gadget selector: 0 none, 1 and 2 with the USB modes, 5 USB audio out | main.c, modes.c, usbdrive.c | ack; 1 (USB storage) done, see MQ_PLAYER_TRACE.md run 5 |
+| 0642 | `0642000C000v` | USB gadget selector: 0 none, 1 and 2 with the USB modes, 5 USB audio out | main.c, modes.c, usbdrive.c | ack; 1 (USB storage) done, see MQ_PLAYER_TRACE.md run 5; 5 accepted and only logged: the own player switches the USB host role itself (docs/USB_AUDIO.md) |
 | 0645 / 0649 | `06xx000C000v` | Gain 0 low / 1 high (tag depends on firmware, ui/fwcaps.c) | main.c `ui_set_gain` | do |
 | 0646 | `0646000C000v` | Rotation/key layout option | controls.c | keep |
 | 0647 | `0647000C000v` | Gapless on/off | main.c | keep |
@@ -49,10 +49,13 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0687 | `0687000C000v` | Play through folders on/off | main.c | keep |
 | 0689 | `0689000C<p 4h>` | EQ preset 0..10, custom PEQ slots 11..20 | main.c `ui_apply_eq` | do |
 | 06b3 | `06b3001D<codec 4h><MAC>` | Bluetooth codec (0 SBC, 1 AAC, 2..4 LDAC) for the headphones `<MAC>` (17 chars) | bt.c, main.c | do (own player: MAC for the Bluetooth output, codec via bluealsa-cli) |
-| 0d01 | `0d01000C000v` | diskOS, own player only: outputs on, bit 0 AUX analog (the DAC), bit 1 Bluetooth, bit 2 AUX digital (S/PDIF); 0 = none, playback waits paused and a play is held back (notice 3); Bluetooth can only be turned on with headphones routed | settings.c (Outputs) | do |
-| 0d02 | `0d02000C<vol 4h>` | diskOS, own player only: AUX analog volume 0..120 | settings.c (Outputs) | do |
-| 0d03 | `0d03000C<vol 4h>` | diskOS, own player only: Bluetooth volume 0..120 | settings.c (Outputs) | do |
-| 0d07 | `0d07000C<vol 4h>` | diskOS, own player only: AUX digital volume 0..120 (MPD's software volume on S/PDIF) | settings.c (Outputs) | do |
+| 0d01 | `0d01000C000v` | diskOS, own player only: outputs on, bit 0 AUX analog (the DAC), bit 1 Bluetooth, bit 2 AUX digital (S/PDIF), bit 3 USB sound card; 0 = none, playback waits paused and a play is held back (notice 3); Bluetooth can only be turned on with headphones routed, USB only with a card there | settings.c (Outputs) | do |
+| 0d02 | `0d02000C<vol 4h>` | diskOS, own player only: AUX analog volume 0..120, stored as its offset to the main volume (see "Volumes" below) | settings.c (Outputs) | do |
+| 0d03 | `0d03000C<vol 4h>` | diskOS, own player only: Bluetooth volume 0..120, stored per headphones (MAC) as their offset | settings.c (Outputs) | do |
+| 0d07 | `0d07000C<vol 4h>` | diskOS, own player only: AUX digital volume 0..120 (MPD's software volume on S/PDIF), stored as its offset | settings.c (Outputs) | do |
+| 0d08 | `0d08000C<vol 4h>` | diskOS, own player only: USB sound card volume 0..120 (its own volume control, else MPD's software volume), stored per card as its offset | settings.c (Outputs) | do |
+| 0d09 | `0d09000C<oo cc>` | diskOS, own player only: the volume limit of output oo (0 AUX analog, 1 Bluetooth, 2 AUX digital, 3 USB) = cc (0..120), stored per device | settings.c (Limits and Fade In) | do |
+| 0d0a | `0d0a000C<oo 0f>` | diskOS, own player only: fade in of output oo on (f 1) or off (0), stored per device | settings.c (Limits and Fade In) | do |
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
 | 0d05 | `0d05000C000v` | diskOS, own player only: Auto Outputs, what connecting does: 0 off (nothing, a notice), 1 newest (the new device alone), 2 all connected | main.c (re-sent on start), settings.c (Outputs) | do |
 | 0d06 | `0d06000C000v` | diskOS, own player only: Headphone Volume, what the Bluetooth headphones' own volume (AVRCP absolute volume) moves: 0 the Bluetooth volume only (default), 1 AUX too when it is on (same step) | main.c (re-sent on start), settings.c (Outputs) | do |
@@ -77,6 +80,19 @@ The UI keeps its own copy of every setting (diskos.conf) and re-sends it once th
 (`ui_reapply_audio`), so a player that starts with defaults is corrected within seconds. The stock player also
 persists settings to `sysconfig.db` (`SYSCONFIG` table) on shutdown, and the UI reads some of them from there (for
 example `BT_STATUS`, `MAX_VOL`).
+
+### Volumes (own player, docs/USB_AUDIO.md)
+
+One **main volume** (0715, the volume keys, a714 to the UI) and per device an **offset**, a **limit** and **fade in**:
+each output plays at clamp(main + offset, 0, min(limit, max volume)). Devices: `aux`, `dig`, `bt:<MAC>`,
+`usb:<VID>:<PID>:<serial>`; a USB card without a serial number is never stored. New devices start at offset -120
+(silent at any main volume) and, for USB, off. Stored in `/usr/data/diskos-own/volumes` 3 s after a change
+(`main=N`, `dev KEY off=N cap=N fade=N`); a file from before offsets (`vol_aux=`, `vol_bt=`, `vol_dig=`) is taken
+over: AUX analog becomes the main volume, the Bluetooth volume goes to the first headphones seen. Fade in: from 0 to
+the volume over `fade_s` seconds (`/usr/data/diskos-own/audio.conf`, default 4) when an output comes on and when
+playback starts after a pause. The state for the UI is in `/tmp/diskos-player-outputs` (`usb=`, `vol_usb=`,
+`usb_ready=`, `usb_name=`, `usb_soft=`, `main=`, `cap=a b d u`, `fade=a b d u` besides the older lines; notice 4: a USB
+sound card connected that is off).
 
 ## Replies (player to UI, on `/ui`)
 

@@ -181,6 +181,7 @@ static opl_outputs_t g_out;
 static uint32_t g_out_t;
 /* what was just asked: shown until the player's file says so (it applies it within a quarter second) or 2 s pass */
 static int g_outp_aux = -1, g_outp_bt = -1, g_outp_dig = -1, g_outp_va = -1, g_outp_vb = -1, g_outp_vd = -1;
+static int g_outp_usb = -1, g_outp_vu = -1, g_outp_cap[4] = { -1, -1, -1, -1 }, g_outp_fade[4] = { -1, -1, -1, -1 };
 static uint32_t g_outp_t;
 static const opl_outputs_t *outputs_now(void){
     static opl_outputs_t v;
@@ -197,7 +198,13 @@ static const opl_outputs_t *outputs_now(void){
         if(g_outp_va >= 0) v.vol_aux = g_outp_va;
         if(g_outp_vb >= 0) v.vol_bt = g_outp_vb;
         if(g_outp_vd >= 0) v.vol_dig = g_outp_vd;
-    } else g_outp_aux = g_outp_bt = g_outp_dig = g_outp_va = g_outp_vb = g_outp_vd = -1;
+        if(g_outp_usb >= 0) v.usb = g_outp_usb;
+        if(g_outp_vu >= 0) v.vol_usb = g_outp_vu;
+        for(int i = 0; i < 4; i++){ if(g_outp_cap[i] >= 0) v.cap[i] = g_outp_cap[i]; if(g_outp_fade[i] >= 0) v.fade[i] = g_outp_fade[i]; }
+    } else {
+        g_outp_aux = g_outp_bt = g_outp_dig = g_outp_va = g_outp_vb = g_outp_vd = g_outp_usb = g_outp_vu = -1;
+        for(int i = 0; i < 4; i++) g_outp_cap[i] = g_outp_fade[i] = -1;
+    }
     return &v;
 }
 /* main.c, every second: with Auto Outputs off the player leaves the outputs alone when a plug goes in or headphones
@@ -212,6 +219,7 @@ void settings_outputs_notice_tick(void){
     if(o->notice == 1) ui_toast(tr("AUX connected, but not enabled. See Audio > Outputs"));
     else if(o->notice == 2) ui_toast(tr("Bluetooth connected, but not enabled. See Audio > Outputs"));
     else if(o->notice == 3) ui_toast(tr("No output is on. See Audio > Outputs"));
+    else if(o->notice == 4) ui_toast(tr("USB sound card connected, but off. See Audio > Outputs"));
 }
 /* main.c: the player's volume report (a714) follows a change made here (an output switched, an output's volume): no
  * volume overlay for it, the page shows the value itself */
@@ -219,28 +227,56 @@ int settings_outputs_recent(void){ return g_outp_t && lv_tick_get() - g_outp_t <
 static int out_send(const char *tag, int v){ char f[16]; snprintf(f, sizeof f, "%s000C%04X", tag, (unsigned)v); return ipc_send_cmd(f); }
 /* NULL when sent, else why not (the page toasts it, Remote Control answers it); OUT_NOT_TAKEN: ipc already told the user */
 static const char OUT_NOT_TAKEN[] = "The player didn't take it";
-/* the outputs on: AUX analog, Bluetooth, AUX digital, any of them or none (the player then waits, paused) */
-static const char *out_set_why(int aux, int bt, int dig){
-    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0) | (dig ? 4 : 0)) < 0) return OUT_NOT_TAKEN;
-    g_outp_aux = aux; g_outp_bt = bt; g_outp_dig = dig; g_outp_t = lv_tick_get();
+/* the outputs on: AUX analog, Bluetooth, AUX digital, USB sound card, any of them or none (the player then waits, paused) */
+static const char *out_set_why(int aux, int bt, int dig, int usb){
+    if(out_send("0d01", (aux ? 1 : 0) | (bt ? 2 : 0) | (dig ? 4 : 0) | (usb ? 8 : 0)) < 0) return OUT_NOT_TAKEN;
+    g_outp_aux = aux; g_outp_bt = bt; g_outp_dig = dig; g_outp_usb = usb; g_outp_t = lv_tick_get();
     return NULL;
 }
 static const char *out_bt_why(int v){
     const opl_outputs_t *o = outputs_now();
     if(v && !o->bt && !o->bt_ready) return "Connect Bluetooth headphones first";
-    return out_set_why(o->aux, v, o->dig);
+    return out_set_why(o->aux, v, o->dig, o->usb);
+}
+static const char *out_usb_why(int v){
+    const opl_outputs_t *o = outputs_now();
+    if(v && !o->usb && !o->usb_ready) return "Connect a USB sound card first";
+    return out_set_why(o->aux, o->bt, o->dig, v);
 }
 static void out_toast(const char *w){ if(w && w != OUT_NOT_TAKEN) ui_toast(tr(w)); }
-static void apply_out_aux(int v){ const opl_outputs_t *o = outputs_now(); out_toast(out_set_why(v, o->bt, o->dig)); }
+static void apply_out_aux(int v){ const opl_outputs_t *o = outputs_now(); out_toast(out_set_why(v, o->bt, o->dig, o->usb)); }
 static void apply_out_bt(int v){ out_toast(out_bt_why(v)); }
-static void apply_out_dig(int v){ const opl_outputs_t *o = outputs_now(); out_toast(out_set_why(o->aux, o->bt, v)); }
+static void apply_out_dig(int v){ const opl_outputs_t *o = outputs_now(); out_toast(out_set_why(o->aux, o->bt, v, o->usb)); }
+static void apply_out_usb(int v){ out_toast(out_usb_why(v)); }
+/* an output's volume limit (0d09) and fade in (0d0a): output (player/core.h PL_O_*: 0 AUX analog, 1 Bluetooth,
+ * 2 AUX digital, 3 USB) in the high byte; stored per device by the player */
+static const char *out_cap_why(int o, int v){
+    if(o < 0 || o > 3 || v < 0 || v > 120) return "Limit 0-120";
+    if(out_send("0d09", (o << 8) | v) < 0) return OUT_NOT_TAKEN;
+    g_outp_cap[o] = v; g_outp_t = lv_tick_get();
+    return NULL;
+}
+static const char *out_fade_why(int o, int v){
+    if(o < 0 || o > 3 || v < 0 || v > 1) return "Unknown choice";
+    if(out_send("0d0a", (o << 8) | v) < 0) return OUT_NOT_TAKEN;
+    g_outp_fade[o] = v; g_outp_t = lv_tick_get();
+    return NULL;
+}
+static void apply_cap_aux(int v){ out_toast(out_cap_why(0, v)); }
+static void apply_cap_bt(int v){ out_toast(out_cap_why(1, v)); }
+static void apply_cap_dig(int v){ out_toast(out_cap_why(2, v)); }
+static void apply_cap_usb(int v){ out_toast(out_cap_why(3, v)); }
+static void apply_fade_aux(int v){ out_toast(out_fade_why(0, v)); }
+static void apply_fade_bt(int v){ out_toast(out_fade_why(1, v)); }
+static void apply_fade_dig(int v){ out_toast(out_fade_why(2, v)); }
+static void apply_fade_usb(int v){ out_toast(out_fade_why(3, v)); }
 /* the sliders send while they are dragged, at most every 80 ms; the last value always goes out (a short timer) */
-static int g_outv_want[3] = { -1, -1, -1 }, g_outv_sent[3] = { -1, -1, -1 };   /* AUX analog, Bluetooth, AUX digital */
+static int g_outv_want[4] = { -1, -1, -1, -1 }, g_outv_sent[4] = { -1, -1, -1, -1 };   /* AUX analog, Bluetooth, AUX digital, USB */
 static uint32_t g_outv_t;
 static lv_timer_t *g_outv_tm;
 static void outv_flush(void){
-    static const char *const TAG[3] = { "0d02", "0d03", "0d07" };
-    for(int i = 0; i < 3; i++){
+    static const char *const TAG[4] = { "0d02", "0d03", "0d07", "0d08" };
+    for(int i = 0; i < 4; i++){
         if(g_outv_want[i] < 0 || g_outv_want[i] == g_outv_sent[i]) continue;
         if(out_send(TAG[i], g_outv_want[i]) == 0) g_outv_sent[i] = g_outv_want[i];
     }
@@ -249,7 +285,7 @@ static void outv_flush(void){
 static void outv_tm_cb(lv_timer_t *t){ (void)t; g_outv_tm = NULL; outv_flush(); }
 static void out_volume(int which, int v){
     g_outv_want[which] = v;
-    if(which == 2) g_outp_vd = v; else if(which) g_outp_vb = v; else g_outp_va = v;
+    if(which == 3) g_outp_vu = v; else if(which == 2) g_outp_vd = v; else if(which) g_outp_vb = v; else g_outp_va = v;
     g_outp_t = lv_tick_get();
     if(lv_tick_get() - g_outv_t >= 80){ outv_flush(); return; }
     if(!g_outv_tm){ g_outv_tm = lv_timer_create(outv_tm_cb, 100, NULL); lv_timer_set_repeat_count(g_outv_tm, 1); }
@@ -263,9 +299,10 @@ static void apply_hp_vol(int v){ if(own_player_cached()) out_send("0d06", v); }
 static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d11 + the station (0d12) */
 /* Remote Control (ui/remote.c, main thread): the Outputs page's state and controls from the web page.
  * settings_outputs_state: 0 with *o (what the page shows now) and *auto_out (the saved Auto Outputs) while the own
- * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX analog, 2 Bluetooth, 7 AUX digital (v 0/1), 3 AUX analog
- * volume, 4 Bluetooth volume, 8 AUX digital volume (0..120), 5 Auto Outputs (0..2), 6 this connection's codec (0..4:
- * SBC, AAC, LDAC, aptX, aptX HD), as rmt_out_t numbers them; 0, or -1 with *why. */
+ * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX analog, 2 Bluetooth, 7 AUX digital, 9 USB (v 0/1),
+ * 3 AUX analog volume, 4 Bluetooth volume, 8 AUX digital volume, 10 USB volume (0..120), 5 Auto Outputs (0..2), 6 this
+ * connection's codec (0..4: SBC, AAC, LDAC, aptX, aptX HD), 11..14 the limit of AUX analog, Bluetooth, AUX digital,
+ * USB (0..120), 15..18 their fade in (0/1), as rmt_out_t numbers them; 0, or -1 with *why. */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out){
     if(!own_player_cached()) return -1;
     *o = *outputs_now();
@@ -278,10 +315,15 @@ int settings_outputs_cmd(int what, int v, const char **why){
     const char *w = NULL;
     if(!own_player_cached()) w = "Outputs need the own player (Settings > About > Player)";
     else switch(what){
-    case 1: w = out_set_why(v, outputs_now()->bt, outputs_now()->dig); break;
+    case 1: w = out_set_why(v, outputs_now()->bt, outputs_now()->dig, outputs_now()->usb); break;
     case 2: w = out_bt_why(v); break;
-    case 7: w = out_set_why(outputs_now()->aux, outputs_now()->bt, v); break;
-    case 3: case 4: case 8: if(v < 0 || v > 120){ w = "Volume 0-120"; break; } out_volume(what == 4 ? 1 : what == 8 ? 2 : 0, v); break;
+    case 7: w = out_set_why(outputs_now()->aux, outputs_now()->bt, v, outputs_now()->usb); break;
+    case 9: w = out_usb_why(v); break;
+    case 3: case 4: case 8: case 10:
+        if(v < 0 || v > 120){ w = "Volume 0-120"; break; }
+        out_volume(what == 4 ? 1 : what == 8 ? 2 : what == 10 ? 3 : 0, v); break;
+    case 11: case 12: case 13: case 14: w = out_cap_why(what - 11, v); break;
+    case 15: case 16: case 17: case 18: w = out_fade_why(what - 15, v); break;
     case 6: { int sent; w = out_codec_why(v, &sent); break; }
     case 5:
         if(v < 0 || v > 2){ w = "Unknown choice"; break; }
@@ -296,6 +338,7 @@ int settings_outputs_cmd(int what, int v, const char **why){
 static void apply_out_vol_aux(int v){ out_volume(0, v); }
 static void apply_out_vol_bt(int v){ out_volume(1, v); }
 static void apply_out_vol_dig(int v){ out_volume(2, v); }
+static void apply_out_vol_usb(int v){ out_volume(3, v); }
 static const char *const OUT_CODEC_OPTS[] = { "SBC", "AAC", "LDAC", "aptX", "aptX HD" };
 static const int OUT_CODEC_VAL[] = { 0, 1, 2, 5, 6 };                     /* ui/bt.c numbering, as 0d04 takes it */
 static const char *const OUT_CODEC_WORD[] = { "SBC", "AAC", "LDAC", "APTX", "APTX-HD" };   /* as BlueALSA spells them */
@@ -356,12 +399,20 @@ int settings_outputs_codecs(int *cur){
     return m;
 }
 static void apply_grp_outputs(int v);
+static void apply_grp_outlimits(int v);
+static void (*const OUT_CAP_FN[4])(int) = { apply_cap_aux, apply_cap_bt, apply_cap_dig, apply_cap_usb };
+static void (*const OUT_FADE_FN[4])(int) = { apply_fade_aux, apply_fade_bt, apply_fade_dig, apply_fade_usb };
 static int outputs_row(const setting_t *s){
-    return s->apply == apply_grp_outputs || s->apply == apply_out_aux || s->apply == apply_out_bt || s->apply == apply_out_dig
-        || s->apply == apply_out_vol_aux || s->apply == apply_out_vol_bt || s->apply == apply_out_vol_dig || s->apply == apply_out_codec;
+    for(int i = 0; i < 4; i++) if(s->apply == OUT_CAP_FN[i] || s->apply == OUT_FADE_FN[i]) return 1;
+    return s->apply == apply_grp_outputs || s->apply == apply_grp_outlimits || s->apply == apply_out_aux || s->apply == apply_out_bt
+        || s->apply == apply_out_dig || s->apply == apply_out_usb || s->apply == apply_out_vol_aux || s->apply == apply_out_vol_bt
+        || s->apply == apply_out_vol_dig || s->apply == apply_out_vol_usb || s->apply == apply_out_codec;
 }
 static int outputs_get(const setting_t *s){
     const opl_outputs_t *o = outputs_now();
+    for(int i = 0; i < 4; i++){ if(s->apply == OUT_CAP_FN[i]) return o->cap[i]; if(s->apply == OUT_FADE_FN[i]) return o->fade[i]; }
+    if(s->apply == apply_out_usb) return o->usb;
+    if(s->apply == apply_out_vol_usb) return o->vol_usb;
     if(s->apply == apply_out_aux) return o->aux;
     if(s->apply == apply_out_bt) return o->bt;
     if(s->apply == apply_out_dig) return o->dig;
@@ -1124,23 +1175,45 @@ static const setting_t TABLE[] = {
     { "Audio",    "Balance",     ST_SLIDER, "balance",      -10,10,1, NULL,0, NULL, apply_balance, 0,
       "Left/right channel balance. 0 = centred; negative = left, positive = right.", NULL },
     { "Audio",    "Outputs",     ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_grp_outputs, 0,
-      "Bluetooth, AUX analog and AUX digital, each on or off, with its own volume.", NULL },
+      "Bluetooth, AUX analog, AUX digital and a USB sound card, each on or off, with its own volume.", NULL },
     { "Outputs",  "Bluetooth",   ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_bt, 0,
       "The connected Bluetooth headphones. Several outputs can play at once; Bluetooth is a little behind AUX.", NULL },
     { "Outputs",  "AUX analog",  ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_aux, 1,
       "The headphone jacks (3.5 mm and 4.4 mm balanced). Off powers the DAC down. With every output off, playback waits.", NULL },
     { "Outputs",  "AUX digital", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_dig, 0,
       "Coaxial S/PDIF on the 3.5 mm jack, to an external DAC. Needs a 4-pole 3.5 mm to RCA cable (signal on the third contact from the tip); a normal stereo plug shorts it. 44.1 or 48 kHz. Off again after a restart.", NULL },
+    { "Outputs",  "USB audio",   ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_out_usb, 0,
+      "A USB sound card on the USB-C port (also behind a hub or dock). A card never seen before, or one without a serial number, starts off and silent: raise USB Volume on purpose.", NULL },
     { "Outputs",  "Auto Outputs", ST_CHOICE, "out_auto", 0,0,0, OPT_OUTAUTO, 3, NULL, apply_out_auto, 1,
       "What plugging in or connecting headphones does. A plug brings back the AUX outputs that were on last (analog, digital or both).", OPT_OUTAUTO_D },
     { "Outputs",  "Headphone Volume", ST_CHOICE, "hp_vol_all", 0,0,0, OPT_HPVOL, 2, NULL, apply_hp_vol, 0,
       "What the Bluetooth headphones' own volume buttons change, for headphones that send their volume.", OPT_HPVOL_D },
     { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,
-      "The volume keys move every volume by the same step, whether the output is on or not.", NULL },
+      "Kept per headphones, as a step up or down from the main volume: the volume keys move every output alike. New headphones start silent.", NULL },
     { "Outputs",  "Analog Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
-      "The volume keys move every volume by the same step, whether the output is on or not.", NULL },
+      "Kept as a step up or down from the main volume: the volume keys move every output alike, whether it is on or not.", NULL },
     { "Outputs",  "Digital Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_dig, 20,
       "Set in the player, for external DACs without a volume of their own. The volume keys move it too.", NULL },
+    { "Outputs",  "USB Volume",  ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_usb, 0,
+      "The USB sound card's volume, kept per card (cards with a serial number). Can be set while the card is off.", NULL },
+    { "Outputs",  "Limits and Fade In", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_grp_outlimits, 0,
+      "Per device: the highest volume it may get, and fading in from silence when it is switched on or playback starts.", NULL },
+    { "Limits and Fade In", "Analog Limit", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_cap_aux, 120,
+      "The highest volume AUX analog plays at, whatever the main volume.", NULL },
+    { "Limits and Fade In", "Bluetooth Limit", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_cap_bt, 120,
+      "The highest volume these headphones play at, kept for them.", NULL },
+    { "Limits and Fade In", "Digital Limit", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_cap_dig, 120,
+      "The highest volume AUX digital plays at.", NULL },
+    { "Limits and Fade In", "USB Limit", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_cap_usb, 120,
+      "The highest volume this USB sound card plays at, kept for it.", NULL },
+    { "Limits and Fade In", "Analog Fade In", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_fade_aux, 1,
+      "Fade in from silence when AUX analog is switched on or playback starts. Length: fade_s in /usr/data/diskos-own/audio.conf (4 s).", NULL },
+    { "Limits and Fade In", "Bluetooth Fade In", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_fade_bt, 1,
+      "Fade in from silence on these headphones when they are switched on or playback starts.", NULL },
+    { "Limits and Fade In", "Digital Fade In", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_fade_dig, 1,
+      "Fade in from silence on AUX digital when it is switched on or playback starts.", NULL },
+    { "Limits and Fade In", "USB Fade In", ST_TOGGLE, NULL, 0,1,1, NULL,0, NULL, apply_fade_usb, 1,
+      "Fade in from silence on this USB sound card when it is switched on or playback starts.", NULL },
     { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
     {"Music screen","Text",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musictext,0,"Track font and alignment",NULL},
@@ -1628,6 +1701,7 @@ static void apply_grp_library(int v){ (void)v; g_active_group = "Library"; setli
 static void apply_grp_controls(int v){ (void)v; g_active_group = "Controls"; setlist_refresh(); }
 static void apply_grp_maintenance(int v){ (void)v; g_active_group = "Maintenance"; setlist_refresh(); }
 static void apply_grp_outputs(int v){ (void)v; g_active_group = "Outputs"; setlist_refresh(); }
+static void apply_grp_outlimits(int v){ (void)v; g_active_group = "Limits and Fade In"; setlist_refresh(); }
 static void apply_howto(int v){(void)v;g_active_group="How to";setlist_refresh();}
 static void apply_grp_about(int v){ (void)v; g_active_group = "About"; setlist_refresh(); }
 static void apply_volkeys_group(int v){ (void)v; g_active_group = "Volume Keys"; setlist_refresh(); }
@@ -1670,6 +1744,7 @@ static const struct { const char *child, *parent; } SUBGROUP[] = {
     { "Controls", "System" },
     { "Maintenance", "System" },
     { "Outputs", "Audio" },
+    { "Limits and Fade In", "Outputs" },
     { "About", "Help" },
     { "How to", "Help" },
     { "MA Sendspin", "Connectivity" },
@@ -2619,7 +2694,7 @@ void settings_test_submenus(void){
         if(!parent||display_variant_hidden(s)||settings_hidden(s))continue;
         void (*f)(int)=s->apply;
         if(!(f==apply_theme_settings||f==apply_theme_navigation||f==apply_library_appearance||f==apply_sleep_settings||f==apply_bluetooth_settings||f==apply_shared_navigation||
-             f==apply_grp_musictext||f==apply_grp_musicinfo||f==apply_grp_clockinfo||f==apply_grp_musicprogress||f==apply_grp_immersive||f==apply_grp_zune||f==apply_grp_textlayout||f==apply_grp_screenstandby||f==apply_grp_onlineextras||f==apply_grp_musicscreen||f==apply_grp_discocolours||f==apply_grp_discoqs||f==apply_grp_discolayout||f==apply_grp_datetime||f==apply_grp_library||f==apply_grp_controls||f==apply_grp_maintenance||f==apply_grp_outputs||f==apply_grp_about||f==apply_volkeys_group||f==apply_ma_group||f==apply_remote_group||f==apply_howto))continue;
+             f==apply_grp_musictext||f==apply_grp_musicinfo||f==apply_grp_clockinfo||f==apply_grp_musicprogress||f==apply_grp_immersive||f==apply_grp_zune||f==apply_grp_textlayout||f==apply_grp_screenstandby||f==apply_grp_onlineextras||f==apply_grp_musicscreen||f==apply_grp_discocolours||f==apply_grp_discoqs||f==apply_grp_discolayout||f==apply_grp_datetime||f==apply_grp_library||f==apply_grp_controls||f==apply_grp_maintenance||f==apply_grp_outputs||f==apply_grp_outlimits||f==apply_grp_about||f==apply_volkeys_group||f==apply_ma_group||f==apply_remote_group||f==apply_howto))continue;
         g_active_group=parent;f(0);
         int indices[N_SETTINGS];
         if(strcmp(g_active_group,"How to")&&!settings_collect(g_active_group,indices)){fprintf(stderr,"Empty submenu: %s\n",g_active_group);abort();}

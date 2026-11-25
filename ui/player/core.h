@@ -27,10 +27,27 @@
 #define PL_NOTICE_AUX  1           /* notice: a plug went in, AUX is off (auto off) */
 #define PL_NOTICE_BT   2           /* notice: headphones connected, Bluetooth is off (auto off) */
 #define PL_NOTICE_NONE 3           /* notice: play was asked, but no output is on (engine.c eng_blocked_seq) */
+#define PL_NOTICE_USB  4           /* notice: a USB sound card connected, but USB audio is off (new device, or auto off) */
 /* 0d01 bits: the outputs that are on */
 #define PL_OUT_AUX     1           /* AUX analog: the DAC on the 3.5 mm and 4.4 mm jacks */
 #define PL_OUT_BT      2           /* Bluetooth headphones */
 #define PL_OUT_DIG     4           /* AUX digital: S/PDIF, coaxial on the 3.5 mm jack's ring 2 */
+#define PL_OUT_USB     8           /* USB audio: a USB sound card (usbaudio.c), the Disc as USB host */
+/* Output indexes of 0d09 / 0d0a and the device table */
+enum { PL_O_AUX = 0, PL_O_BT, PL_O_DIG, PL_O_USB, PL_O_N };
+/* Volumes (docs/USB_AUDIO.md, Jo 2026-11-25): one main volume (core.volume, what the UI shows and the keys move) and
+ * per device an offset to it and a cap: an output plays at clamp(main + offset, 0, min(cap, max_volume)). Devices are
+ * AUX analog ("aux"), AUX digital ("dig"), each pair of Bluetooth headphones ("bt:<MAC>") and each USB sound card with
+ * a serial number ("usb:<vid>:<pid>:<serial>"). A device seen for the first time starts at offset -PL_VOL_MAX (silent
+ * whatever the main volume) and switched off; a USB card without a serial number has nothing stored and starts so on
+ * every plug in (Jo: concert PA systems, a loud surprise can hurt people). */
+#define PL_DEV_MAX     48          /* stored devices; the one not seen for the longest goes first */
+#define PL_FADE_MS     4000        /* fade in on switching an output on and on play after a pause (Jo: default 4 s) */
+typedef struct {
+    char key[100];                 /* "" = free */
+    int off, cap, fade;            /* offset -PL_VOL_MAX..PL_VOL_MAX, cap 0..PL_VOL_MAX, fade in 0/1 */
+    unsigned used;                 /* last use (core.dev_clock), for dropping the oldest */
+} pl_dev_t;
 
 typedef void (*pl_send_fn)(void *ctx, const char *frame, int len);
 typedef void (*pl_log_fn)(void *ctx, const char *msg);
@@ -85,12 +102,23 @@ typedef struct {
      * waits). A plug going in turns the last AUX choice on (mem_aux / mem_dig) and Bluetooth off; headphones routed by the UI (0666 2 + 06b3) turn
      * Bluetooth on and AUX off; 0d01 sets them by hand. The Disc can't tell a coaxial cable from headphones, so AUX digital comes
      * back with a plug only when it was on before. Each has
-     * its own volume; core.volume (what the UI shows) is the lead output's: Bluetooth when it plays, else AUX analog,
-     * else AUX digital. The volume keys and 0715 move all three volumes by the same step, on or off. */
-    int out_aux, out_bt, out_dig;
+     * its own volume: core.volume is the main volume, each output plays at main + its device's offset within its cap
+     * (see PL_DEV_MAX above). 0d02/0d03/0d07/0d08 set an output's volume, which is stored as the offset to main. A USB
+     * sound card (out_usb, usb_ready: one, the newest plugged) is a fourth output. */
+    int out_aux, out_bt, out_dig, out_usb;
     int mem_aux, mem_dig;          /* the last AUX choice with something on (analog, digital or both): a plug going in
                                     * brings it back (Jo 2026-11-25); 1/0 until one is made */
-    int vol_aux, vol_bt, vol_dig;  /* 0..max_volume */
+    int vol_aux, vol_bt, vol_dig, vol_usb;   /* what each output plays at: main + offset within cap (pl_core_recalc) */
+    int app_aux, app_bt, app_dig, app_usb;   /* what goes to the hardware: vol_* during a fade in less (main.c) */
+    int off[PL_O_N], cap[PL_O_N], fade[PL_O_N];   /* the current device of each output (devs[], or a USB card's own) */
+    pl_dev_t devs[PL_DEV_MAX];
+    unsigned dev_clock;
+    int bt_legacy;                 /* the Bluetooth volume of a volumes file from before offsets, for the first
+                                    * headphones seen; -1 none */
+    int usb_ready;                 /* a USB sound card is there (pl_core_usb) */
+    int usb_stored;                /* it has a serial number: its offset and cap are in devs[] */
+    char usb_key[100], usb_name[80];
+    unsigned vol_seq;              /* bumps when the main volume or a device entry changed (main.c stores them) */
     int bt_ready;                  /* the UI routed to headphones (0666 2) and named them (06b3); 0666 6 (the UI routed
                                     * away, or the headphones' link is gone) clears it. out_bt may stay 1 without it: the
                                     * choice waits for the headphones and the DAC plays meanwhile (playback.c pb_route) */
@@ -138,15 +166,23 @@ void pl_core_jack(pl_core_t *c, int plugged);
 void pl_core_bal(pl_core_t *c, int plugged);
 /* 1 when a plug is in either jack (the stock player uses the high gain curve only then) */
 int pl_core_plugged(const pl_core_t *c);
-/* Set the volume shown in the UI to v (0715, keys): both volumes (AUX, Bluetooth, on or off) move by the same step, each within
- * 0..max_volume. Tells the UI (a714) when the lead volume changed. */
+/* Set the main volume to v (0715, keys): every output, on or off, plays at main + its offset. Tells the UI (a714). */
 void pl_core_set_volume(pl_core_t *c, int v);
-/* The headphones changed their own volume (AVRCP absolute volume, btavrcp.h): the Bluetooth volume becomes v (within
- * 0..max_volume); the UI hears it (a714) when Bluetooth is the lead output. AUX is left alone, unless hp_vol_all (0d06)
- * is set: then AUX moves by the same step. */
+/* The headphones changed their own volume (AVRCP absolute volume, btavrcp.h): Bluetooth plays at v from now on. By
+ * default only its offset changes; with hp_vol_all (0d06) the main volume moves instead, so every output follows. */
 void pl_core_set_bt_volume(pl_core_t *c, int v);
-/* Set the volumes as stored (at start); the UI is told the lead one. */
-void pl_core_load_volumes(pl_core_t *c, int vol_aux, int vol_bt, int vol_dig);
+/* The stored volumes (OPL_VOLUMES): pl_core_vol_parse takes the text (also a file from before offsets: vol_aux= is
+ * the main volume, vol_dig= its offset, vol_bt= goes to the first headphones) and tells the UI the main volume;
+ * pl_core_vol_format writes it ("main=N" and one "dev KEY off=N cap=N fade=N" line per device). 0 or -1. */
+int pl_core_vol_parse(pl_core_t *c, const char *text);
+int pl_core_vol_format(const pl_core_t *c, char *buf, unsigned cap);
+/* each output's vol_* from main, offset, cap and max volume (called by everything that changes one of them) */
+void pl_core_recalc(pl_core_t *c);
+/* A USB sound card came (present 1: key from usbaudio.c, stored 1 when it has a serial number, name for the UI) or
+ * went (present 0). A card not known before (or without a serial) starts silent and off, with a notice; a known one
+ * follows Auto Outputs like a plug. Going away: USB audio off; when it was the only output, pause (a plug in and auto
+ * on: AUX takes over). */
+void pl_core_usb(pl_core_t *c, int present, const char *key, int stored, const char *name);
 /* Tell the UI something about the outputs (PL_NOTICE_*): notice/notice_seq, which the main loop writes to OPL_OUTPUTS. */
 void pl_core_notice(pl_core_t *c, int what);
 
