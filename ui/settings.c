@@ -1131,8 +1131,8 @@ static const setting_t TABLE[] = {
     { "Outputs",  "Bluetooth Codec", ST_CHOICE, NULL, 0,0,0, g_codec_opts, 5, NULL, apply_out_codec, 0,
       "Switches the codec of this connection now; the music pauses for a moment. New connections use Connectivity > Bluetooth Codec.", NULL },
     /* the own player only (the Outputs page); the stock player's S/PDIF switch stays untested (modes.c) */
-    { "Outputs",  "Optical (S/PDIF)", ST_TOGGLE, "spdif", 0,1,1, NULL,0, NULL, apply_spdif, 0,
-      "AUX plays digital S/PDIF on the 3.5 mm jack (a mini-TOSLINK plug) instead of the DAC. The level is fixed: the external DAC sets the volume. Off again after a restart.", NULL },
+    { "Outputs",  "Coaxial (S/PDIF)", ST_TOGGLE, "spdif", 0,1,1, NULL,0, NULL, apply_spdif, 0,
+      "AUX plays digital S/PDIF (coaxial) on the 3.5 mm jack instead of the DAC: a 3.5 mm to RCA cable to the coaxial input of an external DAC. AUX Volume sets its level. Off again after a restart.", NULL },
     {"Music screen","Text",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musictext,0,"Track font and alignment",NULL},
     {"Music screen","Information",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicinfo,0,"Clock, album and track details",NULL},
     {"Music screen","Progress",ST_ACTION,NULL,0,0,0,NULL,0,LV_SYMBOL_RIGHT,apply_grp_musicprogress,0,"Progress colour and shape",NULL},

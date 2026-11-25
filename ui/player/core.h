@@ -12,7 +12,7 @@
                                     * the own player takes the station with 0d10 */
 #define PL_ROUTE_DAC  6            /* 0666: internal DAC */
 #define PL_ROUTE_BT   2            /* 0666: Bluetooth headphones (the MAC comes with 06b3) */
-#define PL_ROUTE_SPDIF 4           /* 0666: S/PDIF (the optical out): AUX plays there instead of the DAC */
+#define PL_ROUTE_SPDIF 4           /* 0666: S/PDIF (coaxial, 3.5 mm jack): AUX plays there instead of the DAC */
 #define PL_VOL_MAX    120
 /* 0d05: what connecting and disconnecting does to the outputs (Settings > Audio > Outputs > Auto Outputs) */
 #define PL_AUTO_OFF    0           /* nothing: the choice stays as it is; a device that is not on gets a notice */

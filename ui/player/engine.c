@@ -54,7 +54,7 @@ static const char CONF[] =
     "  format \"48000:16:2\"\n}\n"
     "audio_output {\n  type \"pipe\"\n  name \"bt96\"\n  command \"/bin/sh " ENG_BT_SCRIPT " 96000\"\n"
     "  format \"96000:16:2\"\n}\n"
-    /* S/PDIF (the optical out in the 3.5 mm jack): the stock player plays it on DMA4 = hw:0,4 with LO2_MUX = 13
+    /* S/PDIF (coaxial, on the 3.5 mm jack; the Disc has no optical out: no light with a TOSLINK cable, Jo 2026-11-25): the stock player plays it on DMA4 = hw:0,4 with LO2_MUX = 13
      * (mq_player set_out_device, out mode 4 SPDIF_TX; playback.c prepare). The S/PDIF driver refuses S32_LE
      * (ingenic_spdif_params_check, -22) and takes S24_LE and S16_LE at 44.1 and 48 kHz, but not 96 or 192 kHz (Jo's
      * aplay runs, 2026-11-25): so 24 bits, and one output per rate family, like Bluetooth; MPD converts a 96 kHz song

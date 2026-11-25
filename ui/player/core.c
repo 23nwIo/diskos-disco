@@ -261,7 +261,7 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         if(v != PL_ROUTE_DAC && v != PL_ROUTE_BT && v != PL_ROUTE_SPDIF){ logf_(c, "output route %d: not supported by the own player yet, ignored", v); return 0; }
         if(v == PL_ROUTE_SPDIF){   /* AUX goes digital; Bluetooth and the route stay as they are (the UI sends this only
                                     * without Bluetooth: ui/main.c ui_output_blocked) */
-            if(!c->spdif) logf_(c, "output route = 4 (S/PDIF: AUX plays on the optical out)");
+            if(!c->spdif) logf_(c, "output route = 4 (S/PDIF: AUX plays on the coaxial out)");
             c->spdif = 1; c->route_seq++;
             return 0;
         }
