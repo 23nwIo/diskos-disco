@@ -247,6 +247,10 @@ static void test_core(void){
         pl_core_set_volume(&v, 100); CHECK(v.vol_bt == 30 && v.vol_aux == 100);
         CHECK(send1(&v, "0d09000C0079") == -1 && send1(&v, "0d09000C0400") == -1);   /* cap 121, output 4: refused */
         CHECK(send1(&v, "0d0a000C0300") == 0 && v.fade[PL_O_USB] == 0 && send1(&v, "0d0a000C0002") == -1);
+        CHECK(send1(&v, "0d0b000C006E") == 0 && v.off[PL_O_AUX] == -10 && v.vol_aux == 90);   /* offset itself: 110 - 120 */
+        CHECK(send1(&v, "0d0b000C0000") == 0 && v.off[PL_O_AUX] == -120 && v.vol_aux == 0);   /* kept below main 0 */
+        pl_core_set_volume(&v, 100); CHECK(v.off[PL_O_AUX] == -120);
+        CHECK(send1(&v, "0d0b000C0078") == 0 && v.off[PL_O_AUX] == 0 && send1(&v, "0d0b000C00F1") == -1 && send1(&v, "0d0b000C0478") == -1);
         unsigned seq = v.vol_seq;
         CHECK(pl_core_vol_format(&v, buf, sizeof buf) == 0);
         CHECK(strstr(buf, "main=100\n") && strstr(buf, "dev aux off=0 cap=120 fade=1\n") && strstr(buf, "dev dig off=10 cap=120 fade=1\n"));

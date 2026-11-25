@@ -13,7 +13,8 @@
 <div class=card><label for=vol>Volume <span id=vv></span></label><input id=vol type=range min=0 max=120 value=0>
 <div class=hd><label for=bal>Balance <span id=bv></span></label><button id=bc class=more style=margin:0>Centre</button></div>
 <input id=bal type=range min=-10 max=10 step=1 value=0>
-<div id=ow class=hide><div class=hint>The Volume above moves all outputs.</div>
+<div id=ow class=hide><div class=hint>The Volume above is the main volume; each device plays at main + its offset.</div>
+<label for=ovw>Device sliders</label><select id=ovw><option value=0>Offset (stay put)<option value=1>Level (move with main)</select>
 <div class=hd><label><input type=checkbox id=ob> Bluetooth <span id=obv></span></label></div><input id=ovb type=range min=0 max=120 value=0 aria-label='Bluetooth volume'>
 <div class=hd><label><input type=checkbox id=oa> AUX analog <span id=oav></span></label></div><input id=ova type=range min=0 max=120 value=0 aria-label='Analog volume'>
 <div class=hd><label><input type=checkbox id=od> AUX digital <span id=odv></span></label></div><input id=ovd type=range min=0 max=120 value=0 aria-label='Digital volume'>
@@ -49,9 +50,12 @@ $('pc').textContent=fm(s.position_ms);$('du').textContent=fm(s.duration_ms);
 if(!drag.vol){$('vol').max=s.volume_max;$('vol').value=Math.max(0,s.volume)}$('vv').textContent=s.volume<0?'(not known yet)':s.volume;
 if(!drag.bal){$('bal').value=s.balance}$('bv').textContent=bl($('bal').value);
 var o=s.outputs;$('ow').classList.toggle('hide',!o);if(o){$('oa').checked=o.aux;$('ob').checked=o.bt;$('ob').disabled=!o.bt&&!o.bt_ready;
-$('od').checked=o.dig;if(!drag.ova)$('ova').value=o.vol_aux;if(!drag.ovb)$('ovb').value=o.vol_bt;if(!drag.ovd)$('ovd').value=o.vol_dig;$('odv').textContent=o.vol_dig;$('ovb').disabled=!o.bt_ready;
-$('ou').checked=o.usb;$('ou').disabled=!o.usb&&!o.usb_ready;if(!drag.ovu)$('ovu').value=o.vol_usb;$('ovu').disabled=!o.usb_ready;$('ouv').textContent=$('ovu').value+(o.usb_ready?' · '+o.usb_name:' · no sound card');
-$('oav').textContent=$('ova').value+(o.bal===1?' · 4.4 mm':o.jack===1?' · 3.5 mm':'');$('obv').textContent=$('ovb').value+(o.bt_ready?'':' · not connected');
+$('od').checked=o.dig;$('ou').checked=o.usb;$('ou').disabled=!o.usb&&!o.usb_ready;$('ovb').disabled=!o.bt_ready;$('ovu').disabled=!o.usb_ready;
+var V=o.vol_view,T={};if(document.activeElement!==$('ovw'))$('ovw').value=V;
+[['ova','aux',0],['ovb','bt',1],['ovd','dig',2],['ovu','usb',3]].forEach(function(k){var e=$(k[0]),l=o['vol_'+k[1]];e.min=V?0:-120;SL[k[0]][1]=(V?'vol_':'off_')+k[1]+'=';
+if(!drag[k[0]])e.value=V?l:o.off[k[2]];T[k[0]]=V?e.value:(e.value>0?'+':'')+e.value+' ('+l+')'});
+$('odv').textContent=T.ovd;$('ouv').textContent=T.ovu+(o.usb_ready?' · '+o.usb_name:' · no sound card');
+$('oav').textContent=T.ova+(o.bal===1?' · 4.4 mm':o.jack===1?' · 3.5 mm':'');$('obv').textContent=T.ovb+(o.bt_ready?'':' · not connected');
 if(document.activeElement!==$('oau'))$('oau').value=o.auto;
 $('ocw').classList.toggle('hide',!o.bt||!o.bt_ready);var oc=$('oc'),k=o.codecs.join();$('ocs').textContent=o.switching?'· switching…':'';
 if(oc.dataset.k!==k){oc.dataset.k=k;oc.innerHTML='';o.codecs.forEach(function(i){oc.add(new Option(CN[i],i))})}
@@ -67,7 +71,7 @@ var SL={pos:['seek','position_ms='],vol:['volume','value='],bal:['balance','valu
 Object.keys(SL).forEach(function(i){var e=$(i);e.oninput=function(){drag[i]=1;if(i==='vol')$('vv').textContent=e.value;if(i==='bal')$('bv').textContent=bl(e.value);if(i[0]==='o')$('o'+i[2]+'v').textContent=e.value};
 e.onchange=function(){drag[i]=0;cmd(SL[i][0],SL[i][1]+e.value)}});
 [['oa','aux'],['ob','bt'],['od','dig'],['ou','usb']].forEach(function(p){$(p[0]).onchange=function(){cmd('outputs',p[1]+'='+(this.checked?1:0))}});
-$('oau').onchange=function(){cmd('outputs','auto='+this.value)};
+$('oau').onchange=function(){cmd('outputs','auto='+this.value)};$('ovw').onchange=function(){cmd('outputs','view='+this.value);this.blur()};
 var CN=['SBC','AAC','LDAC','aptX','aptX HD'];$('oc').onchange=function(){var e=this;cmd('outputs','codec='+e.value).then(function(ok){if(ok)say('Switching codec…',1)});e.blur()};
 $('bc').onclick=function(){$('bal').value=0;$('bv').textContent=bl(0);cmd('balance','value=0')};
 /* no picture (a station): the box goes, and a cover still loading from before must not bring it back */

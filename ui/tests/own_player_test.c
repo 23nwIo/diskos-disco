@@ -57,7 +57,7 @@ int main(void){
     EXPECT(opl_outputs_parse("aux=0\nbt=0\ndig=1\nvol_dig=77\nnotice=8 3\n", &o) == 0 && o.dig == 1 && o.vol_dig == 77 && o.notice == 3);
     EXPECT(opl_outputs_parse("vol_aux=3\n", &o) == -1 && o.jack == -1);
     EXPECT(opl_outputs_parse("aux=0\nbt=0\nusb=1\nvol_usb=40\nusb_ready=1\nusb_soft=0\nusb_name=USB Audio Device\nmain=50\n"
-                             "cap=120 30 120 60\nfade=1 1 0 1\nnotice=2 4\n", &o) == 0);
+                             "cap=120 30 120 60\nfade=1 1 0 1\nnotice=2 4\noff=10 -10 0 -120\n", &o) == 0 && o.off[0] == 10 && o.off[3] == -120);
     EXPECT(o.usb == 1 && o.vol_usb == 40 && o.usb_ready && !o.usb_soft && !strcmp(o.usb_name, "USB Audio Device") && o.main_vol == 50);
     EXPECT(o.cap[1] == 30 && o.cap[3] == 60 && o.fade[2] == 0 && o.fade[3] == 1 && o.notice == 4);
     EXPECT(opl_outputs_parse("aux=1\nbt=0\ncap=7\n", &o) == 0 && o.cap[0] == 120 && o.main_vol == -1 && o.fade[0] == 1);

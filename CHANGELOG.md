@@ -10,7 +10,10 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
   per device** (AUX, digital, each pair of Bluetooth headphones, each USB card), with a **volume limit** and a **fade
   in** (4 s, from silence, when an output comes on or playback starts after a pause) per device under Outputs >
   Limits and Fade In. New Bluetooth headphones start silent too; the old Bluetooth volume goes to the first headphones
-  that connect. Fade length: `fade_s=` in `/usr/data/diskos-own/audio.conf`. See [docs/USB_AUDIO.md](docs/USB_AUDIO.md).
+  that connect. **Device Sliders** under Outputs (and on the Remote Control page): Offset (default, like a mixing desk:
+  each device's slider is its step from the main volume and stays put when the main volume moves) or Level. A USB card
+  without a volume control of its own gets one from diskOS, so no device shares its volume with another. Fade length:
+  `fade_s=` in `/usr/data/diskos-own/audio.conf`. See [docs/USB_AUDIO.md](docs/USB_AUDIO.md).
   Not yet tested on a Disc.
 
 - Charger on a locked screen: plugging in a charger while the screen is off shows a charging screen (battery level) for

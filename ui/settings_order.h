@@ -9,6 +9,7 @@ static int settings_hidden(const setting_t *s){
         const char *page=settings_page(s);
         if(outputs_row(s) || (page && !strcmp(page,"Outputs")))return 1;
     }
+    if(outputs_view_hidden(s))return 1;                          /* Outputs: offset or level sliders (cfg out_vol_view) */
     if(!strcmp(k,"end_mode") && !own_player_cached())return 1;    /* After the List Ends: the own player only */
     if(s->apply==apply_grp_musicprogress && th_null())return 1;
     if(!strcmp(k,"outdoor")&&(th_null()||th_zune()))return 1;

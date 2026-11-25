@@ -55,6 +55,7 @@ them. Written 2026-11-15 from `ui/ipc.c` and every call site in `ui/*.c` (dev 16
 | 0d07 | `0d07000C<vol 4h>` | diskOS, own player only: AUX digital volume 0..120 (MPD's software volume on S/PDIF), stored as its offset | settings.c (Outputs) | do |
 | 0d08 | `0d08000C<vol 4h>` | diskOS, own player only: USB sound card volume 0..120 (its own volume control, else MPD's software volume), stored per card as its offset | settings.c (Outputs) | do |
 | 0d09 | `0d09000C<oo cc>` | diskOS, own player only: the volume limit of output oo (0 AUX analog, 1 Bluetooth, 2 AUX digital, 3 USB) = cc (0..120), stored per device | settings.c (Limits and Fade In) | do |
+| 0d0b | `0d0b000C<oo xx>` | diskOS, own player only: the offset of output oo to the main volume itself, xx = offset + 120 (0..240, so -120..+120); kept also where main + offset is below 0 or above 120 | settings.c (Outputs, Device Sliders = Offset) | do |
 | 0d0a | `0d0a000C<oo 0f>` | diskOS, own player only: fade in of output oo on (f 1) or off (0), stored per device | settings.c (Limits and Fade In) | do |
 | 0d04 | `0d04000C000v` | diskOS, own player only: switch the Bluetooth codec of this connection now (0 SBC, 1 AAC, 2 LDAC, 5 aptX, 6 aptX HD) | settings.c (Outputs) | do (pause, bluealsa-cli codec, play on) |
 | 0d05 | `0d05000C000v` | diskOS, own player only: Auto Outputs, what connecting does: 0 off (nothing, a notice), 1 newest (the new device alone), 2 all connected | main.c (re-sent on start), settings.c (Outputs) | do |
@@ -91,7 +92,7 @@ each output plays at clamp(main + offset, 0, min(limit, max volume)). Devices: `
 over: AUX analog becomes the main volume, the Bluetooth volume goes to the first headphones seen. Fade in: from 0 to
 the volume over `fade_s` seconds (`/usr/data/diskos-own/audio.conf`, default 4) when an output comes on and when
 playback starts after a pause. The state for the UI is in `/tmp/diskos-player-outputs` (`usb=`, `vol_usb=`,
-`usb_ready=`, `usb_name=`, `usb_soft=` (1: the card has no volume control, ours by softvol), `main=`, `cap=a b d u`, `fade=a b d u` besides the older lines; notice 4: a USB
+`usb_ready=`, `usb_name=`, `usb_soft=` (1: the card has no volume control, ours by softvol), `off=a b d u`, `main=`, `cap=a b d u`, `fade=a b d u` besides the older lines; notice 4: a USB
 sound card connected that is off).
 
 ## Replies (player to UI, on `/ui`)

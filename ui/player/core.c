@@ -497,6 +497,15 @@ int pl_core_handle(pl_core_t *c, const char *buf, int n){
         logf_(c, "%s %s = %d", ONAME[o], cap ? "cap" : "fade in", x);
         return 0;
     }
+    case 0x0d0b: {        /* an output's offset to main itself: output index (high byte), offset + 120 (0..240) */
+        int o = v >> 8, x = (v & 0xff) - PL_VOL_MAX;
+        if(v < 0 || o >= PL_O_N || x > PL_VOL_MAX){ c->bad_frames++; logf_(c, "offset: bad value %d", v); return -1; }
+        c->off[o] = x;
+        out_store(c, o);
+        pl_core_recalc(c);
+        logf_(c, "%s offset = %+d (plays at %d)", ONAME[o], x, eff(c, o));
+        return 0;
+    }
     case 0x0d10: {        /* the Radio app's station: name length (4 hex), the name, the URL; nothing after the length = stop */
         long nl = f.dlen >= 4 ? strtol((char[]){ f.data[0], f.data[1], f.data[2], f.data[3], 0 }, NULL, 16) : -1;
         if(f.dlen < 4 || nl < 0 || 4 + nl > f.dlen){ c->bad_frames++; logf_(c, "radio: bad frame"); return -1; }

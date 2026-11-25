@@ -182,6 +182,7 @@ static uint32_t g_out_t;
 /* what was just asked: shown until the player's file says so (it applies it within a quarter second) or 2 s pass */
 static int g_outp_aux = -1, g_outp_bt = -1, g_outp_dig = -1, g_outp_va = -1, g_outp_vb = -1, g_outp_vd = -1;
 static int g_outp_usb = -1, g_outp_vu = -1, g_outp_cap[4] = { -1, -1, -1, -1 }, g_outp_fade[4] = { -1, -1, -1, -1 };
+static int g_outp_off[4], g_outp_off_set[4];   /* an offset just asked (set: 1) */
 static uint32_t g_outp_t;
 static const opl_outputs_t *outputs_now(void){
     static opl_outputs_t v;
@@ -200,10 +201,14 @@ static const opl_outputs_t *outputs_now(void){
         if(g_outp_vd >= 0) v.vol_dig = g_outp_vd;
         if(g_outp_usb >= 0) v.usb = g_outp_usb;
         if(g_outp_vu >= 0) v.vol_usb = g_outp_vu;
-        for(int i = 0; i < 4; i++){ if(g_outp_cap[i] >= 0) v.cap[i] = g_outp_cap[i]; if(g_outp_fade[i] >= 0) v.fade[i] = g_outp_fade[i]; }
+        for(int i = 0; i < 4; i++){
+            if(g_outp_cap[i] >= 0) v.cap[i] = g_outp_cap[i];
+            if(g_outp_fade[i] >= 0) v.fade[i] = g_outp_fade[i];
+            if(g_outp_off_set[i]) v.off[i] = g_outp_off[i];
+        }
     } else {
         g_outp_aux = g_outp_bt = g_outp_dig = g_outp_va = g_outp_vb = g_outp_vd = g_outp_usb = g_outp_vu = -1;
-        for(int i = 0; i < 4; i++) g_outp_cap[i] = g_outp_fade[i] = -1;
+        for(int i = 0; i < 4; i++){ g_outp_cap[i] = g_outp_fade[i] = -1; g_outp_off_set[i] = 0; }
     }
     return &v;
 }
@@ -262,6 +267,23 @@ static const char *out_fade_why(int o, int v){
     g_outp_fade[o] = v; g_outp_t = lv_tick_get();
     return NULL;
 }
+static void out_volume(int which, int v);
+/* an output's offset to the main volume itself (0d0b: output in the high byte, offset + 120 in the low one) */
+static const char *out_off_why(int o, int v){
+    if(o < 0 || o > 3 || v < -120 || v > 120) return "Offset -120 to +120";
+    out_volume(4 + o, (o << 8) | (v + 120));     /* sent like the volumes: at most every 80 ms while dragged */
+    return NULL;
+}
+/* What the device sliders under Outputs show and set (cfg out_vol_view, Outputs > Device Sliders): 0 (default)
+ * the offset to the main volume, like a mixing desk: the sliders stay put when the main volume moves; 1 the level
+ * each device plays at, which moves with the main volume. Either way the player keeps main + offset. */
+static int out_level_view(void){ return simple_cfg_get_int("out_vol_view", 0) == 1; }
+int settings_outputs_level_view(void){ return out_level_view(); }   /* Remote Control: the same view */
+int settings_outputs_set_view(int v){ return v < 0 || v > 1 ? -1 : simple_cfg_set_int("out_vol_view", v) < 0 ? -1 : 0; }
+static void apply_off_aux(int v){ out_toast(out_off_why(0, v)); }
+static void apply_off_bt(int v){ out_toast(out_off_why(1, v)); }
+static void apply_off_dig(int v){ out_toast(out_off_why(2, v)); }
+static void apply_off_usb(int v){ out_toast(out_off_why(3, v)); }
 static void apply_cap_aux(int v){ out_toast(out_cap_why(0, v)); }
 static void apply_cap_bt(int v){ out_toast(out_cap_why(1, v)); }
 static void apply_cap_dig(int v){ out_toast(out_cap_why(2, v)); }
@@ -271,12 +293,13 @@ static void apply_fade_bt(int v){ out_toast(out_fade_why(1, v)); }
 static void apply_fade_dig(int v){ out_toast(out_fade_why(2, v)); }
 static void apply_fade_usb(int v){ out_toast(out_fade_why(3, v)); }
 /* the sliders send while they are dragged, at most every 80 ms; the last value always goes out (a short timer) */
-static int g_outv_want[4] = { -1, -1, -1, -1 }, g_outv_sent[4] = { -1, -1, -1, -1 };   /* AUX analog, Bluetooth, AUX digital, USB */
+/* 0..3: the volumes of AUX analog, Bluetooth, AUX digital, USB; 4..7: their offsets (0d0b, encoded) */
+static int g_outv_want[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }, g_outv_sent[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 static uint32_t g_outv_t;
 static lv_timer_t *g_outv_tm;
 static void outv_flush(void){
-    static const char *const TAG[4] = { "0d02", "0d03", "0d07", "0d08" };
-    for(int i = 0; i < 4; i++){
+    static const char *const TAG[8] = { "0d02", "0d03", "0d07", "0d08", "0d0b", "0d0b", "0d0b", "0d0b" };
+    for(int i = 0; i < 8; i++){
         if(g_outv_want[i] < 0 || g_outv_want[i] == g_outv_sent[i]) continue;
         if(out_send(TAG[i], g_outv_want[i]) == 0) g_outv_sent[i] = g_outv_want[i];
     }
@@ -285,7 +308,8 @@ static void outv_flush(void){
 static void outv_tm_cb(lv_timer_t *t){ (void)t; g_outv_tm = NULL; outv_flush(); }
 static void out_volume(int which, int v){
     g_outv_want[which] = v;
-    if(which == 3) g_outp_vu = v; else if(which == 2) g_outp_vd = v; else if(which) g_outp_vb = v; else g_outp_va = v;
+    if(which >= 4){ g_outp_off[which - 4] = (v & 0xff) - 120; g_outp_off_set[which - 4] = 1; }
+    else if(which == 3) g_outp_vu = v; else if(which == 2) g_outp_vd = v; else if(which) g_outp_vb = v; else g_outp_va = v;
     g_outp_t = lv_tick_get();
     if(lv_tick_get() - g_outv_t >= 80){ outv_flush(); return; }
     if(!g_outv_tm){ g_outv_tm = lv_timer_create(outv_tm_cb, 100, NULL); lv_timer_set_repeat_count(g_outv_tm, 1); }
@@ -302,7 +326,8 @@ static void apply_end_mode(int v){ (void)v; radio_end_sync(); }   /* radio.c: 0d
  * player runs, -1 otherwise. settings_outputs_cmd: what 1 AUX analog, 2 Bluetooth, 7 AUX digital, 9 USB (v 0/1),
  * 3 AUX analog volume, 4 Bluetooth volume, 8 AUX digital volume, 10 USB volume (0..120), 5 Auto Outputs (0..2), 6 this
  * connection's codec (0..4: SBC, AAC, LDAC, aptX, aptX HD), 11..14 the limit of AUX analog, Bluetooth, AUX digital,
- * USB (0..120), 15..18 their fade in (0/1), as rmt_out_t numbers them; 0, or -1 with *why. */
+ * USB (0..120), 15..18 their fade in (0/1), 19..22 their offset to the main volume (-120..120), 23 Device Sliders
+ * (0 offset, 1 level), as rmt_out_t numbers them; 0, or -1 with *why. */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out){
     if(!own_player_cached()) return -1;
     *o = *outputs_now();
@@ -324,6 +349,8 @@ int settings_outputs_cmd(int what, int v, const char **why){
         out_volume(what == 4 ? 1 : what == 8 ? 2 : what == 10 ? 3 : 0, v); break;
     case 11: case 12: case 13: case 14: w = out_cap_why(what - 11, v); break;
     case 15: case 16: case 17: case 18: w = out_fade_why(what - 15, v); break;
+    case 19: case 20: case 21: case 22: w = out_off_why(what - 19, v); break;
+    case 23: if(settings_outputs_set_view(v) != 0) w = "Couldn't save settings"; break;
     case 6: { int sent; w = out_codec_why(v, &sent); break; }
     case 5:
         if(v < 0 || v > 2){ w = "Unknown choice"; break; }
@@ -402,15 +429,31 @@ static void apply_grp_outputs(int v);
 static void apply_grp_outlimits(int v);
 static void (*const OUT_CAP_FN[4])(int) = { apply_cap_aux, apply_cap_bt, apply_cap_dig, apply_cap_usb };
 static void (*const OUT_FADE_FN[4])(int) = { apply_fade_aux, apply_fade_bt, apply_fade_dig, apply_fade_usb };
+static void (*const OUT_OFF_FN[4])(int) = { apply_off_aux, apply_off_bt, apply_off_dig, apply_off_usb };
+static void (*const OUT_VOL_FN[4])(int) = { apply_out_vol_aux, apply_out_vol_bt, apply_out_vol_dig, apply_out_vol_usb };
+/* the device sliders of the view not chosen (out_level_view) are not shown */
+static int outputs_view_hidden(const setting_t *s){
+    for(int i = 0; i < 4; i++){
+        if(s->apply == OUT_OFF_FN[i]) return out_level_view();
+        if(s->apply == OUT_VOL_FN[i]) return !out_level_view();
+    }
+    return 0;
+}
+/* an offset row's value: "+10 (70)", the offset and the level it gives now */
+static int out_off_index(const setting_t *s){ for(int i = 0; i < 4; i++) if(s->apply == OUT_OFF_FN[i]) return i; return -1; }
 static int outputs_row(const setting_t *s){
-    for(int i = 0; i < 4; i++) if(s->apply == OUT_CAP_FN[i] || s->apply == OUT_FADE_FN[i]) return 1;
+    for(int i = 0; i < 4; i++) if(s->apply == OUT_CAP_FN[i] || s->apply == OUT_FADE_FN[i] || s->apply == OUT_OFF_FN[i]) return 1;
     return s->apply == apply_grp_outputs || s->apply == apply_grp_outlimits || s->apply == apply_out_aux || s->apply == apply_out_bt
         || s->apply == apply_out_dig || s->apply == apply_out_usb || s->apply == apply_out_vol_aux || s->apply == apply_out_vol_bt
         || s->apply == apply_out_vol_dig || s->apply == apply_out_vol_usb || s->apply == apply_out_codec;
 }
 static int outputs_get(const setting_t *s){
     const opl_outputs_t *o = outputs_now();
-    for(int i = 0; i < 4; i++){ if(s->apply == OUT_CAP_FN[i]) return o->cap[i]; if(s->apply == OUT_FADE_FN[i]) return o->fade[i]; }
+    for(int i = 0; i < 4; i++){
+        if(s->apply == OUT_CAP_FN[i]) return o->cap[i];
+        if(s->apply == OUT_FADE_FN[i]) return o->fade[i];
+        if(s->apply == OUT_OFF_FN[i]) return o->off[i];
+    }
     if(s->apply == apply_out_usb) return o->usb;
     if(s->apply == apply_out_vol_usb) return o->vol_usb;
     if(s->apply == apply_out_aux) return o->aux;
@@ -1095,7 +1138,10 @@ static const char *const OPT_OUTAUTO_D[] = { "Nothing changes; a note says so.",
                                              "Every connected device plays." };
 static const char *const OPT_HPVOL[] = { "Bluetooth only", "All outputs" };
 static const char *const OPT_HPVOL_D[] = { "Only the Bluetooth volume follows them.",
-                                           "The AUX volumes move by the same step." };
+                                           "The main volume follows them: every output moves by the same step." };
+static const char *const OPT_VOLVIEW[] = { "Offset", "Level" };
+static const char *const OPT_VOLVIEW_D[] = { "Each device's step up or down from the main volume, like a mixing desk: the sliders stay put when the main volume moves.",
+                                             "The level each device plays at: the sliders move with the main volume." };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
 static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 static const char *const D_ARTCACHE[] = {
@@ -1188,6 +1234,16 @@ static const setting_t TABLE[] = {
       "What plugging in or connecting headphones does. A plug brings back the AUX outputs that were on last (analog, digital or both).", OPT_OUTAUTO_D },
     { "Outputs",  "Headphone Volume", ST_CHOICE, "hp_vol_all", 0,0,0, OPT_HPVOL, 2, NULL, apply_hp_vol, 0,
       "What the Bluetooth headphones' own volume buttons change, for headphones that send their volume.", OPT_HPVOL_D },
+    { "Outputs",  "Device Sliders", ST_CHOICE, "out_vol_view", 0,0,0, OPT_VOLVIEW, 2, NULL, NULL, 0,
+      "What the device volume sliders below (and on the Remote Control page) show and set. The player always keeps one main volume plus a step per device.", OPT_VOLVIEW_D },
+    { "Outputs",  "Bluetooth Offset", ST_SLIDER, NULL, -120,120,1, NULL,0, NULL, apply_off_bt, 0,
+      "These headphones' step up or down from the main volume, kept for them; in brackets the level they play at now. New headphones start at -120 (silent).", NULL },
+    { "Outputs",  "Analog Offset", ST_SLIDER, NULL, -120,120,1, NULL,0, NULL, apply_off_aux, 0,
+      "AUX analog's step up or down from the main volume; in brackets the level it plays at now. Stays put when the main volume moves.", NULL },
+    { "Outputs",  "Digital Offset", ST_SLIDER, NULL, -120,120,1, NULL,0, NULL, apply_off_dig, 0,
+      "AUX digital's step up or down from the main volume; in brackets the level it plays at now.", NULL },
+    { "Outputs",  "USB Offset", ST_SLIDER, NULL, -120,120,1, NULL,0, NULL, apply_off_usb, -120,
+      "This USB sound card's step up or down from the main volume, kept per card; in brackets the level it plays at now. A new card starts at -120 (silent).", NULL },
     { "Outputs",  "Bluetooth Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_bt, 20,
       "Kept per headphones, as a step up or down from the main volume: the volume keys move every output alike. New headphones start silent.", NULL },
     { "Outputs",  "Analog Volume", ST_SLIDER, NULL, 0,120,1, NULL,0, NULL, apply_out_vol_aux, 20,
@@ -1587,6 +1643,14 @@ static void read_batt_temp(char *buf, int n){
 /* Format a slider value WITH its unit - shared by val_text (committed value) and the live drag
  * callback (uncommitted value) so brightness shows "%" and swipe-thresh "px" while dragging too. */
 static void fmt_slider(const setting_t *s, int v, char *buf, int n){
+    int oi = out_off_index(s);
+    if(oi >= 0){                                                 /* an output's offset and the level it gives now */
+        const opl_outputs_t *o = outputs_now();
+        if(o->main_vol < 0){ snprintf(buf, n, "%+d", v); return; }   /* main not known yet */
+        int lvl = o->main_vol + v, top = o->cap[oi] < 120 ? o->cap[oi] : 120;
+        snprintf(buf, n, "%+d (%d)", v, lvl < 0 ? 0 : lvl > top ? top : lvl);
+        return;
+    }
     if(s->cfg_key && !strcmp(s->cfg_key, "swipe_thresh"))    snprintf(buf,n, "%d px", v);
     else if(s->cfg_key && !strcmp(s->cfg_key, "brightness")) snprintf(buf,n, "%d%%", v*100/40);  /* 4..40 -> 10..100% */
     else if(s->cfg_key && !strcmp(s->cfg_key, "ma_delay_ms")) snprintf(buf,n, v ? "%+d ms" : "0 ms", v);

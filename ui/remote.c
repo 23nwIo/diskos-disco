@@ -44,6 +44,7 @@
 /* settings.c: the Outputs page for the web page (main thread) */
 int settings_outputs_state(opl_outputs_t *o, int *auto_out);
 int settings_outputs_cmd(int what, int v, const char **why);
+int settings_outputs_level_view(void);
 int settings_outputs_codecs(int *cur);
 /* defined elsewhere without a shared header */
 int  bt_state(void);
@@ -235,7 +236,8 @@ static void snapshot(rmt_state_t *s){
           s->out_own = 1; s->out_aux = o.aux; s->out_bt = o.bt; s->out_vol_aux = o.vol_aux; s->out_vol_bt = o.vol_bt;
           s->out_dig = o.dig; s->out_vol_dig = o.vol_dig;
           s->out_usb = o.usb; s->out_vol_usb = o.vol_usb; s->out_usb_ready = o.usb_ready; s->out_main = o.main_vol;
-          for(int i = 0; i < 4; i++){ s->out_cap[i] = o.cap[i]; s->out_fade[i] = o.fade[i]; }
+          for(int i = 0; i < 4; i++){ s->out_cap[i] = o.cap[i]; s->out_fade[i] = o.fade[i]; s->out_off[i] = o.off[i]; }
+          s->out_vol_view = settings_outputs_level_view();
           snprintf(s->out_usb_name, sizeof s->out_usb_name, "%s", o.usb_name);
           s->out_bt_ready = o.bt_ready; s->out_auto = au; s->out_jack = o.jack; s->out_bal = o.bal;
           s->out_codecs = settings_outputs_codecs(&s->out_codec); s->out_switching = o.switching;

@@ -349,11 +349,12 @@ static void write_outputs(const pl_core_t *c, const char *path){
     char b[1024];
     snprintf(b, sizeof b, "aux=%d\nbt=%d\ndig=%d\nvol_aux=%d\nvol_bt=%d\nvol_dig=%d\nbt_ready=%d\njack=%d\nbal=%d\ncodec=%s\n"
              "codecs=%s\nswitching=%d\nauto=%d\nnotice=%u %d\nusb=%d\nvol_usb=%d\nusb_ready=%d\nusb_name=%s\nusb_soft=%d\n"
-             "main=%d\ncap=%d %d %d %d\nfade=%d %d %d %d\n",
+             "main=%d\ncap=%d %d %d %d\nfade=%d %d %d %d\noff=%d %d %d %d\n",
              pb_aux(), pb_bluetooth(), pb_digital(), c->vol_aux, c->vol_bt, c->vol_dig, c->bt_ready, c->jack, c->bal, pb_bt_codec(), pb_bt_codecs(),
              pb_switching(), c->auto_out, c->notice_seq, c->notice, pb_usb(), c->vol_usb, c->usb_ready, c->usb_ready ? c->usb_name : "",
              c->usb_ready && g_ua_have && g_ua_soft, c->volume, c->cap[PL_O_AUX], c->cap[PL_O_BT], c->cap[PL_O_DIG], c->cap[PL_O_USB],
-             c->fade[PL_O_AUX], c->fade[PL_O_BT], c->fade[PL_O_DIG], c->fade[PL_O_USB]);
+             c->fade[PL_O_AUX], c->fade[PL_O_BT], c->fade[PL_O_DIG], c->fade[PL_O_USB],
+             c->off[PL_O_AUX], c->off[PL_O_BT], c->off[PL_O_DIG], c->off[PL_O_USB]);
     if(!strcmp(b, last)) return;
     char tmp[300];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);

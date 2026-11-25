@@ -169,6 +169,7 @@ typedef struct {
     char usb_name[80];             /* its product name */
     int main_vol;                  /* the main volume (each output: main + its offset, within its cap); -1 unknown */
     int cap[4], fade[4];           /* per output (0 AUX, 1 Bluetooth, 2 digital, 3 USB: player/core.h PL_O_*) */
+    int off[4];                    /* each output's offset to the main volume, -120..120 */
 } opl_outputs_t;
 static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
     memset(o, 0, sizeof *o);
@@ -204,6 +205,9 @@ static inline int opl_outputs_parse(const char *t, opl_outputs_t *o){
             else if(!strcmp(line, "usb_soft")) o->usb_soft = atoi(v);
             else if(!strcmp(line, "usb_name")) snprintf(o->usb_name, sizeof o->usb_name, "%s", v);
             else if(!strcmp(line, "main")) o->main_vol = atoi(v);
+            else if(!strcmp(line, "off")){
+                if(sscanf(v, "%d %d %d %d", &o->off[0], &o->off[1], &o->off[2], &o->off[3]) != 4) memset(o->off, 0, sizeof o->off);
+            }
             else if(!strcmp(line, "cap") || !strcmp(line, "fade")){
                 int *dst = line[0] == 'c' ? o->cap : o->fade;
                 if(sscanf(v, "%d %d %d %d", &dst[0], &dst[1], &dst[2], &dst[3]) != 4) for(int i = 0; i < 4; i++) dst[i] = line[0] == 'c' ? 120 : 1;

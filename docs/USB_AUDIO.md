@@ -70,7 +70,10 @@ inner hub 1a40:0801, card reader 05e3:0751, ASIX AX88179A Ethernet, C-Media 0d8c
   fade in (`before_play` hook from engine.c, outputs coming on in the route change), `apply_volumes`.
 - `ui/player/core.c`: main + offset per device, limits, fade flags, `pl_core_usb`, 0d08/0d09/0d0a, 0642 5.
 - `ui/player/engine.c`: output `usb` (no MPD mixer; the volume is the card's control or our softvol one), `eng_usb`.
-- UI: Settings > Audio > Outputs (USB audio, USB Volume, Limits and Fade In), Remote Control `api/outputs`.
+- UI: Settings > Audio > Outputs (USB audio, the device sliders, Limits and Fade In), Remote Control `api/outputs`.
+  **Device Sliders** (cfg `out_vol_view` in `/usr/data/diskos.conf`, also under Outputs and on the Remote Control
+  page): Offset (default, like a mixing desk: the device sliders show their offset -120..+120 and the level in
+  brackets, and stay put when the main volume moves) or Level (they show the level, 0..120, and move with main).
 - Fade length: `fade_s=N` in `/usr/data/diskos-own/audio.conf` (0..30, default 4), read at player start.
 - Known: the C-Media test card has no serial number and disconnects whenever its headphones are pulled, so it comes
   back off and silent every time (as agreed for cards without a serial).

@@ -86,7 +86,9 @@ typedef enum { RMT_I_ALBUM = 1, RMT_I_ARTIST, RMT_I_PLAYLIST, RMT_I_FAVORITES, R
 typedef enum { RMT_OUT_AUX = 1, RMT_OUT_BT, RMT_OUT_VOL_AUX, RMT_OUT_VOL_BT, RMT_OUT_AUTO, RMT_OUT_CODEC, RMT_OUT_DIG,
                RMT_OUT_VOL_DIG, RMT_OUT_USB, RMT_OUT_VOL_USB,
                RMT_OUT_CAP_AUX, RMT_OUT_CAP_BT, RMT_OUT_CAP_DIG, RMT_OUT_CAP_USB,          /* 11..14: per device limit */
-               RMT_OUT_FADE_AUX, RMT_OUT_FADE_BT, RMT_OUT_FADE_DIG, RMT_OUT_FADE_USB } rmt_out_t;   /* 15..18 */
+               RMT_OUT_FADE_AUX, RMT_OUT_FADE_BT, RMT_OUT_FADE_DIG, RMT_OUT_FADE_USB,       /* 15..18 */
+               RMT_OUT_OFF_AUX, RMT_OUT_OFF_BT, RMT_OUT_OFF_DIG, RMT_OUT_OFF_USB,           /* 19..22: offset -120..120 */
+               RMT_OUT_VIEW } rmt_out_t;                                                    /* 23: device sliders 0 offset, 1 level */
 /* GET api/queue [limit=1..500 Up Next rows, default 100]: the list (JSON answer). POST api/queue with ver (the list's
  * "ver", refused when it changed since: the page reads the list again) and action=jump (kind=queue i=N | kind=next b=ID)
  * | remove (i) | move (i, to) | clear; action=add (no ver) kind=song song_id | kind=album name | kind=artist name | kind=next b=ID
@@ -217,6 +219,7 @@ typedef struct {
     /* Settings > Audio > Outputs, only while the own player runs (out_own 1; else "outputs":null) */
     int  out_own, out_aux, out_bt, out_dig, out_vol_aux, out_vol_bt, out_vol_dig, out_bt_ready, out_auto, out_jack, out_bal;
     int  out_usb, out_vol_usb, out_usb_ready, out_main, out_cap[4], out_fade[4];   /* USB sound card; main volume; per output */
+    int  out_off[4], out_vol_view;  /* each output's offset to main; 1: the sliders show levels, 0: offsets (out_vol_view) */
     char out_usb_name[80];
     int  out_codec, out_codecs, out_switching;   /* the link's codec 0..4 (-1 none), offered codecs (bit per id), a switch runs */
     int  play_mode;          /* 0..4, -1 unknown */

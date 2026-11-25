@@ -311,7 +311,12 @@ static void test_core(void){
     r = req("POST", p("/api/outputs"), "cap_usb=60"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_CAP_USB && r.cmd.arg == 60);
     r = req("POST", p("/api/outputs"), "fade_bt=0"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_FADE_BT && r.cmd.arg == 0);
     CHECK(req("POST", p("/api/outputs"), "cap_aux=121").kind == RMT_R_BAD_PARAM && req("POST", p("/api/outputs"), "fade_usb=2").kind == RMT_R_BAD_PARAM);
-    CHECK(RMT_OUT_USB == 9 && RMT_OUT_VOL_USB == 10 && RMT_OUT_CAP_AUX == 11 && RMT_OUT_FADE_USB == 18);   /* settings_outputs_cmd numbers */
+    r = req("POST", p("/api/outputs"), "off_usb=-120"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_OFF_USB && r.cmd.arg == -120);
+    r = req("POST", p("/api/outputs"), "off_aux=15"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_OFF_AUX && r.cmd.arg == 15);
+    r = req("POST", p("/api/outputs"), "view=1"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_VIEW && r.cmd.arg == 1);
+    CHECK(req("POST", p("/api/outputs"), "off_bt=-121").kind == RMT_R_BAD_PARAM && req("POST", p("/api/outputs"), "vol_aux=-1").kind == RMT_R_BAD_PARAM);
+    CHECK(req("POST", p("/api/outputs"), "view=2").kind == RMT_R_BAD_PARAM);
+    CHECK(RMT_OUT_USB == 9 && RMT_OUT_VOL_USB == 10 && RMT_OUT_CAP_AUX == 11 && RMT_OUT_FADE_USB == 18 && RMT_OUT_OFF_AUX == 19 && RMT_OUT_VIEW == 23);   /* settings_outputs_cmd numbers */
     r = req("POST", p("/api/outputs"), "codec=4"); CHECK(r.kind == RMT_R_CMD && r.cmd.sub == RMT_OUT_CODEC && r.cmd.arg == 4);
     CHECK(req("POST", p("/api/outputs"), "codec=5").kind == RMT_R_BAD_PARAM);
     r = req("GET", p("/api/queue"), NULL); CHECK(r.kind == RMT_R_CMD && r.cmd.kind == RMT_CMD_QUEUE && r.cmd.sub == RMT_Q_LIST && r.cmd.limit == 100);
@@ -503,9 +508,9 @@ static void test_core(void){
     s.out_own = 1; s.out_codec = -1; s.out_codecs = 1 | 4 | 16; s.out_aux = 1; s.out_vol_aux = 30; s.out_vol_bt = 12; s.out_auto = 2; s.out_jack = 1; s.out_bal = 0;
     s.out_dig = 1; s.out_vol_dig = 77;
     s.out_usb = 1; s.out_vol_usb = 40; s.out_usb_ready = 1; s.out_main = 50; snprintf(s.out_usb_name, sizeof s.out_usb_name, "USB \"DAC\"");
-    for(int i = 0; i < 4; i++){ s.out_cap[i] = 120 - i; s.out_fade[i] = i != 2; }
+    for(int i = 0; i < 4; i++){ s.out_cap[i] = 120 - i; s.out_fade[i] = i != 2; s.out_off[i] = i * 10 - 120; }
     CHECK(rmt_state_json(js, sizeof js, &s) > 0 && strstr(js, "\"outputs\":{\"aux\":true,\"bt\":false,\"dig\":true,\"vol_aux\":30,\"vol_bt\":12,\"vol_dig\":77,\"bt_ready\":false,\"auto\":2,\"jack\":1,\"bal\":0,\"codec\":-1,\"codecs\":[0,2,4],\"switching\":false,"
-          "\"usb\":true,\"vol_usb\":40,\"usb_ready\":true,\"usb_name\":\"USB \\\"DAC\\\"\",\"main\":50,\"cap\":[120,119,118,117],\"fade\":[1,1,0,1]},\"list_end\":null}"));
+          "\"usb\":true,\"vol_usb\":40,\"usb_ready\":true,\"usb_name\":\"USB \\\"DAC\\\"\",\"main\":50,\"cap\":[120,119,118,117],\"fade\":[1,1,0,1],\"off\":[-120,-110,-100,-90],\"vol_view\":0},\"list_end\":null}"));
     s.out_own = 0;
     s.source = "radio"; s.radio_state = "playing"; snprintf(s.station, sizeof s.station, "Radio <%s>", "X");
     snprintf(s.station_url, sizeof s.station_url, "https://radio.example/stream?a=1&b=\"2\"");
