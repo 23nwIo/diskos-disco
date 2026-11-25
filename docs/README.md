@@ -14,6 +14,7 @@ These guides describe the shipped 3.4.1 source and payload, the release commit t
 - [Wi-Fi start and DHCP hostname](WIFI.md) (advanced, shell only; not yet device-tested).
 - [MPD Server for mpc / ncmpcpp](MPD.md) (not yet device-tested).
 - [USB drive: import and export music](USB_SYNC.md) (not yet device-tested).
+- [USB audio output: assessment and agreed design](USB_AUDIO.md) (not yet implemented).
 - [What diskOS keeps where: SD card, RAM, internal flash](SD_STATE.md) (not yet device-tested).
 - [Web radio](RADIO.md) (not yet device-tested as a build; the playback path was tested by hand).
 - [Signed SD updates](UPDATING.md), [Windows](WINDOWS.md), [Linux](LINUX.md), [macOS](MACOS.md), [switching and recovery](SWITCHING.md).
