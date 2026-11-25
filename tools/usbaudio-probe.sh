@@ -69,6 +69,9 @@ sec "block devices (the card reader in the same USB device)"
 run cat /proc/partitions
 run cat /proc/mounts
 
+sec "network interfaces (Ethernet in the same USB device: context only)"
+run ls -l /sys/class/net
+
 sec "ALSA"
 run cat /proc/asound/cards
 run cat /proc/asound/devices
