@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Plugged-in detection for idle power-off (#17), production usage_plugged_in() on fake sysfs trees:
+"""Plugged-in detection for idle power-off (#17), production usage_plugged_in() (with ui/powersrc.c, the shared
+port check) on fake sysfs trees:
 - any non-battery power supply with online=1 counts, whatever its name; the battery doesn't;
 - the USB-C controller's cc_term (Rdef/R1p5/R3p0 = a source supplies power) counts even with no charge current
   (device-probed 2026-11-14: wall charger + Charging Limit at 80 % -> Rdef, unplugged -> Undefined);
@@ -51,11 +52,12 @@ with tempfile.TemporaryDirectory() as d:
         feed = "".join("g_batt=%d; g_chg=%d; (void)charger_remembered();\n" % h for h in hist)
         C = ('#include <dirent.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n'
              'static uint32_t lv_tick_get(void){ return 1000; }\nstatic int g_batt = -1, g_chg;\n'
-             '#define POWER_SUPPLY_DIR "%s"\n#define TYPEC_CC_TERM "%s"\n#define TYPEC_STATE "%s"\n' % (ps, cct, tst))
+             '#define POWER_SUPPLY_DIR "%s"\n#define PS_CC_TERM "%s"\n#define PS_TYPEC_STATE "%s"\n' % (ps, cct, tst))
+        C += (ui / "powersrc.c").read_text() + "\n"
         C += section.replace('"/sys/class/udc"', '"%s"' % (root / "udc")).replace('"/sys/class/udc/%.60s/state"', '"%s/%%.60s/state"' % (root / "udc"))
         C += '\nint main(void){\n' + feed + ' printf("%d\\n", usage_plugged_in()); return 0; }\n'
         (d / "t.c").write_text(C)
-        subprocess.run(["cc", "-std=gnu11", "-Wall", "-Werror", "-Wno-unused-function", "-o", str(d / "t"), str(d / "t.c")], check=True)
+        subprocess.run(["cc", "-std=gnu11", "-Wall", "-Werror", "-Wno-unused-function", "-I", str(ui), "-o", str(d / "t"), str(d / "t.c")], check=True)
         got = int(subprocess.run([str(d / "t")], capture_output=True, text=True, check=True).stdout)
         assert got == want, (name, got, want)
         print("ok  %-38s -> %d" % (name, got))

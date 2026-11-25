@@ -3,6 +3,7 @@
 #include "onboarding.h"
 #include "version.h"
 #include "logrotate.h"
+#include "powersrc.h"
 #include "azjump.h"
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
@@ -231,15 +232,8 @@ static void status_poll_cb(lv_timer_t *t){
     /* Runs on the fast (3s) timer so charging/battery/wifi track plug/unplug promptly. */
     int batt = -1, charging = 0, wifi = 0, bt;
 
-    FILE *bf = fopen("/sys/class/power_supply/cw221X-bat/capacity", "r");
-    if(bf){ if(fscanf(bf, "%d", &batt) != 1) batt = -1; fclose(bf); }
-    /* This cw221X fuel gauge exposes NO `status` node - charging shows via `current_now`, which is a
-     * crude boolean on this driver: 1 while charging (USB/charger present), 0 on battery. (Live-probed
-     * 2026-08-11: plugged=1 @3.99V, unplugged=0 @3.72V.) */
-    long cur = 0;
-    FILE *cf = fopen("/sys/class/power_supply/cw221X-bat/current_now", "r");
-    if(cf){ if(fscanf(cf, "%ld", &cur) != 1) cur = 0; fclose(cf); }
-    charging = (cur > 0);
+    usage_power_refresh();             /* the one gauge read (powersrc.c); everyone else reads the shared state */
+    batt = usage_battery(); charging = usage_charging();
 
     int s = socket(AF_INET, SOCK_DGRAM, 0);
     if(s >= 0){
@@ -268,7 +262,6 @@ static void status_poll_cb(lv_timer_t *t){
     bt_headphone_battery(bt);
 
     atomic_store(&g_net_up, wifi); g_batt_pct = batt; g_batt_chg = charging;
-    usage_note_battery(batt,charging);
     home_set_status(batt, charging, wifi, bt);
     quicksettings_set_battery(batt,charging);
 }
@@ -4676,7 +4669,8 @@ int main(int argc, char **argv){
          * when the screen locked is no plug-in. */
         if(lv_tick_elaps(last_pwrpoll) >= 1000){
             last_pwrpoll = lv_tick_get();
-            int pin = locked ? usage_typec_power_in_now() : usage_plugged_in();
+            int pin = locked ? powersrc_port() : usage_plugged_in();
+            if(pin == PS_PORT_NONE) pin = -1;
             if(pin < 0) pin = g_batt_chg ? 1 : 0;
             if(pin == 1 && prev_power == 0 && locked && bl_state == 2 && !chg_peek){
                 fprintf(stderr, "charger plugged in on a locked screen: notice\n");

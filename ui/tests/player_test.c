@@ -3,6 +3,7 @@
 /* Host test of the own player skeleton (ui/player): frame parsing and formatting, the command handling in core.c, and
  * an end-to-end run of the real binary over POSIX message queues (watchdog off, own queue names).
  * Run: make -C ui/tests player_test && ./ui/tests/player_test ./ui/tests/diskos-player-host */
+#include "../powersrc.h"
 #include "../player/btout.h"
 #include "../player/core.h"
 #include "../player/proto.h"
@@ -386,8 +387,13 @@ static void test_bal(void){
 
 /* Charging Limit (hw.h): off at 80 % and more, on below, only with power in; "off" re-sent every 30 s */
 static void test_charge(void){
-    CHECK(hw_cc_power_in("Rdef\n") == 1 && hw_cc_power_in("R1p5") == 1 && hw_cc_power_in("R3p0\n") == 1);
-    CHECK(hw_cc_power_in("Undefined\n") == 0 && hw_cc_power_in("Rd") == -1 && hw_cc_power_in("") == -1 && hw_cc_power_in(NULL) == -1);
+    /* the shared power-in check (ui/powersrc.c): without a typec_state node cc_term alone, as before */
+    CHECK(powersrc_port_parse("Rdef\n", NULL) == 1 && powersrc_port_parse("R1p5", NULL) == 1 && powersrc_port_parse("R3p0\n", NULL) == 1);
+    CHECK(powersrc_port_parse("Undefined\n", NULL) == 0 && powersrc_port_parse("Rd", NULL) == -1 && powersrc_port_parse("", NULL) == -1 && powersrc_port_parse(NULL, NULL) == -1);
+    /* with typec_state (device log 2026-11-25): a charger is Sink, an unpowered USB sound card makes the Disc the Source */
+    CHECK(powersrc_port_parse("Rdef\n", "4 AttachedSink\n") == 1);
+    CHECK(powersrc_port_parse("R3p0\n", "6 AttachedSource\n") == 0 && powersrc_port_parse("R3p0", "5 AttachWaitSource") == 0);
+    CHECK(powersrc_port_parse("Undefined\n", "2 Unattached\n") == 0 && powersrc_port_parse("Undefined", "4 AttachedSink") == -1);
     hw_charge_t s; hw_charge_init(&s);
     CHECK(hw_charge_step(&s, 1, 79, 1, 0) == 1);                     /* below the limit: charging on */
     CHECK(hw_charge_step(&s, 1, 79, 1, 5) == -1);                    /* ... once */

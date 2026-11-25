@@ -19,6 +19,7 @@
 #include "theme.h"
 #include "braun.h"
 #include "sdstate.h"
+#include "powersrc.h"
 #include <math.h>
 #include <stdint.h>
 #include <dirent.h>
@@ -40,7 +41,7 @@
 typedef struct { uint32_t t; uint8_t pct, fl; uint16_t pad; } usmp_t;
 static usmp_t g_s[US_CAP];                 /* ring, oldest at g_head when full */
 static int g_head, g_n;
-static int g_batt = -1, g_chg;
+static _Atomic int g_batt = -1, g_chg;   /* the shared battery state (usage_power_refresh); read from other threads too */
 static uint32_t g_cur_min;                 /* minute being accumulated */
 static uint8_t g_acc;                      /* flags seen during it */
 static int g_unsaved;
@@ -142,8 +143,17 @@ static void load(void){
     }
     fclose(f);
 }
-/* from the 3 s status poll */
+/* The one gauge read of mq_ui (powersrc.c): the 3 s status poll calls it (it keeps running while the screen is off),
+ * and the statistics once a minute. Everything else reads the result. */
+void usage_power_refresh(void){
+#ifndef USAGE_NO_SYSFS
+    int pct, chg;
+    if(powersrc_gauge(&pct, &chg) == 0){ g_batt = pct; g_chg = chg; }
+#endif
+}
+/* set the shared state directly: host tests and previews (no gauge there) */
 void usage_note_battery(int pct, int charging){ if(pct >= 0 && pct <= 100){ g_batt = pct; g_chg = charging; } }
+int usage_battery(void){ return g_batt; }   /* level 0..100, -1 not read yet */
 int usage_charging(void){ return g_chg; }   /* the battery is being charged (positive charge current) */
 /* Plugged in: any power source other than the battery reports online=1 (USB, a charger: whatever the kernel calls it,
  * so no name is assumed). Catches a full battery on the charger, which draws no charge current. Read at most every
@@ -182,57 +192,15 @@ static int usb_to_computer(void){   /* read at most every 5 s */
     if(d) closedir(d);
     return on;
 }
-/* The USB-C port controller (AW35615, i2c 2-0022). cc_term is the current advertisement on CC - Rdef, R1p5 or R3p0
- * whenever a wall charger, power bank or computer supplies power, whether or not the battery draws any; "Undefined"
- * with nothing plugged in. Device-probed 2026-11-14 (V2.57): wall charger, battery held at 80 % by Charging Limit, no
- * charge current -> "Rdef"; unplugged -> "Undefined". The gauge and the USB controller showed no difference there, so
- * this is the only signal for that case. But cc_term alone is not "power in": with an unpowered USB device (a sound
- * card) the Disc is the source and cc_term shows its OWN advertisement, R3p0 (device log 2026-11-25: R3p0 | Source |
- * 6 AttachedSource; charger: Rdef | Sink | 4 AttachedSink). So typec_state decides the direction: ...Sink attached =
- * the far end supplies (then cc_term must show a level), ...Source = the Disc supplies (no power in), Unattached =
- * nothing. Without a typec_state node (other firmware) cc_term alone decides as before; anything unknown is -1 and the
- * older guesses below decide. */
-#ifndef TYPEC_CC_TERM
-#define TYPEC_CC_TERM "/sys/bus/i2c/devices/2-0022/control/cc_term"
-#endif
-#ifndef TYPEC_STATE
-#define TYPEC_STATE "/sys/bus/i2c/devices/2-0022/control/typec_state"
-#endif
-int usage_typec_cc_term_parse(const char *v){
-    if(!v) return -1;
-    size_t n = strcspn(v, " \t\r\n");
-    if((n == 4 && !strncmp(v, "Rdef", 4)) || (n == 4 && !strncmp(v, "R1p5", 4)) || (n == 4 && !strncmp(v, "R3p0", 4))) return 1;
-    if(n == 9 && !strncmp(v, "Undefined", 9)) return 0;
-    return -1;
-}
-int usage_typec_power_parse(const char *cc_term, const char *typec_state){
-    if(!typec_state) return usage_typec_cc_term_parse(cc_term);
-    if(strstr(typec_state, "Source")) return 0;          /* AttachWaitSource / AttachedSource: the Disc powers the device */
-    if(strstr(typec_state, "Unattached")) return 0;
-    if(strstr(typec_state, "Sink")){                     /* AttachWaitSink / AttachedSink: power comes in */
-        int c = usage_typec_cc_term_parse(cc_term);
-        return c == 1 ? 1 : -1;
-    }
-    return -1;                                           /* toggling, error recovery, unknown text */
-}
-static int read_line(const char *path, char *buf, size_t n){
-    FILE *f = fopen(path, "r");
-    if(!f) return -1;
-    int ok = fgets(buf, (int)n, f) != NULL;
-    fclose(f);
-    return ok ? 0 : -1;
-}
-int usage_typec_power_in_now(void){   /* uncached, for the charger notice on a locked screen (main.c, once a second) */
-    char cc[32] = "", st[48] = "";
-    if(read_line(TYPEC_CC_TERM, cc, sizeof cc) < 0) return -1;
-    return usage_typec_power_parse(cc, read_line(TYPEC_STATE, st, sizeof st) == 0 ? st : NULL);
-}
-static int typec_power_in(void){      /* at most every 5 s */
+/* The USB-C port (powersrc.c: cc_term + typec_state, so an unpowered USB device the Disc supplies is no charger), at
+ * most every 5 s. */
+static int typec_power_in(void){
     static uint32_t at; static int have, cached = -1;
     uint32_t now = lv_tick_get();
     if(have && now - at < 5000u) return cached;
     have = 1; at = now;
-    cached = usage_typec_power_in_now();
+    cached = powersrc_port();
+    if(cached == PS_PORT_NONE) cached = -1;
     return cached;
 }
 static int plugged_listed(void);
@@ -270,19 +238,9 @@ static int plugged_listed(void){
     closedir(d);
     return cached;
 }
-/* The status poll that feeds usage_note_battery stops while the screen is off, so on its own the level and the
- * charger state froze there: a charge made with the screen off was never seen (the since-full totals never reset)
- * and screen-off minutes were logged at a stale level. So the recorder reads the gauge itself, once a minute. */
-static void read_gauge(void){
-#ifndef USAGE_NO_SYSFS
-    int pct = -1; long cur = 0;
-    FILE *f = fopen("/sys/class/power_supply/cw221X-bat/capacity", "r");
-    if(f){ if(fscanf(f, "%d", &pct) != 1) pct = -1; fclose(f); }
-    f = fopen("/sys/class/power_supply/cw221X-bat/current_now", "r");
-    if(f){ if(fscanf(f, "%ld", &cur) != 1) cur = 0; fclose(f); }
-    if(pct >= 0 && pct <= 100){ g_batt = pct; g_chg = cur > 0; }
-#endif
-}
+/* The recorder refreshes the shared gauge state itself once a minute too, so a minute is never closed on a stale level
+ * (the status poll runs every 3 s, but a minute boundary must not depend on its phase). */
+static void read_gauge(void){ usage_power_refresh(); }
 /* from every main-loop pass: cheap unless the minute just turned over */
 void usage_tick(int screen_on, int playing){
     static int loaded;

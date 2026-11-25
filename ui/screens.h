@@ -18,12 +18,11 @@ void npmenu_refresh_art(void);       /* NP menu shown: cover + wash */
 void usage_create(lv_obj_t *root);   /* Settings > Battery: the 24-hour usage dial */
 void usage_refresh(void);
 void usage_tick(int screen_on, int playing);        /* main loop: one sample a minute */
-void usage_note_battery(int pct, int charging);     /* status poll */
+void usage_power_refresh(void);                      /* read the gauge (powersrc.c) into the shared state: the status poll */
+void usage_note_battery(int pct, int charging);     /* set the shared state directly (host tests, previews) */
+int  usage_battery(void);                             /* battery level 0..100, -1 unknown (shared state) */
 int  usage_charging(void);                           /* battery charging now (charge current > 0) */
 int  usage_plugged_in(void);                         /* 1 on external power, 0 not, -1 unknown */
-int  usage_typec_power_in_now(void);                 /* USB-C port: 1 a power source is plugged in, 0 none, -1 unknown; uncached */
-int  usage_typec_cc_term_parse(const char *v);         /* USB-C cc_term text -> 1 power in (Rdef/R1p5/R3p0), 0 nothing (Undefined), -1 unknown */
-int  usage_typec_power_parse(const char *cc_term, const char *typec_state);   /* + typec_state (NULL: none): 1 power in, 0 not (Source/Unattached), -1 unknown */
 void ui_shutdown_screen(void);   /* the themed "Shutting down" screen (top layer) */
 void ui_shutdown_hide(void);
 void ui_power_off(void);         /* shutdown screen, save, sync, poweroff */

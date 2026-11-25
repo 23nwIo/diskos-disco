@@ -3592,14 +3592,7 @@ static int pw_temp_dc(void){            /* battery temp, tenths-C; -1 on read fa
     FILE *f=fopen("/sys/class/power_supply/cw221X-bat/temp","r"); if(!f) return -1;
     int t=-1; if(fscanf(f,"%d",&t)!=1) t=-1; fclose(f); return t;
 }
-static int pw_charging(void){
-    /* cw221X exposes NO `status` node - charging shows via current_now (1=charging, 0=battery on
-     * this driver). The old `status` read always failed -> prewarm mode "idle & charging" never ran. */
-    long cur=0;
-    FILE *f=fopen("/sys/class/power_supply/cw221X-bat/current_now","r"); if(!f) return 0;
-    if(fscanf(f,"%ld",&cur)!=1) cur=0; fclose(f);
-    return cur > 0;
-}
+static int pw_charging(void){ return usage_charging(); }   /* the shared gauge state (usage.c, powersrc.c); atomic, read from this worker */
 /* 1 if the user-selected window currently allows background work. IDLE is mandatory
  * for every active mode: never decode while the user is actively looking at the screen
  * (heat-/UX-safety), even on charge. m1=when idle, m2=idle AND charging. */

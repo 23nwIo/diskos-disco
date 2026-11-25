@@ -3,6 +3,7 @@
 #include "hw.h"
 #include "../watchdog/watchdog.h"
 #include "../panel.h"
+#include "../powersrc.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -121,13 +122,6 @@ int hw_debounce(int *state, int *count, int level){
 
 void hw_charge_init(hw_charge_t *s){ memset(s, 0, sizeof *s); s->sent = -1; s->logged_pct = -1; s->polled_at = -1e9; }
 
-int hw_cc_power_in(const char *v){
-    if(!v) return -1;
-    size_t n = strcspn(v, " \t\r\n");
-    if(n == 4 && (!strncmp(v, "Rdef", 4) || !strncmp(v, "R1p5", 4) || !strncmp(v, "R3p0", 4))) return 1;
-    if(n == 9 && !strncmp(v, "Undefined", 9)) return 0;
-    return -1;
-}
 
 int hw_charge_step(hw_charge_t *s, int limit_on, int pct, int power, double now){
     if(power == 0 || power == -1){ s->sent = -1; return -1; }       /* nothing to charge from, or the Disc is the source */
@@ -141,16 +135,6 @@ int hw_charge_step(hw_charge_t *s, int limit_on, int pct, int power, double now)
     return want;
 }
 
-static int read_small(const char *path, char *buf, size_t n){
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if(fd < 0) return -1;
-    ssize_t r = read(fd, buf, n - 1);
-    int e = errno;
-    close(fd);
-    if(r < 0){ errno = e; return -1; }
-    buf[r] = 0;
-    return 0;
-}
 
 static void charge_send(int on, const char *pct_text, int dry, hw_log_fn log){
     if(dry) return;
@@ -166,16 +150,13 @@ static void charge_send(int on, const char *pct_text, int dry, hw_log_fn log){
 void hw_charge_tick(hw_charge_t *s, int limit_on, double now, int dry, hw_log_fn log){
     if((now - s->polled_at) * 1000.0 < CHG_POLL_MS) return;
     s->polled_at = now;
-    char cap[32] = "", cc[32] = "";
+    char cap[32] = "";
     int pct = -1;
-    if(read_small(CHG_CAPACITY, cap, sizeof cap) == 0){
-        char *end; long v = strtol(cap, &end, 10);
-        if(end != cap && v >= 0 && v <= 100) pct = (int)v;
-    }
-    int power;
-    if(read_small(CHG_CC_TERM, cc, sizeof cc) == 0) power = hw_cc_power_in(cc);
-    else {
-        if(!s->cc_missing_logged){ s->cc_missing_logged = 1; log("charge: %s: %s - limit without the plug check", CHG_CC_TERM, strerror(errno)); }
+    powersrc_gauge(&pct, NULL);                                        /* the shared reads (ui/powersrc.c) */
+    if(pct >= 0) snprintf(cap, sizeof cap, "%d", pct);
+    int power = powersrc_port();                                      /* cc_term + typec_state: a sound card is no charger */
+    if(power == PS_PORT_NONE){
+        if(!s->cc_missing_logged){ s->cc_missing_logged = 1; log("charge: %s: missing - limit without the plug check", PS_CC_TERM); }
         power = 2;
     }
     int was = s->sent;
