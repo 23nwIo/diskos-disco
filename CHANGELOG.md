@@ -6,7 +6,8 @@ User-facing changes in diskOS Disco!. Details of each release are in [docs/relea
 
 - Charger on a locked screen: plugging in a charger while the screen is off shows a charging screen (battery level) for
   about a second, then the screen goes dark again. It stays locked: touch does nothing, the power button wakes it as
-  always. Not yet tested on a Disc.
+  always. Not yet tested on a Disc. A USB device without its own power (a sound card) no longer counts as a charger: the Disc powers it, and the USB-C
+  port state says so (also for the idle power-off).
 
 - Own player: the main volume (keys, screen, Remote Control) now moves the AUX and the Bluetooth volume together,
   also while one of them is off or nothing is plugged in, so neither is left far behind. Not yet tested on a Disc.

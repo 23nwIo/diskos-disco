@@ -4,7 +4,9 @@
 - any non-battery power supply with online=1 counts, whatever its name; the battery doesn't;
 - the USB-C controller's cc_term (Rdef/R1p5/R3p0 = a source supplies power) counts even with no charge current
   (device-probed 2026-11-14: wall charger + Charging Limit at 80 % -> Rdef, unplugged -> Undefined);
-- cc_term "Undefined" overrides the remembered-charger guess; Rd/Ra or no node -> the older guesses decide."""
+- cc_term "Undefined" overrides the remembered-charger guess; Rd/Ra or no node -> the older guesses decide;
+- typec_state decides the direction: an unpowered USB device (sound card) shows R3p0 too, but AttachedSource = the
+  Disc supplies it, no power in (device log 2026-11-25); AttachedSink + a level = power in."""
 import subprocess, tempfile
 from pathlib import Path
 ui = Path(__file__).resolve().parents[1]; src = (ui / "usage.c").read_text()
@@ -26,6 +28,12 @@ cases = [
     ("Disc: OTG host (Rd)",      {"cw221X-bat": ("Mains", "")}, "Rd", [], 0, -1),
     ("Disc: no node, charging seen", {"cw221X-bat": ("Mains", "")}, None, [(80, 1), (80, 0)], 0, 1),
     ("Disc: Undefined but host configured", {"cw221X-bat": ("Mains", "")}, "Undefined", [], 1, 1),
+    ("Disc: charger, AttachedSink", {"cw221X-bat": ("Mains", "")}, ("Rdef\n", "4 AttachedSink\n"), [(80, 0)], 0, 1),
+    ("Disc: charger, AttachWaitSink", {"cw221X-bat": ("Mains", "")}, ("Rdef", "3 AttachWaitSink"), [], 0, 1),
+    ("Disc: USB sound card (Source)", {"cw221X-bat": ("Mains", "")}, ("R3p0\n", "6 AttachedSource\n"), [], 0, 0),
+    ("Disc: sound card attaching", {"cw221X-bat": ("Mains", "")}, ("R3p0", "5 AttachWaitSource"), [(80, 1), (80, 0)], 0, 0),
+    ("Disc: unplugged, Unattached", {"cw221X-bat": ("Mains", "")}, ("Undefined", "2 Unattached"), [], 0, 0),
+    ("Disc: Sink but no level", {"cw221X-bat": ("Mains", "")}, ("Undefined", "4 AttachedSink"), [(80, 1), (80, 0)], 0, 1),
 ]
 with tempfile.TemporaryDirectory() as d:
     d = Path(d)
@@ -35,12 +43,15 @@ with tempfile.TemporaryDirectory() as d:
         for sup, (typ, online) in tree.items():
             (ps / sup).mkdir(parents=True); (ps / sup / "type").write_text(typ + "\n")
             if online: (ps / sup / "online").write_text(online + "\n")
-        cct = root / "cc_term"
+        cct = root / "cc_term"; tst = root / "typec_state"
+        st = None
+        if isinstance(cc, tuple): cc, st = cc
         if cc is not None: cct.write_text(cc)
+        if st is not None: tst.write_text(st)
         feed = "".join("g_batt=%d; g_chg=%d; (void)charger_remembered();\n" % h for h in hist)
         C = ('#include <dirent.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n'
              'static uint32_t lv_tick_get(void){ return 1000; }\nstatic int g_batt = -1, g_chg;\n'
-             '#define POWER_SUPPLY_DIR "%s"\n#define TYPEC_CC_TERM "%s"\n' % (ps, cct))
+             '#define POWER_SUPPLY_DIR "%s"\n#define TYPEC_CC_TERM "%s"\n#define TYPEC_STATE "%s"\n' % (ps, cct, tst))
         C += section.replace('"/sys/class/udc"', '"%s"' % (root / "udc")).replace('"/sys/class/udc/%.60s/state"', '"%s/%%.60s/state"' % (root / "udc"))
         C += '\nint main(void){\n' + feed + ' printf("%d\\n", usage_plugged_in()); return 0; }\n'
         (d / "t.c").write_text(C)
@@ -48,4 +59,4 @@ with tempfile.TemporaryDirectory() as d:
         got = int(subprocess.run([str(d / "t")], capture_output=True, text=True, check=True).stdout)
         assert got == want, (name, got, want)
         print("ok  %-38s -> %d" % (name, got))
-print("PASS plugged-in detection: power supplies, USB-C cc_term (Rdef/R1p5/R3p0 in, Undefined out), history fallback")
+print("PASS plugged-in detection: power supplies, USB-C cc_term + typec_state (Sink in, Source/Unattached out), history fallback")

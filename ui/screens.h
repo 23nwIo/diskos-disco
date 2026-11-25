@@ -23,6 +23,7 @@ int  usage_charging(void);                           /* battery charging now (ch
 int  usage_plugged_in(void);                         /* 1 on external power, 0 not, -1 unknown */
 int  usage_typec_power_in_now(void);                 /* USB-C port: 1 a power source is plugged in, 0 none, -1 unknown; uncached */
 int  usage_typec_cc_term_parse(const char *v);         /* USB-C cc_term text -> 1 power in (Rdef/R1p5/R3p0), 0 nothing (Undefined), -1 unknown */
+int  usage_typec_power_parse(const char *cc_term, const char *typec_state);   /* + typec_state (NULL: none): 1 power in, 0 not (Source/Unattached), -1 unknown */
 void ui_shutdown_screen(void);   /* the themed "Shutting down" screen (top layer) */
 void ui_shutdown_hide(void);
 void ui_power_off(void);         /* shutdown screen, save, sync, poweroff */

@@ -182,15 +182,21 @@ static int usb_to_computer(void){   /* read at most every 5 s */
     if(d) closedir(d);
     return on;
 }
-/* The USB-C port controller (AW35615, i2c 2-0022) says what the far end presents on CC. As a sink the Disc sees the
- * source's current advertisement - Rdef, R1p5 or R3p0 - whenever a wall charger, power bank or computer supplies
- * power, whether or not the battery draws any; "Undefined" with nothing plugged in. Device-probed 2026-11-14 (V2.57):
- * wall charger, battery held at 80 % by Charging Limit, no charge current -> "Rdef"; unplugged -> "Undefined". The
- * gauge and the USB controller showed no difference there, so this is the only signal for that case. Anything else
- * (Rd/Ra: the Disc itself is the source, e.g. a USB drive on OTG; a missing node on other firmware) is unknown (-1)
- * and the older guesses below decide. Read at most every 5 s. */
+/* The USB-C port controller (AW35615, i2c 2-0022). cc_term is the current advertisement on CC - Rdef, R1p5 or R3p0
+ * whenever a wall charger, power bank or computer supplies power, whether or not the battery draws any; "Undefined"
+ * with nothing plugged in. Device-probed 2026-11-14 (V2.57): wall charger, battery held at 80 % by Charging Limit, no
+ * charge current -> "Rdef"; unplugged -> "Undefined". The gauge and the USB controller showed no difference there, so
+ * this is the only signal for that case. But cc_term alone is not "power in": with an unpowered USB device (a sound
+ * card) the Disc is the source and cc_term shows its OWN advertisement, R3p0 (device log 2026-11-25: R3p0 | Source |
+ * 6 AttachedSource; charger: Rdef | Sink | 4 AttachedSink). So typec_state decides the direction: ...Sink attached =
+ * the far end supplies (then cc_term must show a level), ...Source = the Disc supplies (no power in), Unattached =
+ * nothing. Without a typec_state node (other firmware) cc_term alone decides as before; anything unknown is -1 and the
+ * older guesses below decide. */
 #ifndef TYPEC_CC_TERM
 #define TYPEC_CC_TERM "/sys/bus/i2c/devices/2-0022/control/cc_term"
+#endif
+#ifndef TYPEC_STATE
+#define TYPEC_STATE "/sys/bus/i2c/devices/2-0022/control/typec_state"
 #endif
 int usage_typec_cc_term_parse(const char *v){
     if(!v) return -1;
@@ -199,24 +205,34 @@ int usage_typec_cc_term_parse(const char *v){
     if(n == 9 && !strncmp(v, "Undefined", 9)) return 0;
     return -1;
 }
-int usage_typec_power_in_now(void){   /* uncached, for the charger notice on a locked screen (main.c, once a second) */
-    char v[32] = "";
-    FILE *f = fopen(TYPEC_CC_TERM, "r");
-    if(!f) return -1;
-    int r = fgets(v, sizeof v, f) ? usage_typec_cc_term_parse(v) : -1;
-    fclose(f);
-    return r;
+int usage_typec_power_parse(const char *cc_term, const char *typec_state){
+    if(!typec_state) return usage_typec_cc_term_parse(cc_term);
+    if(strstr(typec_state, "Source")) return 0;          /* AttachWaitSource / AttachedSource: the Disc powers the device */
+    if(strstr(typec_state, "Unattached")) return 0;
+    if(strstr(typec_state, "Sink")){                     /* AttachWaitSink / AttachedSink: power comes in */
+        int c = usage_typec_cc_term_parse(cc_term);
+        return c == 1 ? 1 : -1;
+    }
+    return -1;                                           /* toggling, error recovery, unknown text */
 }
-static int typec_power_in(void){
+static int read_line(const char *path, char *buf, size_t n){
+    FILE *f = fopen(path, "r");
+    if(!f) return -1;
+    int ok = fgets(buf, (int)n, f) != NULL;
+    fclose(f);
+    return ok ? 0 : -1;
+}
+int usage_typec_power_in_now(void){   /* uncached, for the charger notice on a locked screen (main.c, once a second) */
+    char cc[32] = "", st[48] = "";
+    if(read_line(TYPEC_CC_TERM, cc, sizeof cc) < 0) return -1;
+    return usage_typec_power_parse(cc, read_line(TYPEC_STATE, st, sizeof st) == 0 ? st : NULL);
+}
+static int typec_power_in(void){      /* at most every 5 s */
     static uint32_t at; static int have, cached = -1;
     uint32_t now = lv_tick_get();
     if(have && now - at < 5000u) return cached;
-    have = 1; at = now; cached = -1;
-    char v[32] = "";
-    FILE *f = fopen(TYPEC_CC_TERM, "r");
-    if(!f) return cached;
-    if(fgets(v, sizeof v, f)) cached = usage_typec_cc_term_parse(v);
-    fclose(f);
+    have = 1; at = now;
+    cached = usage_typec_power_in_now();
     return cached;
 }
 static int plugged_listed(void);
