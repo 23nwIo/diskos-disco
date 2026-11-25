@@ -41,7 +41,7 @@ run ls /sys/class/typec
 if [ "$HOST" = 1 ]; then
   sec "--host: writing host to $ROLE"
   echo host > "$ROLE"; echo "[exit $?]"
-  sleep 3
+  sleep 12   # enumeration takes ~3 s; the USB-C controller re-negotiated ~9 s after (device 2026-11-25)
   run cat "$ROLE"
 fi
 
