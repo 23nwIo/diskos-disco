@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='settings-alignment-') as tmp:
    assert [x['label'] for x in pages['Playback']]==want,(theme,pages['Playback'])
    assert [x['label'] for x in pages['Audio']]==audio,(theme,pages['Audio'])
    assert not any(x['label']=='Custom EQ' for items in pages.values() for x in items)
-   if own:assert [x['label'] for x in pages['Outputs']]==['Auto Outputs','AUX Volume','Bluetooth Codec','Bluetooth Volume','Headphone Volume','AUX','Bluetooth'],(theme,pages['Outputs'])
+   if own:assert [x['label'] for x in pages['Outputs']]==['Auto Outputs','AUX Volume','Bluetooth Codec','Bluetooth Volume','Headphone Volume','AUX','Bluetooth','Coaxial (S/PDIF)'],(theme,pages['Outputs'])
    else:assert 'Outputs' not in pages,(theme,'Outputs shown without the own player')
    # Validate with an independent rule, not the production comparator.
    for page,items in pages.items():
